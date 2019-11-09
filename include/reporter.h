@@ -1,13 +1,3 @@
-#ifndef _REPORTER_H_
-#define _REPORTER_H_
-
-/**
- * @file reporter.h
- * @author Wayne Stambaugh
- * @note A special thanks to Dick Hollenbeck who came up with the idea that inspired
- *       me to write this.
- */
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
@@ -32,9 +22,21 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#ifndef _REPORTER_H_
+#define _REPORTER_H_
 
-class wxString;
+#include <wx/string.h>
+
+/**
+ * @file reporter.h
+ * @author Wayne Stambaugh
+ * @note A special thanks to Dick Hollenbeck who came up with the idea that inspired
+ *       me to write this.
+ */
+
 class wxTextCtrl;
+class wxHtmlListbox;
+class WX_HTML_REPORT_PANEL;
 
 
 /**
@@ -47,71 +49,91 @@ class wxTextCtrl;
  * <li> know too much about the caller's UI, i.e. wx. </li>
  * <li> stop after the first error </li>
  * </ul>
- * the reporter has 3 levels (flags) for filtering:
- * no filter
- * report warning
- * report errors
- * They are indicators for the calling code, filtering is not made here
+ * the reporter has 4 severity levels (flags) tagging the messages:
+ * - information
+ * - warning
+ * - error
+ * - action (i.e. indication of changes - add component, change footprint, etc. )
+ * They are indicators for the message formatting and displaying code,
+ * filtering is not made here.
  */
-class REPORTER
-{
-    bool m_reportAll;       // Filter flag: set to true to report all messages
-    bool m_reportWarnings;  // Filter flag: set to true to report warning
-    bool m_reportErrors;    // Filter flag: set to true to report errors
+
+class REPORTER {
 
 public:
+    /**
+     *  Severity of the reported messages.
+     *  Undefined are default status messages
+     *  Info are processing messages for which no action is taken
+     *  Action messages are items that modify the file(s) as expected
+     *  Warning messages are items that might be problematic but don't prevent
+     *    the process from completing
+     *  Error messages are items that prevent the process from completing
+     */
+    //
+    enum SEVERITY {
+        RPT_UNDEFINED = 0x0,
+        RPT_INFO      = 0x1,
+        RPT_ACTION    = 0x2,
+        RPT_WARNING   = 0x4,
+        RPT_ERROR     = 0x8
+    };
+
+    static constexpr int RPT_ALL = RPT_INFO | RPT_ACTION | RPT_WARNING | RPT_ERROR;
+
+    /**
+     * Location where the message is to be reported.
+     * LOC_HEAD messages are printed before all others (typically intro messages)
+     * LOC_BODY messages are printed in the middle
+     * LOC_TAIL messages are printed after all others (typically status messages)
+     */
+    enum LOCATION {
+        LOC_HEAD = 0,
+        LOC_BODY,
+        LOC_TAIL
+    };
+
     /**
      * Function Report
      * is a pure virtual function to override in the derived object.
      *
      * @param aText is the string to report.
+     * @param aSeverity is an indicator ( RPT_UNDEFINED, RPT_INFO, RPT_WARNING,
+     * RPT_ERROR, RPT_ACTION ) used to filter and format messages
      */
-    virtual REPORTER& Report( const wxString& aText ) = 0;
 
-    REPORTER& Report( const char* aText );
+    virtual REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) = 0;
+
+    /**
+     * Function ReportTail
+     * Places the report at the end of the list, for objects that support report ordering
+     */
+    virtual REPORTER& ReportTail( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED )
+    {
+        return Report( aText, aSeverity );
+    }
+
+    /**
+     * Function ReportHead
+     * Places the report at the beginning of the list for objects that support ordering
+     */
+    virtual REPORTER& ReportHead( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED )
+    {
+        return Report( aText, aSeverity );
+    }
+
+    REPORTER& Report( const char* aText, SEVERITY aSeverity = RPT_UNDEFINED );
 
     REPORTER& operator <<( const wxString& aText ) { return Report( aText ); }
-
     REPORTER& operator <<( const wxChar* aText ) { return Report( wxString( aText ) ); }
-
     REPORTER& operator <<( wxChar aChar ) { return Report( wxString( aChar ) ); }
-
     REPORTER& operator <<( const char* aText ) { return Report( aText ); }
 
     /**
-     * Returns true if all messages should be reported
+     * Function HasMessage
+     * Returns true if the reporter client is non-empty.
      */
-    bool ReportAll() { return m_reportAll; }
-
-    /**
-     * Returns true if all messages or warning messages should be reported
-     */
-    bool ReportWarnings() { return m_reportAll | m_reportWarnings; }
-
-    /**
-     * Returns true if all messages or error messages should be reported
-     */
-    bool ReportErrors() { return m_reportAll | m_reportErrors; }
-
-    /**
-     * Set the report filter state, for all messages
-     * @param aEnable = filter state (true/false)
-     */
-    void SetReportAll( bool aEnable) { m_reportAll = aEnable; }
-
-    /**
-     * Set the report filter state, for warning messages
-     * note: report can be disable only if m_reportAll = false
-     * @param aEnable = filter state (true/false)
-     */
-    void SetReportWarnings( bool aEnable) { m_reportWarnings = aEnable; }
-
-    /**
-     * Set the report filter state, for error messages
-     * note: report can be disable only if m_reportAll = false
-     * @param aEnable = filter state (true/false)
-     */
-    void SetReportErrors( bool aEnable) { m_reportErrors = aEnable; }
+    virtual bool HasMessage() const = 0;
 };
 
 
@@ -128,17 +150,16 @@ public:
         REPORTER(),
         m_textCtrl( aTextCtrl )
     {
-        SetReportAll( true );
-        SetReportWarnings( true );
-        SetReportErrors( true );
     }
 
-    REPORTER& Report( const wxString& aText );
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    bool HasMessage() const override;
 };
 
 
 /**
- * Class WX_STRING_REPROTER
+ * Class WX_STRING_REPORTER
  * is a wrapper for reporting to a wxString object.
  */
 class WX_STRING_REPORTER : public REPORTER
@@ -152,7 +173,73 @@ public:
     {
     }
 
-    REPORTER& Report( const wxString& aText );
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    bool HasMessage() const override;
+};
+
+
+/**
+ * Class WX_HTML_PANEL_REPORTER
+ * is a wrapper for reporting to a wx HTML window
+ */
+class WX_HTML_PANEL_REPORTER : public REPORTER
+{
+    WX_HTML_REPORT_PANEL* m_panel;
+
+public:
+    WX_HTML_PANEL_REPORTER( WX_HTML_REPORT_PANEL* aPanel ) :
+        REPORTER(),
+        m_panel( aPanel )
+    {
+    }
+
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    REPORTER& ReportTail( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    REPORTER& ReportHead( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    bool HasMessage() const override;
+};
+
+/**
+ * Class NULL_REPORTER
+ *
+ * A singleton reporter that reports to nowhere. Used as to simplify code by
+ * avoiding the reportee to check for a non-NULL reporter object.
+ */
+class NULL_REPORTER : public REPORTER
+{
+public:
+    NULL_REPORTER()
+    {
+    }
+
+    static REPORTER& GetInstance();
+
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    bool HasMessage() const override { return false; }
+};
+
+/**
+ * Class STDOUT_REPORTER
+ *
+ * Debug type reporter, forwarding messages to std::cout.
+ */
+class STDOUT_REPORTER : public REPORTER
+{
+public:
+    STDOUT_REPORTER()
+    {
+    }
+
+    static REPORTER& GetInstance();
+
+    REPORTER& Report( const wxString& aText, SEVERITY aSeverity = RPT_UNDEFINED ) override;
+
+    bool HasMessage() const override { return false; }
 };
 
 #endif     // _REPORTER_H_

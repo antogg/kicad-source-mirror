@@ -1,7 +1,8 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
+ * Copyright (C) 2016-2019 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -21,31 +22,35 @@
 #ifndef __PNS_ITEM_H
 #define __PNS_ITEM_H
 
+#include <memory>
 #include <math/vector2d.h>
 
 #include <geometry/shape.h>
 #include <geometry/shape_line_chain.h>
 
-#include "trace.h"
-
 #include "pns_layerset.h"
 
 class BOARD_CONNECTED_ITEM;
-class PNS_NODE;
+
+namespace PNS {
+
+class NODE;
 
 enum LineMarker {
     MK_HEAD         = ( 1 << 0 ),
     MK_VIOLATION    = ( 1 << 3 ),
-    MK_LOCKED       = ( 1 << 4 )
+    MK_LOCKED       = ( 1 << 4 ),
+    MK_DP_COUPLED   = ( 1 << 5 )
 };
 
+
 /**
- * Class PNS_ITEM
+ * Class ITEM
  *
  * Base class for PNS router board items. Implements the shared properties of all PCB items -
  * net, spanned layers, geometric shape & refererence to owning model.
  */
-class PNS_ITEM
+class ITEM
 {
 public:
     static const int UnusedNet = INT_MAX;
@@ -53,15 +58,16 @@ public:
     ///> Supported item types
     enum PnsKind
     {
-        SOLID   = 1,
-        LINE    = 2,
-        JOINT   = 4,
-        SEGMENT = 8,
-        VIA     = 16,
-        ANY     = 0xff
+        SOLID_T     =    1,
+        LINE_T      =    2,
+        JOINT_T     =    4,
+        SEGMENT_T   =    8,
+        VIA_T       =   16,
+        DIFF_PAIR_T =   32,
+        ANY_T       = 0xff
     };
 
-    PNS_ITEM( PnsKind aKind )
+    ITEM( PnsKind aKind )
     {
         m_net = UnusedNet;
         m_movable = true;
@@ -70,28 +76,30 @@ public:
         m_owner = NULL;
         m_marker = 0;
         m_rank = -1;
+        m_routable = true;
     }
 
-    PNS_ITEM( const PNS_ITEM& aOther )
+    ITEM( const ITEM& aOther )
     {
         m_layers = aOther.m_layers;
         m_net = aOther.m_net;
         m_movable = aOther.m_movable;
         m_kind = aOther.m_kind;
         m_parent = aOther.m_parent;
-        m_owner = NULL;
+        m_owner = aOther.m_owner; // fixme: wtf this was null?
         m_marker = aOther.m_marker;
         m_rank = aOther.m_rank;
+        m_routable = aOther.m_routable;
     }
 
-    virtual ~PNS_ITEM();
+    virtual ~ITEM();
 
     /**
      * Function Clone()
      *
-     * Returns a deep copy of the item 
+     * Returns a deep copy of the item
      */
-    virtual PNS_ITEM* Clone() const = 0;
+    virtual ITEM* Clone() const = 0;
 
     /*
      * Function Hull()
@@ -111,17 +119,17 @@ public:
      *
      * Returns the type (kind) of the item
      */
-    PnsKind Kind() const 
-    { 
+    PnsKind Kind() const
+    {
         return m_kind;
     }
-    
+
     /**
      * Function OfKind()
      *
      * Returns true if the item's type matches the mask aKindMask.
      */
-    bool OfKind( int aKindMask ) const 
+    bool OfKind( int aKindMask ) const
     {
         return ( aKindMask & m_kind ) != 0;
     }
@@ -131,87 +139,19 @@ public:
      *
      * Returns the kind of the item, as string
      */
-    const std::string KindStr() const;
+    std::string KindStr() const;
 
-    /**
-     * Function SetParent()
-     *
-     * Sets the corresponding parent object in the host application's model.
-     */
-    void SetParent( BOARD_CONNECTED_ITEM* aParent ) 
-    {
-        m_parent = aParent;
-    }
-    
-    /**
-     * Function Parent()
-     *
-     * Returns the corresponding parent object in the host application's model.
-     */
-    BOARD_CONNECTED_ITEM* Parent() const 
-    { 
-        return m_parent; 
-    }
+    void SetParent( BOARD_CONNECTED_ITEM* aParent ) { m_parent = aParent; }
+    BOARD_CONNECTED_ITEM* Parent() const { return m_parent; }
 
-    /**
-     * Function SetNet()
-     *
-     * Sets the item's net to aNet
-     */
-    void SetNet( int aNet ) 
-    { 
-        m_net = aNet; 
-    }
+    void SetNet( int aNet ) { m_net = aNet; }
+    int Net() const { return m_net;  }
 
-    /**
-     * Function Net()
-     *
-     * Returns the item's net.
-     */
-    int Net() const 
-    { 
-        return m_net; 
-    }
+    const LAYER_RANGE& Layers() const { return m_layers; }
+    void SetLayers( const LAYER_RANGE& aLayers ) { m_layers = aLayers; }
 
-    /**
-     * Function SetLayers()
-     *
-     * Sets the layers spanned by the item to aLayers.
-     */
-    void SetLayers( const PNS_LAYERSET& aLayers ) 
-    { 
-        m_layers = aLayers; 
-    }
-    
-    /**
-     * Function SetLayer()
-     *
-     * Sets the layers spanned by the item to a single layer aLayer.
-     */
-    void SetLayer( int aLayer )
-    {
-        m_layers = PNS_LAYERSET( aLayer, aLayer );
-    }
-
-    /** 
-     * Function Layers()
-     *
-     * Returns the contiguous set of layers spanned by the item.
-     */
-    const PNS_LAYERSET& Layers() const 
-    { 
-        return m_layers; 
-    }
-    
-    /**
-     * Function Layer()
-     *
-     * Returns the item's layer, for single-layered items only.
-     */
-    virtual int Layer() const
-    { 
-        return Layers().Start();
-    }
+    void SetLayer( int aLayer ) { m_layers = LAYER_RANGE( aLayer, aLayer ); }
+    virtual int Layer() const { return Layers().Start(); }
 
     /**
      * Function LayersOverlap()
@@ -219,67 +159,50 @@ public:
      * Returns true if the set of layers spanned by aOther overlaps our
      * layers.
      */
-    bool LayersOverlap( const PNS_ITEM* aOther ) const
+    bool LayersOverlap( const ITEM* aOther ) const
     {
         return Layers().Overlaps( aOther->Layers() );
     }
 
     /**
+     * Function Owner()
+     *
+     * Returns the owner of this item, or NULL if there's none.
+     */
+    NODE* Owner() const { return m_owner; }
+
+    /**
      * Functon SetOwner()
      *
-     * Sets the node that owns this item. An item can belong to a single 
-     * PNS_NODE or stay unowned.
+     * Sets the node that owns this item. An item can belong to a single NODE or be unowned.
      */
-    void SetOwner( PNS_NODE* aOwner ) 
-    { 
-        m_owner = aOwner; 
-    }
-    
+    void SetOwner( NODE* aOwner ) { m_owner = aOwner; }
+
     /**
      * Function BelongsTo()
      *
-     * Returns true if the item is owned by the node aNode.
+     * @return true if the item is owned by the node aNode.
      */
-    bool BelongsTo( PNS_NODE* aNode ) const 
-    { 
-        return m_owner == aNode; 
+    bool BelongsTo( NODE* aNode ) const
+    {
+        return m_owner == aNode;
     }
-    
-    /**
-     * Function Owner()
-     * 
-     * Returns the owner of this item, or NULL if there's none.
-     */
-    PNS_NODE* Owner() const { return m_owner; }
 
     /**
      * Function Collide()
      *
-     * Checks for a collision (clearance violation) with between us and item aOther. 
+     * Checks for a collision (clearance violation) with between us and item aOther.
      * Collision checking takes all PCB stuff into accound (layers, nets, DRC rules).
-     * Optionally returns a minimum translation vector for force propagation
-     * algorithm.
+     * Optionally returns a minimum translation vector for force propagation algorithm.
      *
      * @param aOther item to check collision against
      * @param aClearance desired clearance
      * @param aNeedMTV when true, the minimum translation vector is calculated
      * @param aMTV the minimum translation vector
-     * @param true, if a collision was found.
+     * @return true, if a collision was found.
      */
-    virtual bool Collide( const PNS_ITEM* aOther, int aClearance, bool aNeedMTV,
-            VECTOR2I& aMTV ) const;
-
-    /**
-     * Function Collide()
-     *
-     * A shortcut for PNS_ITEM::Colllide() without MTV stuff.
-     */
-    bool Collide( const PNS_ITEM* aOther, int aClearance ) const
-    {
-        VECTOR2I dummy;
-
-        return Collide( aOther, aClearance, false, dummy );
-    }
+    virtual bool Collide( const ITEM* aOther, int aClearance, bool aNeedMTV, VECTOR2I* aMTV,
+                          const NODE* aParentNode, bool aDifferentNetsOnly = true ) const;
 
     /**
      * Function Shape()
@@ -292,56 +215,64 @@ public:
         return NULL;
     }
 
-    virtual void Mark(int aMarker) 
-    {
-        m_marker = aMarker;
-    }
+    virtual void Mark( int aMarker ) { m_marker = aMarker; }
+    virtual void Unmark( int aMarker = -1 ) { m_marker &= ~aMarker; }
+    virtual int Marker() const { return m_marker; }
 
-    virtual void Unmark () 
-    {
-        m_marker = 0;
-    }
-
-    virtual int Marker() const 
-    {
-        return m_marker;
-    }
-
-    virtual void SetRank( int aRank )
-    {
-        m_rank = aRank;
-    }
-
-    virtual int Rank() const 
-    {
-        return m_rank;
-    }
+    virtual void SetRank( int aRank ) { m_rank = aRank; }
+    virtual int Rank() const { return m_rank; }
 
     virtual VECTOR2I Anchor( int n ) const
-    { 
-        return VECTOR2I ();
-    }
-    
-    virtual int AnchorCount() const 
-    { 
-        return 0; 
+    {
+        return VECTOR2I();
     }
 
+    virtual int AnchorCount() const
+    {
+        return 0;
+    }
+
+    bool IsLocked() const
+    {
+        return Marker() & MK_LOCKED;
+    }
+
+    void SetRoutable( bool aRoutable ) { m_routable = aRoutable; }
+    bool IsRoutable() const { return m_routable; }
+
 private:
-    bool collideSimple( const PNS_ITEM* aOther, int aClearance, bool aNeedMTV,
-            VECTOR2I& aMTV ) const;
+    bool collideSimple( const ITEM* aOther, int aClearance, bool aNeedMTV, VECTOR2I* aMTV,
+                        const NODE* aParentNode, bool aDifferentNetsOnly ) const;
 
 protected:
     PnsKind                 m_kind;
 
     BOARD_CONNECTED_ITEM*   m_parent;
-    PNS_NODE*               m_owner;
-    PNS_LAYERSET            m_layers;
+    NODE*                   m_owner;
+    LAYER_RANGE             m_layers;
 
     bool                    m_movable;
     int                     m_net;
     int                     m_marker;
     int                     m_rank;
+    bool                    m_routable;
 };
+
+template< typename T, typename S >
+std::unique_ptr< T > ItemCast( std::unique_ptr< S > aPtr )
+{
+    static_assert(std::is_base_of< ITEM, S >::value, "Need to be handed a ITEM!");
+    static_assert(std::is_base_of< ITEM, T >::value, "Need to cast to an ITEM!");
+    return std::unique_ptr< T >( static_cast<T*>(aPtr.release()) );
+}
+
+template< typename T >
+std::unique_ptr< typename std::remove_const< T >::type > Clone( const T& aItem )
+{
+    static_assert(std::is_base_of< ITEM, T >::value, "Need to be handed an ITEM!");
+    return std::unique_ptr< typename std::remove_const< T >::type >( aItem.Clone() );
+}
+
+}
 
 #endif    // __PNS_ITEM_H

@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2015 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -29,7 +29,9 @@
 #include <string>
 #include <cassert>
 
-#include <tool/tool_manager.h>
+#include <tool/tool_event.h>
+
+struct BITMAP_OPAQUE;
 
 /**
  * Class TOOL_ACTION
@@ -39,25 +41,22 @@
  * - running the DRC from the menu
  * and so on, and so forth....
  * Action class groups all necessary properties of an action, including explanation,
- * icons, hotkeys,.menu items, etc.
+ * icons, hotkeys, menu items, etc.
  */
 class TOOL_ACTION
 {
 public:
     TOOL_ACTION( const std::string& aName, TOOL_ACTION_SCOPE aScope = AS_CONTEXT,
-            int aDefaultHotKey = 0, const std::string& aMenuItem = std::string( "" ),
-            const std::string& aMenuDesc = std::string( "" ), TOOL_ACTION_FLAGS aFlags = AF_NONE ) :
-        m_name( aName ), m_scope( aScope ), m_defaultHotKey( aDefaultHotKey ),
-        m_currentHotKey( aDefaultHotKey ), m_menuItem( aMenuItem ),
-        m_menuDescription( aMenuDesc ), m_id( -1 ), m_flags( aFlags )
-    {
-        TOOL_MANAGER::GetActionList().push_back( this );
-    }
+                 int aDefaultHotKey = 0, const std::string& aLegacyHotKeyName = "", 
+                 const wxString& aMenuText = wxEmptyString, const wxString& aTooltip = wxEmptyString, 
+                 const BITMAP_OPAQUE* aIcon = nullptr, TOOL_ACTION_FLAGS aFlags = AF_NONE, 
+                 void* aParam = nullptr );
 
-    ~TOOL_ACTION()
-    {
-        TOOL_MANAGER::GetActionList().remove( this );
-    }
+    ~TOOL_ACTION();
+
+    // TOOL_ACTIONS are singletons; don't be copying them around....
+    TOOL_ACTION( const TOOL_ACTION& ) = delete;
+    TOOL_ACTION& operator= ( const TOOL_ACTION& ) = delete;
 
     bool operator==( const TOOL_ACTION& aRhs ) const
     {
@@ -72,15 +71,25 @@ public:
     /**
      * Function GetName()
      * Returns name of the action. It is the same one that is contained in TOOL_EVENT that is
-     * sent by activating the TOOL_ACTION.
+     * sent by activating the TOOL_ACTION.  Convention is "app.tool.actionName".
      *
      * @return Name of the action.
      */
-    const std::string& GetName() const
-    {
-        return m_name;
-    }
-
+    const std::string& GetName() const { return m_name; }
+    
+    /**
+     * Function GetDefaultHotKey()
+     * Returns the default hotkey (if any) for the action.
+     */
+    int GetDefaultHotKey() const { return m_defaultHotKey; }
+    
+    /**
+     * Function GetHotKey()
+     * Returns the hotkey keycode which initiates the action.
+     */
+    int GetHotKey() const { return m_hotKey; }
+    void SetHotKey( int aKeycode );
+    
     /**
      * Function GetId()
      * Returns the unique id of the TOOL_ACTION object. It is valid only after registering the
@@ -88,96 +97,28 @@ public:
      *
      * @return The unique identification number. If the number is negative, then it is not valid.
      */
-    int GetId() const
-    {
-        return m_id;
-    }
-
-    /**
-     * Function GetHotKey()
-     * Returns the associated hot key.
-     */
-    int GetHotKey() const
-    {
-        return m_currentHotKey;
-    }
-
-    /**
-     * Function ChangeHotKey()
-     * Assigns a new hot key.
-     *
-     * @param aNewHotKey is the new hot key.
-     */
-    void ChangeHotKey( int aNewHotKey )
-    {
-        assert( false );
-        // hotkey has to be changed in the ACTION_MANAGER, or change the implementation
-        m_currentHotKey = aNewHotKey;
-    }
-
-    /**
-     * Function RestoreHotKey()
-     * Changes the assigned hot key to the default one.
-     */
-    void RestoreHotKey()
-    {
-        assert( false );
-        // hotkey has to be changed in the ACTION_MANAGER, or change the implementation
-        m_currentHotKey = m_defaultHotKey;
-    }
-
-    /**
-     * Function HasHotKey()
-     * Checks if the action has a hot key assigned.
-     *
-     * @return True if there is a hot key assigned, false otherwise.
-     */
-    bool HasHotKey() const
-    {
-        return m_currentHotKey > 0;
-    }
+    int GetId() const { return m_id; }
 
     /**
      * Function MakeEvent()
      * Returns the event associated with the action (i.e. the event that will be sent after
      * activating the action).
-     *
-     * @return The event associated with the action.
      */
     TOOL_EVENT MakeEvent() const
     {
         if( IsActivation() )
-            return TOOL_EVENT( TC_COMMAND, TA_ACTIVATE, m_name, m_scope );
+            return TOOL_EVENT( TC_COMMAND, TA_ACTIVATE, m_name, m_scope, m_param );
         else if( IsNotification() )
-            return TOOL_EVENT( TC_MESSAGE, TA_ANY, m_name, m_scope );
+            return TOOL_EVENT( TC_MESSAGE, TA_NONE, m_name, m_scope, m_param );
         else
-            return TOOL_EVENT( TC_COMMAND, TA_ACTION, m_name, m_scope );
+            return TOOL_EVENT( TC_COMMAND, TA_ACTION, m_name, m_scope, m_param );
     }
 
-    const std::string& GetMenuItem() const
-    {
-        return m_menuItem;
-    }
+    wxString GetLabel() const;
+    wxString GetMenuItem() const;
+    wxString GetDescription() const;
 
-    void SetMenuItem( const std::string& aItem )
-    {
-        m_menuItem = aItem;
-    }
-
-    const std::string& GetDescription() const
-    {
-        return m_menuDescription;
-    }
-
-    void SetDescription( const std::string& aDescription )
-    {
-        m_menuDescription = aDescription;
-    }
-
-    TOOL_ACTION_SCOPE GetScope() const
-    {
-        return m_scope;
-    }
+    TOOL_ACTION_SCOPE GetScope() const { return m_scope; }
 
     /**
      * Returns name of the tool associated with the action. It is basically the action name
@@ -202,41 +143,35 @@ public:
         return m_flags & AF_NOTIFY;
     }
 
-private:
+    /**
+     * Returns an icon associated with the action. It is used in context menu.
+     */
+    const BITMAP_OPAQUE* GetIcon() const
+    {
+        return m_icon;
+    }
+
+protected:
+    TOOL_ACTION();
+
     friend class ACTION_MANAGER;
 
-    /// Name of the action (convention is: app.[tool.]action.name)
-    std::string m_name;
+    /// Name of the action (convention is "app.tool.actionName")
+    std::string          m_name;
+    TOOL_ACTION_SCOPE    m_scope;
 
-    /// Scope of the action (i.e. the event that is issued after activation).
-    TOOL_ACTION_SCOPE m_scope;
+    const int            m_defaultHotKey;  // Default hot key  
+    int                  m_hotKey;         // The curret hotkey (post-user-settings-application)
+    const std::string    m_legacyName;     // Name for reading legacy hotkey settings
 
-    /// Default hot key that activates the action.
-    const int m_defaultHotKey;
+    wxString             m_label;
+    wxString             m_tooltip;
+    const BITMAP_OPAQUE* m_icon;           // Icon for the menu entry
 
-    /// Custom assigned hot key that activates the action.
-    int m_currentHotKey;
+    int                  m_id;             // Unique ID for maps. Assigned by ACTION_MANAGER.
 
-    /// Menu entry text
-    std::string m_menuItem;
-
-    /// Pop-up help
-    std::string m_menuDescription;
-
-    // Icon for menu entry
-    // KiBitmap m_bitmap;
-
-    /// Unique ID for fast matching. Assigned by ACTION_MANAGER.
-    int m_id;
-
-    /// Action flags
-    TOOL_ACTION_FLAGS m_flags;
-
-    /// Origin of the action
-    // const TOOL_BASE* m_origin;
-
-    /// Originating UI object
-    // wxWindow* m_uiOrigin;
+    TOOL_ACTION_FLAGS    m_flags;
+    void*                m_param;          // Generic parameter
 };
 
 #endif

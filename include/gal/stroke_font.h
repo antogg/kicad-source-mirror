@@ -2,9 +2,9 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 2012 Torsten Hueter, torstenhtr <at> gmx.de
- * Copyright (C) 2012 Kicad Developers, see change_log.txt for contributors.
  * Copyright (C) 2013 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
+ * Copyright (C) 2016 Kicad Developers, see change_log.txt for contributors.
  *
  * Stroke font class
  *
@@ -30,6 +30,8 @@
 #define STROKE_FONT_H_
 
 #include <deque>
+#include <algorithm>
+
 #include <utf8.h>
 
 #include <eda_text.h>
@@ -40,7 +42,7 @@ namespace KIGFX
 {
 class GAL;
 
-typedef std::deque< std::deque<VECTOR2D> > GLYPH;
+typedef std::vector<std::vector<VECTOR2D>> GLYPH;
 typedef std::vector<GLYPH>                 GLYPH_LIST;
 
 /**
@@ -50,6 +52,8 @@ typedef std::vector<GLYPH>                 GLYPH_LIST;
  */
 class STROKE_FONT
 {
+    friend class GAL;
+
 public:
     /// Constructor
     STROKE_FONT( GAL* aGal );
@@ -68,69 +72,12 @@ public:
      *
      * @param aText is the text to be drawn.
      * @param aPosition is the text position in world coordinates.
-     * @param aRotationAngle is the text rotation angle.
+     * @param aRotationAngle is the text rotation angle in radians.
+     * @param markupFlags a flagset of MARKUP_FLAG enums indicating which markup tokens should
+     *                    be processed
      */
-    void Draw( const UTF8& aText, const VECTOR2D& aPosition, double aRotationAngle );
-
-    /**
-     * @brief Set the glyph size.
-     *
-     * @param aGlyphSize is the glyph size.
-     */
-    inline void SetGlyphSize( const VECTOR2D aGlyphSize )
-    {
-        m_glyphSize = aGlyphSize;
-    }
-
-    /**
-     * @brief Set a bold property of current font.
-     *
-     * @param aBold tells if the font should be bold or not.
-     */
-    inline void SetBold( const bool aBold )
-    {
-        m_bold = aBold;
-    }
-
-    /**
-     * @brief Set an italic property of current font.
-     *
-     * @param aItalic tells if the font should be italic or not.
-     */
-    inline void SetItalic( const bool aItalic )
-    {
-        m_italic = aItalic;
-    }
-
-    /**
-     * @brief Set a mirrored property of text.
-     *
-     * @param aMirrored tells if the text should be mirrored or not.
-     */
-    inline void SetMirrored( const bool aMirrored )
-    {
-        m_mirrored = aMirrored;
-    }
-
-    /**
-     * @brief Set the horizontal justify for text drawing.
-     *
-     * @param aHorizontalJustify is the horizontal justify value.
-     */
-    inline void SetHorizontalJustify( const EDA_TEXT_HJUSTIFY_T aHorizontalJustify )
-    {
-        m_horizontalJustify = aHorizontalJustify;
-    }
-
-    /**
-     * @brief Set the vertical justify for text drawing.
-     *
-     * @param aVerticalJustify is the vertical justify value.
-     */
-    inline void SetVerticalJustify( const EDA_TEXT_VJUSTIFY_T aVerticalJustify )
-    {
-        m_verticalJustify = aVerticalJustify;
-    }
+    void Draw( const UTF8& aText, const VECTOR2D& aPosition, double aRotationAngle,
+               int markupFlags );
 
     /**
      * Function SetGAL
@@ -142,21 +89,57 @@ public:
         m_gal = aGal;
     }
 
-private:
-    GAL*                m_gal;                                    ///< Pointer to the GAL
-    GLYPH_LIST          m_glyphs;                                 ///< Glyph list
-    std::vector<BOX2D>  m_glyphBoundingBoxes;                     ///< Bounding boxes of the glyphs
-    VECTOR2D            m_glyphSize;                              ///< Size of the glyphs
-    EDA_TEXT_HJUSTIFY_T m_horizontalJustify;                      ///< Horizontal justification
-    EDA_TEXT_VJUSTIFY_T m_verticalJustify;                        ///< Vertical justification
-    bool                m_bold, m_italic, m_mirrored, m_overbar;  ///< Properties of text
+    /**
+     * Compute the boundary limits of aText (the bounding box of all shapes).
+     * The overbar and alignment are not taken in account, '~' characters are skipped.
+     *
+     * @param markupFlags a flagset of MARKUP_FLAG enums indicating which markup tokens should
+     *                    be processed
+     * @return a VECTOR2D giving the width and height of text.
+     */
+    VECTOR2D ComputeStringBoundaryLimits( const UTF8& aText, const VECTOR2D& aGlyphSize,
+                                          double aGlyphThickness, int markupFlags ) const;
 
     /**
-     * @brief Returns a single line height using current settings.
-     *
-     * @return The line height.
+     * Compute the vertical position of an overbar, sometimes used in texts.
+     * This is the distance between the text base line and the overbar.
+     * @param aGlyphHeight is the height (vertical size) of the text.
+     * @param aGlyphThickness is the thickness of the lines used to draw the text.
+     * @return the relative position of the overbar axis.
      */
-    int getInterline() const;
+    double ComputeOverbarVerticalPosition( double aGlyphHeight, double aGlyphThickness ) const;
+
+    /**
+     * @brief Compute the distance (interline) between 2 lines of text (for multiline texts).
+     *
+     * @param aGlyphHeight is the height (vertical size) of the text.
+     * @return the interline.
+     */
+    static double GetInterline( double aGlyphHeight );
+
+
+
+private:
+    GAL*                m_gal;                  ///< Pointer to the GAL
+    GLYPH_LIST          m_glyphs;               ///< Glyph list
+    std::vector<BOX2D>  m_glyphBoundingBoxes;   ///< Bounding boxes of the glyphs
+
+    /**
+     * @brief Compute the X and Y size of a given text. The text is expected to be
+     * a only one line text.
+     *
+     * @param aText is the text string (one line).
+     * @param aMarkupFlags a bitset of TEXT_MARKUP_FLAGS.
+     * @return the text size.
+     */
+    VECTOR2D computeTextLineSize( const UTF8& aText, int aMarkupFlags ) const;
+
+    /**
+     * Compute the vertical position of an overbar, sometimes used in texts.
+     * This is the distance between the text base line and the overbar.
+     * @return the relative position of the overbar axis.
+     */
+    double computeOverbarVerticalPosition() const;
 
     /**
      * @brief Compute the bounding box of a given glyph.
@@ -173,15 +156,7 @@ private:
      *
      * @param aText is the text to be drawn.
      */
-    void drawSingleLineText( const UTF8& aText );
-
-    /**
-     * @brief Compute the size of a given text.
-     *
-     * @param aText is the text string.
-     * @return is the text size.
-     */
-    VECTOR2D computeTextSize( const UTF8& aText ) const;
+    void drawSingleLineText( const UTF8& aText, int markupFlags );
 
     /**
      * @brief Returns number of lines for a given text.
@@ -198,14 +173,21 @@ private:
             return std::count( aText.begin(), aText.end() - 1, '\n' ) + 1;
     }
 
-    ///> Factor that determines relative height of overbar.
-    static const double OVERBAR_HEIGHT;
+    ///> Factor that determines relative vertical position of the overbar.
+    static const double OVERBAR_POSITION_FACTOR;
 
     ///> Factor that determines relative line width for bold text.
     static const double BOLD_FACTOR;
 
     ///> Scale factor for a glyph
-    static const double HERSHEY_SCALE;
+    static const double STROKE_FONT_SCALE;
+
+    ///> Tilt factor for italic style (the is is the scaling factor
+    ///> on dY relative coordinates to give a tilst shape
+    static const double ITALIC_TILT;
+
+    ///> Factor that determines the pitch between 2 lines.
+    static const double INTERLINE_PITCH_RATIO;
 };
 } // namespace KIGFX
 

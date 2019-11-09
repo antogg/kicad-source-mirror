@@ -29,28 +29,12 @@
 #include <fctsys.h>
 #include <kiface_i.h>
 #include <pgm_base.h>
-#include <class_drawpanel.h>
-#include <confirm.h>
-#include <gestfich.h>
-
 #include <gerbview.h>
-#include <gerbview_id.h>
-#include <hotkeys.h>
 #include <gerbview_frame.h>
 
-#include <build_version.h>
-
-#include <wx/file.h>
-#include <wx/snglinst.h>
-
-// Colors for layers and items
-COLORS_DESIGN_SETTINGS g_ColorsSettings;
-int g_Default_GERBER_Format;
-
-
-const wxChar* g_GerberPageSizeList[] = {
-    wxT( "GERBER" ),    // index 0: full size page selection, and do not show page limits
-    wxT( "GERBER" ),    // index 1: full size page selection, and show page limits
+const wxChar* g_GerberPageSizeList[] =
+{
+    wxT( "GERBER" ),    // index 0: full size page selection
     wxT( "A4" ),
     wxT( "A3" ),
     wxT( "A2" ),
@@ -58,9 +42,6 @@ const wxChar* g_GerberPageSizeList[] = {
     wxT( "B" ),
     wxT( "C" ),
 };
-
-
-GERBER_IMAGE*  g_GERBER_List[32];
 
 
 namespace GERBV {
@@ -73,11 +54,11 @@ static struct IFACE : public KIFACE_I
         KIFACE_I( aName, aType )
     {}
 
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits );
+    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits ) override;
 
-    void OnKifaceEnd();
+    void OnKifaceEnd() override;
 
-    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 )
+    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 ) override
     {
         switch( aClassId )
         {
@@ -106,7 +87,7 @@ static struct IFACE : public KIFACE_I
      *
      * @return void* - and must be cast into the know type.
      */
-    void* IfaceOrAddress( int aDataId )
+    void* IfaceOrAddress( int aDataId ) override
     {
         return NULL;
     }
@@ -126,7 +107,7 @@ KIFACE_I& Kiface() { return kiface; }
 // KIFACE_GETTER will not have name mangling due to declaration in kiway.h.
 MY_API( KIFACE* ) KIFACE_GETTER(  int* aKIFACEversion, int aKiwayVersion, PGM_BASE* aProgram )
 {
-    process = (PGM_BASE*) aProgram;
+    process = aProgram;
     return &kiface;
 }
 
@@ -141,11 +122,6 @@ PGM_BASE& Pgm()
 bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 {
     start_common( aCtlBits );
-
-    // Must be called before creating the main frame in order to
-    // display the real hotkeys in menus or tool tips
-    ReadHotkeyConfig( wxT("GerberFrame"), s_Gerbview_Hokeys_Descr );
-
     return true;
 }
 

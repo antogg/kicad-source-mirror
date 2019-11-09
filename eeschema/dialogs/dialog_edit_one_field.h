@@ -6,7 +6,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2012 Jean-Pierre Charras, jean-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2012 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2016 Wayne Stambaugh, stambaughw@gmail.com
+ * Copyright (C) 2004-2016 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,106 +28,126 @@
  */
 
 #include <dialog_lib_edit_text_base.h>
-
+#include <widgets/unit_binder.h>
+#include <lib_field.h>
+#include <class_libentry.h>
+#include <template_fieldnames.h>
 
 class SCH_BASE_FRAME;
-class LIB_FIELD;
 class SCH_FIELD;
+class EDA_TEXT;
 
-// Basic class to edit a field: a schematic or a lib component field
+
+/**
+ * Class DIALOG_EDIT_ONE_FIELD
+ * is a base class to edit schematic and component library fields.
+ * <p>
+ * This class is setup in expectation of its children
+ * possibly using Kiway player so ShowQuasiModal is required when calling
+ * any subclasses.
+ *</p>
+ */
 class DIALOG_EDIT_ONE_FIELD : public DIALOG_LIB_EDIT_TEXT_BASE
 {
-protected:
-    SCH_BASE_FRAME* m_parent;
-    int m_textshape;
-    int m_textsize;
-    int m_textorient;
-    EDA_TEXT_HJUSTIFY_T m_textHjustify;
-    EDA_TEXT_VJUSTIFY_T m_textVjustify;
-    bool m_text_invisible;
-
 public:
-    DIALOG_EDIT_ONE_FIELD( SCH_BASE_FRAME* aParent, const wxString& aTitle ):
-        DIALOG_LIB_EDIT_TEXT_BASE( aParent )
-    {
-        m_parent = aParent;
-        SetTitle( aTitle );
-    }
+    DIALOG_EDIT_ONE_FIELD( SCH_BASE_FRAME* aParent, const wxString& aTitle,
+                           const EDA_TEXT* aTextItem );
 
-    // ~DIALOG_EDIT_ONE_FIELD() {};
+    ~DIALOG_EDIT_ONE_FIELD() override {}
 
-    virtual void TransfertDataToField();
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
 
-    void SetTextField( const wxString& aText )
-    {
-         m_TextValue->SetValue( aText );
-    }
+    SCH_BASE_FRAME* GetParent() { return dynamic_cast< SCH_BASE_FRAME* >( wxDialog::GetParent() ); }
+
+    const wxString& GetText() const { return m_text; }
 
 protected:
-    void initDlg_base( );
-    void OnOkClick( wxCommandEvent& aEvent )
-    {
-        EndModal(wxID_OK);
-    }
 
-    void OnCancelClick( wxCommandEvent& aEvent )
-    {
-        EndModal(wxID_CANCEL);
-    }
+    void init();
+
+    void updateText( EDA_TEXT* aText );
+
+    /**
+     * Function OnTextValueSelectButtonClick
+     * Handles the select button next to the text value field. The current assumption
+     * is that this event will only be enabled for footprint type fields. In the future
+     * this function may need to be moved to the subclasses to access m_field and check for
+     * the field type if more select actions are desired.
+     *
+     * @param aEvent is the the wX event thrown when the button is clicked, this isn't used
+     */
+    void OnTextValueSelectButtonClick( wxCommandEvent& aEvent ) override;
+
+    /**
+     * Used to select the variant part of some text fields (for instance, the question mark
+     * or number in a reference).
+     * @param event
+     */
+    virtual void OnSetFocusText( wxFocusEvent& event ) override;
+
+    UNIT_BINDER m_posX;
+    UNIT_BINDER m_posY;
+    UNIT_BINDER m_textSize;
+
+    int         m_fieldId;
+    bool        m_isPower;
+    wxString    m_text;
+    bool        m_isItalic;
+    bool        m_isBold;
+    wxPoint     m_position;
+    int         m_size;
+    bool        m_isVertical;
+    int         m_verticalJustification;
+    int         m_horizontalJustification;
+    bool        m_isVisible;
 };
 
 
-// Class to edit a lib component field
+/**
+ * Class DIALOG_LIB_EDIT_ONE_FIELD
+ * is a the class to handle editing a single component field in the library editor.
+ * <p>
+ * @note Use ShowQuasiModal when calling this class!
+ * </p>
+ */
 class DIALOG_LIB_EDIT_ONE_FIELD : public DIALOG_EDIT_ONE_FIELD
 {
-private:
-    LIB_FIELD* m_field;
-
 public:
     DIALOG_LIB_EDIT_ONE_FIELD( SCH_BASE_FRAME* aParent, const wxString& aTitle,
-                               LIB_FIELD* aField ):
-        DIALOG_EDIT_ONE_FIELD( aParent, aTitle )
+                               const LIB_FIELD* aField );
+
+    ~DIALOG_LIB_EDIT_ONE_FIELD() {}
+
+    void UpdateField( LIB_FIELD* aField )
     {
-        m_field = aField;
-        initDlg();
-        GetSizer()->SetSizeHints(this);
-        Centre();
+        aField->SetText( m_text );
+
+        // VALUE === component name, so update the parent component if it changes.
+        if( aField->GetId() == VALUE && aField->GetParent() )
+            aField->GetParent()->SetName( m_text );
+
+        updateText( aField );
     }
-
-    ~DIALOG_LIB_EDIT_ONE_FIELD() {};
-
-    void TransfertDataToField();
-    wxString GetTextField();
-
-private:
-    void initDlg( );
 };
 
 
-// Class to edit a schematic component field
+/**
+ * Class DIALOG_SCH_EDIT_ONE_FIELD
+ * is a the class to handle editing a single component field in the schematic editor.
+ * <p>
+ * @note Use ShowQuasiModal when calling this class!
+ * </p>
+ */
 class DIALOG_SCH_EDIT_ONE_FIELD : public DIALOG_EDIT_ONE_FIELD
 {
-private:
-    SCH_FIELD* m_field;
-
 public:
-    DIALOG_SCH_EDIT_ONE_FIELD( SCH_BASE_FRAME* aParent,
-                               const wxString& aTitle, SCH_FIELD* aField ):
-        DIALOG_EDIT_ONE_FIELD( aParent, aTitle )
-    {
-        m_field = aField;
-        initDlg();
-        GetSizer()->SetSizeHints(this);
-        Centre();
-    }
+    DIALOG_SCH_EDIT_ONE_FIELD( SCH_BASE_FRAME* aParent, const wxString& aTitle,
+                               const SCH_FIELD* aField );
 
-    // ~DIALOG_SCH_EDIT_ONE_FIELD() {};
+    ~DIALOG_SCH_EDIT_ONE_FIELD() {}
 
-    void TransfertDataToField();
-    wxString GetTextField();
-
-private:
-    void initDlg( );
+    void UpdateField( SCH_FIELD* aField, SCH_SHEET_PATH* aSheetPath );
 };
 
 #endif    // DIALOG_EDIT_ONE_FIELD_H_

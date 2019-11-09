@@ -47,8 +47,6 @@ macro( perform_feature_checks )
     include( CheckCXXSourceCompiles )
     include( CheckCXXCompilerFlag )
 
-    check_cxx_compiler_flag( -fvisibility=hidden GXX_HAS_VISIBILITY_FLAG )
-    check_cxx_compiler_flag( -fvisibility-inlines-hidden GXX_HAS_VISIBILITY_INLINES_FLAG )
 
     check_include_file( "malloc.h" HAVE_MALLOC_H )
 
@@ -83,6 +81,9 @@ macro( perform_feature_checks )
     check_symbol_exists( strncasecmp "strings.h" HAVE_STRNCASECMP )
     check_symbol_exists( strtok_r "string.h" HAVE_STRTOKR )
 
+    check_cxx_symbol_exists( strcasecmp "string.h" HAVE_STRCASECMP )
+    check_cxx_symbol_exists( strncasecmp "string.h" HAVE_STRNCASECMP )
+
     # Some platforms define malloc and free in malloc.h instead of stdlib.h.
     check_symbol_exists( malloc "stdlib.h" MALLOC_IN_STDLIB_H )
 
@@ -108,10 +109,5 @@ macro( perform_feature_checks )
     # Check for Posix getc_unlocked() for improved performance over getc().  Fall back to
     # getc() on platforms where getc_unlocked() doesn't exist.
     check_symbol_exists( getc_unlocked "stdio.h" HAVE_FGETC_NOLOCK )
-
-    # Generate config.h.
-    configure_file( ${PROJECT_SOURCE_DIR}/CMakeModules/config.h.cmake
-        ${CMAKE_BINARY_DIR}/config.h
-        )
 
 endmacro( perform_feature_checks )

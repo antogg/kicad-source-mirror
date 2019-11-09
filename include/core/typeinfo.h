@@ -26,9 +26,50 @@
 #ifndef __KICAD_TYPEINFO_H
 #define __KICAD_TYPEINFO_H
 
-#include <cstdio>
+
+#ifndef SWIG
+#include <type_traits>
+
+/**
+ * Function IsA()
+ *
+ * Checks if the type of aObject is T.
+ * @param aObject object for type check
+ * @return true, if aObject type equals T.
+ */
+template <class T, class I>
+bool IsA( const I* aObject )
+{
+    return aObject && std::remove_pointer<T>::type::ClassOf( aObject );
+}
+
+template <class T, class I>
+bool IsA( const I& aObject )
+{
+    return std::remove_pointer<T>::type::ClassOf( &aObject );
+}
+
+/**
+ * Function dyn_cast()
+ *
+ * A lightweight dynamic downcast. Casts aObject to type Casted*.
+ * Uses EDA_ITEM::Type() and EDA_ITEM::ClassOf() to check if type matches.
+ * @param aObject object to be casted
+ * @return down-casted object or NULL if type doesn't match Casted.
+ */
+template<class Casted, class From>
+Casted dyn_cast( From aObject )
+{
+    if( std::remove_pointer<Casted>::type::ClassOf ( aObject ) )
+        return static_cast<Casted>( aObject );
+
+    return nullptr;
+}
 
 class EDA_ITEM;
+
+#endif  // SWIG
+
 
 /**
  * Enum KICAD_T
@@ -51,15 +92,15 @@ enum KICAD_T
     PCB_TEXT_T,             ///< class TEXTE_PCB, text on a layer
     PCB_MODULE_TEXT_T,      ///< class TEXTE_MODULE, text in a footprint
     PCB_MODULE_EDGE_T,      ///< class EDGE_MODULE, a footprint edge
+    PCB_MODULE_ZONE_AREA_T, ///< class ZONE_CONTAINER, managed by a footprint
     PCB_TRACE_T,            ///< class TRACK, a track segment (segment on a copper layer)
     PCB_VIA_T,              ///< class VIA, a via (like a track segment on a copper layer)
-    PCB_ZONE_T,             ///< class SEGZONE, a segment used to fill a zone area (segment on a
-                            ///< copper layer)
     PCB_MARKER_T,           ///< class MARKER_PCB, a marker used to show something
     PCB_DIMENSION_T,        ///< class DIMENSION, a dimension (graphic item)
     PCB_TARGET_T,           ///< class PCB_TARGET, a target (graphic item)
     PCB_ZONE_AREA_T,        ///< class ZONE_CONTAINER, a zone area
     PCB_ITEM_LIST_T,        ///< class BOARD_ITEM_LIST, a list of board items
+    PCB_NETINFO_T,          ///< class NETINFO_ITEM, a description of a net
 
     // Schematic draw Items.  The order of these items effects the sort order.
     // It is currently ordered to mimic the old Eeschema locate behavior where
@@ -74,11 +115,12 @@ enum KICAD_T
     SCH_TEXT_T,
     SCH_LABEL_T,
     SCH_GLOBAL_LABEL_T,
-    SCH_HIERARCHICAL_LABEL_T,
+    SCH_HIER_LABEL_T,
     SCH_FIELD_T,
     SCH_COMPONENT_T,
     SCH_SHEET_PIN_T,
     SCH_SHEET_T,
+    SCH_PIN_T,
 
     // Be prudent with these 3 types:
     // they should be used only to locate a specific field type
@@ -86,6 +128,19 @@ enum KICAD_T
     SCH_FIELD_LOCATE_REFERENCE_T,
     SCH_FIELD_LOCATE_VALUE_T,
     SCH_FIELD_LOCATE_FOOTPRINT_T,
+    SCH_FIELD_LOCATE_DATASHEET_T,
+
+    // Same for picking wires and busses from SCH_LINE_T items
+    SCH_LINE_LOCATE_WIRE_T,
+    SCH_LINE_LOCATE_BUS_T,
+    SCH_LINE_LOCATE_GRAPHIC_LINE_T,
+
+    // Same for picking labes attached to wires and/or busses
+    SCH_LABEL_LOCATE_WIRE_T,
+    SCH_LABEL_LOCATE_BUS_T,
+
+    // matches any type
+    SCH_LOCATE_ANY_T,
 
     // General
     SCH_SCREEN_T,
@@ -115,65 +170,38 @@ enum KICAD_T
     LIB_FIELD_T,
 
     /*
-     * For GerbView: items type:
+     * For GerbView: item types:
      */
-    TYPE_GERBER_DRAW_ITEM,
+    GERBER_LAYOUT_T,
+    GERBER_DRAW_ITEM_T,
+    GERBER_IMAGE_LIST_T,
+    GERBER_IMAGE_T,
 
     /*
-     * for Pl_Editor, in undo/redo commands
+     * For Pl_Editor: item types:
      */
-    TYPE_PL_EDITOR_LAYOUT,
+    WSG_LINE_T,
+    WSG_RECT_T,
+    WSG_POLY_T,
+    WSG_TEXT_T,
+    WSG_BITMAP_T,
+    WSG_PAGE_T,
+
+    // serialized layout used in undo/redo commands
+    WS_PROXY_UNDO_ITEM_T,  // serialized layout used in undo/redo commands
+    WS_PROXY_UNDO_ITEM_PLUS_T,   // serialized layout plus page and title block settings
+
+    /*
+     * FOR PROJECT::_ELEMs
+     */
+    SYMBOL_LIB_TABLE_T,
+    FP_LIB_TABLE_T,
+    PART_LIBS_T,
+    SEARCH_STACK_T,
+    CACHE_WRAPPER_T,
 
     // End value
     MAX_STRUCT_TYPE_ID
 };
-
-template<typename T>
-struct remove_pointer
-{
-    typedef T type;
-};
-
-template<typename T>
-struct remove_pointer<T*>
-{
-    typedef typename remove_pointer<T>::type type;
-};
-
-/**
- * Function IsA()
- *
- * Checks if the type of aObject is T.
- * @param aObject object for type check
- * @return true, if aObject type equals T.
- */
-template <class T, class I>
-bool IsA( const I* aObject )
-{
-    return aObject && remove_pointer<T>::type::ClassOf( aObject );
-}
-
-template <class T, class I>
-bool IsA( const I& aObject )
-{
-    return remove_pointer<T>::type::ClassOf( &aObject );
-}
-
-/**
- * Function dyn_cast()
- *
- * A lightweight dynamic downcast. Casts aObject to type Casted*.
- * Uses EDA_ITEM::Type() and EDA_ITEM::ClassOf() to check if type matches.
- * @param aObject object to be casted
- * @return down-casted object or NULL if type doesn't match Casted.
- */
-template<class Casted, class From>
-Casted dyn_cast( From aObject )
-{
-    if( remove_pointer<Casted>::type::ClassOf ( aObject ) )
-        return static_cast<Casted>( aObject );
-
-    return NULL;
-}
 
 #endif // __KICAD_TYPEINFO_H

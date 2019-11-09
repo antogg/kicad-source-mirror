@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -25,17 +26,19 @@
 
 #include <geometry/shape_rect.h>
 
-bool PNS_VIA::PushoutForce( PNS_NODE* aNode, const VECTOR2I& aDirection, VECTOR2I& aForce,
+namespace PNS {
+
+bool VIA::PushoutForce( NODE* aNode, const VECTOR2I& aDirection, VECTOR2I& aForce,
                             bool aSolidsOnly, int aMaxIterations )
 {
     int iter = 0;
-    PNS_VIA mv( *this );
+    VIA mv( *this );
     VECTOR2I force, totalForce, force2;
 
     while( iter < aMaxIterations )
     {
-        PNS_NODE::OPT_OBSTACLE obs = aNode->CheckColliding( &mv,
-                aSolidsOnly ? PNS_ITEM::SOLID : PNS_ITEM::ANY );
+        NODE::OPT_OBSTACLE obs = aNode->CheckColliding( &mv,
+                aSolidsOnly ? ITEM::SOLID_T : ITEM::ANY_T );
 
         if( !obs )
             break;
@@ -68,7 +71,7 @@ bool PNS_VIA::PushoutForce( PNS_NODE* aNode, const VECTOR2I& aDirection, VECTOR2
 }
 
 
-const SHAPE_LINE_CHAIN PNS_VIA::Hull( int aClearance, int aWalkaroundThickness ) const
+const SHAPE_LINE_CHAIN VIA::Hull( int aClearance, int aWalkaroundThickness ) const
 {
     int cl = ( aClearance + aWalkaroundThickness / 2 );
 
@@ -78,20 +81,45 @@ const SHAPE_LINE_CHAIN PNS_VIA::Hull( int aClearance, int aWalkaroundThickness )
 }
 
 
-PNS_VIA* PNS_VIA::Clone ( ) const
+VIA* VIA::Clone() const
 {
-    PNS_VIA* v = new PNS_VIA();
+    VIA* v = new VIA();
 
     v->SetNet( Net() );
     v->SetLayers( Layers() );
     v->m_pos = m_pos;
     v->m_diameter = m_diameter;
     v->m_drill = m_drill;
-    v->m_owner = NULL;
     v->m_shape = SHAPE_CIRCLE( m_pos, m_diameter / 2 );
     v->m_rank = m_rank;
     v->m_marker = m_marker;
     v->m_viaType = m_viaType;
+    v->m_parent = m_parent;
 
     return v;
+}
+
+
+OPT_BOX2I VIA::ChangedArea( const VIA* aOther ) const
+{
+    if ( aOther->Pos() != Pos() )
+    {
+        BOX2I tmp = Shape()->BBox();
+        tmp.Merge( aOther->Shape()->BBox() );
+        return tmp;
+    }
+
+    return OPT_BOX2I();
+}
+
+const VIA_HANDLE VIA::MakeHandle() const
+{
+    VIA_HANDLE h;
+    h.pos = Pos();
+    h.layers = Layers();
+    h.net = Net();
+    h.valid = true;
+    return h;
+}
+
 }

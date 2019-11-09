@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2011 Kicad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2019 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,19 +28,20 @@
  */
 
 #include <fctsys.h>
-#include <class_drawpanel.h>
-#include <drawtxt.h>
+#include <sch_draw_panel.h>
+#include <gr_text.h>
 #include <trigo.h>
 #include <richio.h>
-#include <wxEeschemaStruct.h>
-#include <plot_common.h>
+#include <sch_edit_frame.h>
+#include <plotter.h>
 #include <kicad_string.h>
 #include <msgpanel.h>
 
 #include <sch_sheet.h>
 #include <sch_sheet_path.h>
 #include <sch_component.h>
-#include <class_netlist_object.h>
+#include <netlist_object.h>
+#include <trace_helpers.h>
 
 
 SCH_SHEET::SCH_SHEET( const wxPoint& pos ) :
@@ -53,8 +54,8 @@ SCH_SHEET::SCH_SHEET( const wxPoint& pos ) :
     m_sheetNameSize = GetDefaultTextSize();
     m_fileNameSize = GetDefaultTextSize();
     m_screen = NULL;
-    m_name.Printf( wxT( "Sheet%8.8lX" ), m_TimeStamp );
-    m_fileName.Printf( wxT( "file%8.8lX.sch" ), m_TimeStamp );
+    m_name.Printf( wxT( "Sheet%8.8lX" ), (long) m_TimeStamp );
+    m_fileName.Printf( wxT( "file%8.8lX.sch" ), (long) m_TimeStamp );
 }
 
 
@@ -82,8 +83,6 @@ SCH_SHEET::SCH_SHEET( const SCH_SHEET& aSheet ) :
 
 SCH_SHEET::~SCH_SHEET()
 {
-//    wxLogDebug( wxT( "Destroying sheet " ) + m_name );
-
     // also, look at the associated sheet & its reference count
     // perhaps it should be deleted also.
     if( m_screen )
@@ -134,180 +133,15 @@ int SCH_SHEET::GetScreenCount() const
 }
 
 
-bool SCH_SHEET::Save( FILE* aFile ) const
+SCH_SHEET* SCH_SHEET::GetRootSheet()
 {
-    if( fprintf( aFile, "$Sheet\n" ) == EOF
-        || fprintf( aFile, "S %-4d %-4d %-4d %-4d\n",
-                    m_pos.x, m_pos.y, m_size.x, m_size.y ) == EOF )
-        return false;
+    SCH_SHEET* sheet = dynamic_cast< SCH_SHEET* >( GetParent() );
 
-    //save the unique timestamp, like other schematic parts.
-    if( fprintf( aFile, "U %8.8lX\n", m_TimeStamp ) == EOF )
-        return false;
+    if( sheet == NULL )
+        return this;
 
-    /* Save schematic sheetname and filename. */
-    if( !m_name.IsEmpty() )
-    {
-        if( fprintf( aFile, "F0 %s %d\n", EscapedUTF8( m_name ).c_str(),
-                     m_sheetNameSize ) == EOF )
-            return false;
-    }
-
-    if( !m_fileName.IsEmpty() )
-    {
-        if( fprintf( aFile, "F1 %s %d\n", EscapedUTF8( m_fileName ).c_str(),
-                     m_fileNameSize ) == EOF )
-            return false;
-    }
-
-    /* Save the list of labels in the sheet. */
-
-    BOOST_FOREACH( const SCH_SHEET_PIN& label, m_pins )
-    {
-        if( !label.Save( aFile ) )
-            return false;
-    }
-
-    if( fprintf( aFile, "$EndSheet\n" ) == EOF )
-        return false;
-
-    return true;
-}
-
-
-bool SCH_SHEET::Load( LINE_READER& aLine, wxString& aErrorMsg )
-{
-    int              fieldNdx, size;
-    SCH_SHEET_PIN*   sheetPin;
-    char*            ptcar;
-
-    SetTimeStamp( GetNewTimeStamp() );
-
-    // sheets are added to the GetDrawItems() like other schematic components.
-    // however, in order to preserve the hierarchy (through m_Parent pointers),
-    // a duplicate of the sheet is added to m_SubSheet array.
-    // must be a duplicate, references just work for a two-layer structure.
-    // this is accomplished through the Sync() function.
-
-    if( ((char*)aLine)[0] == '$' )   // line should be "$Sheet"
-    {
-        if( !aLine.ReadLine() )
-        {
-            aErrorMsg.Printf( wxT( "Read File Error" ) );
-            return false;
-        }
-    }
-
-    /* Next line: must be "S xx yy nn mm" with xx, yy = sheet position
-     *  ( upper left corner  ) et nn,mm = sheet size */
-    if( ( sscanf( &((char*)aLine)[1], "%d %d %d %d",
-                  &m_pos.x, &m_pos.y, &m_size.x, &m_size.y ) != 4 )
-        || ( ((char*)aLine)[0] != 'S' ) )
-    {
-        aErrorMsg.Printf( wxT( " ** Eeschema file sheet struct error at line %d, aborted\n" ),
-                          aLine.LineNumber() );
-
-        aErrorMsg << FROM_UTF8( ((char*)aLine) );
-        return false;
-    }
-
-    /* Read fields */
-    for( ; ; ) /* Analysis of lines "Fn" text. */
-    {
-        if( !aLine.ReadLine() )
-            return false;
-
-        if( ((char*)aLine)[0] == 'U' )
-        {
-            sscanf( ((char*)aLine) + 1, "%lX", &m_TimeStamp );
-            if( m_TimeStamp == 0 )  // zero is not unique!
-                SetTimeStamp( GetNewTimeStamp() );
-            continue;
-        }
-
-        if( ((char*)aLine)[0] != 'F' )
-            break;
-
-        sscanf( ((char*)aLine) + 1, "%d", &fieldNdx );
-
-        /* Read the field:
-         * If fieldNdx> = 2: Fn "text" t s posx posy
-         * If F0 "text" for SheetName
-         * F1 and "text" for filename
-         */
-        ptcar = ((char*)aLine);
-
-        while( *ptcar && ( *ptcar != '"' ) )
-            ptcar++;
-
-        if( *ptcar != '"' )
-        {
-            aErrorMsg.Printf( wxT( "Eeschema file sheet label F%d at line %d, aborted\n" ),
-                              fieldNdx, aLine.LineNumber() );
-            aErrorMsg << FROM_UTF8( (char*) aLine );
-            return false;
-        }
-
-        wxString sheetName;
-        ptcar += ReadDelimitedText( &sheetName, ptcar );
-
-        if( *ptcar == 0 )
-        {
-            aErrorMsg.Printf( wxT( "Eeschema file sheet field F at line %d, aborted\n" ),
-                              aLine.LineNumber() );
-            aErrorMsg << FROM_UTF8( (char*) aLine );
-            return false;
-        }
-
-        if( ( fieldNdx == 0 ) || ( fieldNdx == 1 ) )
-        {
-            if( sscanf( ptcar, "%d", &size ) != 1 )
-            {
-                aErrorMsg.Printf( wxT( "Eeschema file sheet Label error line %d, aborted\n" ),
-                                  aLine.LineNumber() );
-
-                aErrorMsg << FROM_UTF8( (char*) aLine );
-            }
-
-            if( size == 0 )
-                size = GetDefaultTextSize();
-
-            if( fieldNdx == 0 )
-            {
-                m_name     = sheetName;
-                m_sheetNameSize = size;
-            }
-            else
-            {
-                SetFileName( sheetName );
-                m_fileNameSize = size;
-            }
-        }
-
-        if( fieldNdx > 1 )
-        {
-            sheetPin = new SCH_SHEET_PIN( this );
-
-            if( !sheetPin->Load( aLine, aErrorMsg ) )
-            {
-                delete sheetPin;
-                sheetPin = NULL;
-                return false;
-            }
-
-            AddPin( sheetPin );
-        }
-    }
-
-    if( strnicmp( "$End", ((char*)aLine), 4 ) != 0 )
-    {
-        aErrorMsg.Printf( wxT( "**Eeschema file end_sheet struct error at line %d, aborted\n" ),
-                          aLine.LineNumber() );
-        aErrorMsg << FROM_UTF8( ((char*)aLine) );
-        return false;
-    }
-
-    return true;
+    // Recurse until a sheet is found with no parent which is the root sheet.
+    return sheet->GetRootSheet();
 }
 
 
@@ -319,21 +153,21 @@ void SCH_SHEET::SwapData( SCH_ITEM* aItem )
 
     SCH_SHEET* sheet = ( SCH_SHEET* ) aItem;
 
-    EXCHG( m_pos, sheet->m_pos );
-    EXCHG( m_size, sheet->m_size );
-    EXCHG( m_name, sheet->m_name );
-    EXCHG( m_sheetNameSize, sheet->m_sheetNameSize );
-    EXCHG( m_fileNameSize, sheet->m_fileNameSize );
+    std::swap( m_pos, sheet->m_pos );
+    std::swap( m_size, sheet->m_size );
+    std::swap( m_name, sheet->m_name );
+    std::swap( m_sheetNameSize, sheet->m_sheetNameSize );
+    std::swap( m_fileNameSize, sheet->m_fileNameSize );
     m_pins.swap( sheet->m_pins );
 
     // Ensure sheet labels have their .m_Parent member pointing really on their
     // parent, after swapping.
-    BOOST_FOREACH( SCH_SHEET_PIN& sheetPin, m_pins )
+    for( SCH_SHEET_PIN& sheetPin : m_pins )
     {
         sheetPin.SetParent( this );
     }
 
-    BOOST_FOREACH( SCH_SHEET_PIN& sheetPin, sheet->m_pins )
+    for( SCH_SHEET_PIN& sheetPin : sheet->m_pins )
     {
         sheetPin.SetParent( sheet );
     }
@@ -374,7 +208,7 @@ void SCH_SHEET::RemovePin( SCH_SHEET_PIN* aSheetPin )
 
 bool SCH_SHEET::HasPin( const wxString& aName )
 {
-    BOOST_FOREACH( SCH_SHEET_PIN pin, m_pins )
+    for( const SCH_SHEET_PIN& pin : m_pins )
     {
         if( pin.GetText().CmpNoCase( aName ) == 0 )
             return true;
@@ -386,18 +220,28 @@ bool SCH_SHEET::HasPin( const wxString& aName )
 
 bool SCH_SHEET::IsVerticalOrientation() const
 {
-    BOOST_FOREACH( SCH_SHEET_PIN pin, m_pins )
+    int leftRight = 0;
+    int topBottom = 0;
+
+    for( const SCH_SHEET_PIN& pin : m_pins )
     {
-        if( pin.GetEdge() > 1 )
-            return true;
+        switch( pin.GetEdge() )
+        {
+        case SHEET_LEFT_SIDE:   leftRight++; break;
+        case SHEET_RIGHT_SIDE:  leftRight++; break;
+        case SHEET_TOP_SIDE:    topBottom++; break;
+        case SHEET_BOTTOM_SIDE: topBottom++; break;
+        default:                             break;
+        }
     }
-    return false;
+
+    return topBottom > 0 && leftRight == 0;
 }
 
 
 bool SCH_SHEET::HasUndefinedPins()
 {
-    BOOST_FOREACH( SCH_SHEET_PIN pin, m_pins )
+    for( const SCH_SHEET_PIN& pin : m_pins )
     {
         /* Search the schematic for a hierarchical label corresponding to this sheet label. */
         EDA_ITEM* DrawStruct  = m_screen->GetDrawItems();
@@ -405,7 +249,7 @@ bool SCH_SHEET::HasUndefinedPins()
 
         for( ; DrawStruct != NULL; DrawStruct = DrawStruct->Next() )
         {
-            if( DrawStruct->Type() != SCH_HIERARCHICAL_LABEL_T )
+            if( DrawStruct->Type() != SCH_HIER_LABEL_T )
                 continue;
 
             HLabel = static_cast<SCH_HIERLABEL*>( DrawStruct );
@@ -431,25 +275,31 @@ int SCH_SHEET::GetMinWidth() const
     for( size_t i = 0; i < m_pins.size();  i++ )
     {
         int edge = m_pins[i].GetEdge();
+        EDA_RECT pinRect = m_pins[i].GetBoundingBox();
 
-        // Make sure pin is on right or left side of sheet.
-        if( edge >= 2 )
-            continue;
+        wxASSERT( edge != SHEET_UNDEFINED_SIDE );
 
-        EDA_RECT rect = m_pins[i].GetBoundingBox();
-
-        if( width < rect.GetWidth() )
-            width = rect.GetWidth();
-
-        for( size_t j = 0; j < m_pins.size(); j++ )
+        if( edge == SHEET_TOP_SIDE || edge == SHEET_BOTTOM_SIDE )
         {
-            if( (i == j) || (m_pins[i].GetPosition().y != m_pins[j].GetPosition().y) )
-                continue;
+            if( width < pinRect.GetRight() - m_pos.x )
+                width = pinRect.GetRight() - m_pos.x;
+        }
+        else
+        {
+            if( width < pinRect.GetWidth() )
+                width = pinRect.GetWidth();
 
-            if( width < rect.GetWidth() + m_pins[j].GetBoundingBox().GetWidth() )
+            for( size_t j = 0; j < m_pins.size(); j++ )
             {
-                width = rect.GetWidth() + m_pins[j].GetBoundingBox().GetWidth();
-                break;
+                // Check for pin directly across from the current pin.
+                if( (i == j) || (m_pins[i].GetPosition().y != m_pins[j].GetPosition().y) )
+                    continue;
+
+                if( width < pinRect.GetWidth() + m_pins[j].GetBoundingBox().GetWidth() )
+                {
+                    width = pinRect.GetWidth() + m_pins[j].GetBoundingBox().GetWidth();
+                    break;
+                }
             }
         }
     }
@@ -464,19 +314,39 @@ int SCH_SHEET::GetMinHeight() const
 
     for( size_t i = 0; i < m_pins.size();  i++ )
     {
-        int pinY = m_pins[i].GetPosition().y - m_pos.y;
+        int edge = m_pins[i].GetEdge();
+        EDA_RECT pinRect = m_pins[i].GetBoundingBox();
 
-        if( pinY > height )
-            height = pinY;
+        // Make sure pin is on top or bottom side of sheet.
+        if( edge == SHEET_RIGHT_SIDE || edge == SHEET_LEFT_SIDE )
+        {
+            if( height < pinRect.GetBottom() - m_pos.y )
+                height = pinRect.GetBottom() - m_pos.y;
+        }
+        else
+        {
+            if( height < pinRect.GetHeight() )
+                height = pinRect.GetHeight();
+
+            for( size_t j = 0; j < m_pins.size(); j++ )
+            {
+                // Check for pin directly above or below the current pin.
+                if( (i == j) || (m_pins[i].GetPosition().x != m_pins[j].GetPosition().x) )
+                    continue;
+
+                if( height < pinRect.GetHeight() + m_pins[j].GetBoundingBox().GetHeight() )
+                {
+                    height = pinRect.GetHeight() + m_pins[j].GetBoundingBox().GetHeight();
+                    break;
+                }
+            }
+        }
     }
 
     return height;
 }
 
 
-/**
- * Delete sheet labels which do not have corresponding hierarchical label.
- */
 void SCH_SHEET::CleanupSheet()
 {
     SCH_SHEET_PINS::iterator i = m_pins.begin();
@@ -489,7 +359,7 @@ void SCH_SHEET::CleanupSheet()
 
         for( ; DrawStruct != NULL; DrawStruct = DrawStruct->Next() )
         {
-            if( DrawStruct->Type() != SCH_HIERARCHICAL_LABEL_T )
+            if( DrawStruct->Type() != SCH_HIER_LABEL_T )
                 continue;
 
             HLabel = static_cast<SCH_HIERLABEL*>( DrawStruct );
@@ -501,7 +371,7 @@ void SCH_SHEET::CleanupSheet()
         }
 
         if( HLabel == NULL )   // Hlabel not found: delete sheet label.
-            m_pins.erase( i );
+            i = m_pins.erase( i );
         else
             ++i;
     }
@@ -510,9 +380,9 @@ void SCH_SHEET::CleanupSheet()
 
 SCH_SHEET_PIN* SCH_SHEET::GetPin( const wxPoint& aPosition )
 {
-    BOOST_FOREACH( SCH_SHEET_PIN& pin, m_pins )
+    for( SCH_SHEET_PIN& pin : m_pins )
     {
-        if( pin.HitTest( aPosition, 0 ) )
+        if( pin.HitTest( aPosition ) )
             return &pin;
     }
 
@@ -529,15 +399,16 @@ int SCH_SHEET::GetPenSize() const
 wxPoint SCH_SHEET::GetSheetNamePosition()
 {
     wxPoint pos = m_pos;
+    int     margin = KiROUND( GetPenSize() / 2.0 + 4 + m_sheetNameSize * 0.3 );
 
     if( IsVerticalOrientation() )
     {
-        pos.x -= 8;
+        pos.x -= margin;
         pos.y += m_size.y;
     }
     else
     {
-        pos.y -= 8;
+        pos.y -= margin;
     }
 
     return pos;
@@ -547,7 +418,7 @@ wxPoint SCH_SHEET::GetSheetNamePosition()
 wxPoint SCH_SHEET::GetFileNamePosition()
 {
     wxPoint  pos = m_pos;
-    int      margin = GetPenSize() + 4;
+    int      margin = KiROUND( GetPenSize() / 2.0 + 4 + m_fileNameSize * 0.4 );
 
     if( IsVerticalOrientation() )
     {
@@ -563,69 +434,54 @@ wxPoint SCH_SHEET::GetFileNamePosition()
 }
 
 
-void SCH_SHEET::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC,
-                      const wxPoint& aOffset, GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor )
+void SCH_SHEET::ViewGetLayers( int aLayers[], int& aCount ) const
 {
-    EDA_COLOR_T txtcolor;
-    wxString Text;
-    EDA_COLOR_T color;
-    int      name_orientation;
-    wxPoint  pos_sheetname,pos_filename;
-    wxPoint  pos = m_pos + aOffset;
-    int      lineWidth = GetPenSize();
-    EDA_RECT* clipbox  = aPanel? aPanel->GetClipBox() : NULL;
+    aCount      = 4;
+    aLayers[0]  = LAYER_HIERLABEL;
+    aLayers[1]  = LAYER_SHEET;
+    aLayers[2]  = LAYER_SHEET_BACKGROUND;
+    aLayers[3]  = LAYER_SELECTION_SHADOWS;
+}
 
-    if( aColor >= 0 )
-        color = aColor;
-    else
-        color = GetLayerColor( m_Layer );
 
-    GRSetDrawMode( aDC, aDrawMode );
+void SCH_SHEET::Print( wxDC* aDC, const wxPoint& aOffset )
+{
+    wxString  Text;
+    int       name_orientation;
+    wxPoint   pos_sheetname,pos_filename;
+    wxPoint   pos = m_pos + aOffset;
+    int       lineWidth = GetPenSize();
+    int       textWidth;
+    wxSize    textSize;
+    COLOR4D   color = GetLayerColor( m_Layer );
 
-    GRRect( clipbox, aDC, pos.x, pos.y,
-            pos.x + m_size.x, pos.y + m_size.y, lineWidth, color );
+    GRRect( nullptr, aDC, pos.x, pos.y, pos.x + m_size.x, pos.y + m_size.y, lineWidth, color );
 
     pos_sheetname = GetSheetNamePosition() + aOffset;
     pos_filename = GetFileNamePosition() + aOffset;
 
     if( IsVerticalOrientation() )
-        name_orientation = TEXT_ORIENT_VERT;
+        name_orientation = TEXT_ANGLE_VERT;
     else
-        name_orientation = TEXT_ORIENT_HORIZ;
+        name_orientation = TEXT_ANGLE_HORIZ;
 
     /* Draw text : SheetName */
-    if( aColor > 0 )
-        txtcolor = aColor;
-    else
-        txtcolor = GetLayerColor( LAYER_SHEETNAME );
-
     Text = wxT( "Sheet: " ) + m_name;
-    DrawGraphicText( clipbox, aDC, pos_sheetname,
-                     (EDA_COLOR_T) txtcolor, Text, name_orientation,
-                     wxSize( m_sheetNameSize, m_sheetNameSize ),
-                     GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_BOTTOM, lineWidth,
-                     false, false );
+    textSize = wxSize( m_sheetNameSize, m_sheetNameSize );
+    textWidth = Clamp_Text_PenSize( lineWidth, textSize, false );
+    GRText( aDC, pos_sheetname, GetLayerColor( LAYER_SHEETNAME ), Text, name_orientation,
+            textSize, GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_BOTTOM, textWidth, false, false );
 
     /* Draw text : FileName */
-    if( aColor >= 0 )
-        txtcolor = aColor;
-    else
-        txtcolor = GetLayerColor( LAYER_SHEETFILENAME );
-
     Text = wxT( "File: " ) + m_fileName;
-    DrawGraphicText( clipbox, aDC, pos_filename,
-                     (EDA_COLOR_T) txtcolor, Text, name_orientation,
-                     wxSize( m_fileNameSize, m_fileNameSize ),
-                     GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_TOP, lineWidth,
-                     false, false );
-
+    textSize = wxSize( m_fileNameSize, m_fileNameSize );
+    textWidth = Clamp_Text_PenSize( lineWidth, textSize, false );
+    GRText( aDC, pos_filename, GetLayerColor( LAYER_SHEETFILENAME ), Text, name_orientation,
+            textSize, GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_TOP, textWidth, false, false );
 
     /* Draw text : SheetLabel */
-    BOOST_FOREACH( SCH_SHEET_PIN& sheetPin, m_pins )
-    {
-        if( !sheetPin.IsMoving() )
-            sheetPin.Draw( aPanel, aDC, aOffset, aDrawMode, aColor );
-    }
+    for( SCH_SHEET_PIN& sheetPin : m_pins )
+        sheetPin.Print( aDC, aOffset );
 }
 
 
@@ -637,9 +493,12 @@ const EDA_RECT SCH_SHEET::GetBoundingBox() const
 
     // Determine length of texts
     wxString text    = wxT( "Sheet: " ) + m_name;
-    int      textlen  = GraphicTextWidth( text, m_sheetNameSize, false, lineWidth );
+    int      textlen  = GraphicTextWidth( text, wxSize( m_sheetNameSize, m_sheetNameSize ),
+                                          false, false );
+
     text = wxT( "File: " ) + m_fileName;
-    int      textlen2 = GraphicTextWidth( text, m_fileNameSize, false, lineWidth );
+    int      textlen2 = GraphicTextWidth( text, wxSize( m_fileNameSize, m_fileNameSize ),
+                                          false, false );
 
     // Calculate bounding box X size:
     textlen = std::max( textlen, textlen2 );
@@ -657,6 +516,13 @@ const EDA_RECT SCH_SHEET::GetBoundingBox() const
     box.Inflate( lineWidth / 2 );
 
     return box;
+}
+
+
+wxPoint SCH_SHEET::GetRotationCenter() const
+{
+    EDA_RECT box( m_pos, m_size );
+    return box.GetCenter();
 }
 
 
@@ -700,17 +566,21 @@ bool SCH_SHEET::SearchHierarchy( const wxString& aFilename, SCH_SCREEN** aScreen
         {
             if( item->Type() == SCH_SHEET_T )
             {
-                SCH_SHEET* sheet = (SCH_SHEET*) item;
+                // Must use the screen's path (which is always absolute) rather than the
+                // sheet's (which could be relative).
 
-                if( sheet->m_screen
-                    && sheet->m_screen->GetFileName().CmpNoCase( aFilename ) == 0 )
+                SCH_SHEET*  sheet = (SCH_SHEET*) item;
+                SCH_SCREEN* screen = sheet->m_screen;
+
+                if( screen && screen->GetFileName().CmpNoCase( aFilename ) == 0 )
                 {
-                    *aScreen = sheet->m_screen;
+                    *aScreen = screen;
                     return true;
                 }
-
-                if( sheet->SearchHierarchy( aFilename, aScreen ) )
+                else if( sheet->SearchHierarchy( aFilename, aScreen ) )
+                {
                     return true;
+                }
             }
 
             item = item->Next();
@@ -725,7 +595,7 @@ bool SCH_SHEET::LocatePathOfScreen( SCH_SCREEN* aScreen, SCH_SHEET_PATH* aList )
 {
     if( m_screen )
     {
-        aList->Push( this );
+        aList->push_back( this );
 
         if( m_screen == aScreen )
             return true;
@@ -745,54 +615,10 @@ bool SCH_SHEET::LocatePathOfScreen( SCH_SCREEN* aScreen, SCH_SHEET_PATH* aList )
             strct = strct->Next();
         }
 
-        aList->Pop();
+        aList->pop_back();
     }
+
     return false;
-}
-
-
-bool SCH_SHEET::Load( SCH_EDIT_FRAME* aFrame )
-{
-    bool success = true;
-
-    if( !m_screen )
-    {
-        SCH_SCREEN* screen = NULL;
-        g_RootSheet->SearchHierarchy( m_fileName, &screen );
-
-        if( screen )
-        {
-            SetScreen( screen );
-
-            //do not need to load the sub-sheets - this has already been done.
-        }
-        else
-        {
-            SetScreen( new SCH_SCREEN( &aFrame->Kiway() ) );
-
-            success = aFrame->LoadOneEEFile( m_screen, m_fileName );
-
-            if( success )
-            {
-                EDA_ITEM* bs = m_screen->GetDrawItems();
-
-                while( bs )
-                {
-                    if( bs->Type() == SCH_SHEET_T )
-                    {
-                        SCH_SHEET* sheetstruct = (SCH_SHEET*) bs;
-
-                        if( !sheetstruct->Load( aFrame ) )
-                            success = false;
-                    }
-
-                    bs = bs->Next();
-                }
-            }
-        }
-    }
-
-    return success;
 }
 
 
@@ -823,10 +649,10 @@ wxString SCH_SHEET::GetFileName( void ) const
 }
 
 
-void SCH_SHEET::GetMsgPanelInfo( MSG_PANEL_ITEMS& aList )
+void SCH_SHEET::GetMsgPanelInfo( EDA_UNITS_T aUnits, MSG_PANEL_ITEMS& aList )
 {
-    aList.push_back( MSG_PANEL_ITEM( _( "Sheet name" ), m_name, CYAN ) );
-    aList.push_back( MSG_PANEL_ITEM( _( "File name" ), m_fileName, BROWN ) );
+    aList.push_back( MSG_PANEL_ITEM( _( "Sheet Name" ), m_name, CYAN ) );
+    aList.push_back( MSG_PANEL_ITEM( _( "File Name" ), m_fileName, BROWN ) );
 
 #if 0   // Set to 1 to display the sheet time stamp (mainly for test)
     wxString msg;
@@ -844,16 +670,16 @@ void SCH_SHEET::Rotate(wxPoint aPosition)
     if( m_size.x < 0 )
     {
         m_pos.x += m_size.x;
-        NEGATE( m_size.x );
+        m_size.x = -m_size.x;
     }
 
     if( m_size.y < 0 )
     {
         m_pos.y += m_size.y;
-        NEGATE( m_size.y );
+        m_size.y = -m_size.y;
     }
 
-    BOOST_FOREACH( SCH_SHEET_PIN& sheetPin, m_pins )
+    for( SCH_SHEET_PIN& sheetPin : m_pins )
     {
         sheetPin.Rotate( aPosition );
     }
@@ -862,12 +688,10 @@ void SCH_SHEET::Rotate(wxPoint aPosition)
 
 void SCH_SHEET::MirrorX( int aXaxis_position )
 {
-    m_pos.y -= aXaxis_position;
-    NEGATE( m_pos.y );
-    m_pos.y += aXaxis_position;
+    MIRROR( m_pos.y, aXaxis_position );
     m_pos.y -= m_size.y;
 
-    BOOST_FOREACH( SCH_SHEET_PIN& sheetPin, m_pins )
+    for( SCH_SHEET_PIN& sheetPin : m_pins )
     {
         sheetPin.MirrorX( aXaxis_position );
     }
@@ -876,16 +700,22 @@ void SCH_SHEET::MirrorX( int aXaxis_position )
 
 void SCH_SHEET::MirrorY( int aYaxis_position )
 {
-    m_pos.x -= aYaxis_position;
-    NEGATE( m_pos.x );
-    m_pos.x += aYaxis_position;
+    MIRROR( m_pos.x, aYaxis_position );
     m_pos.x -= m_size.x;
 
-    BOOST_FOREACH( SCH_SHEET_PIN& label, m_pins )
+    for( SCH_SHEET_PIN& label : m_pins )
     {
         label.MirrorY( aYaxis_position );
     }
 }
+
+void SCH_SHEET::SetPosition( const wxPoint& aPosition )
+{
+    // Remember the sheet and all pin sheet positions must be
+    // modified. So use Move function to do that.
+    Move( aPosition - m_pos );
+}
+
 
 
 void SCH_SHEET::Resize( const wxSize& aSize )
@@ -896,32 +726,26 @@ void SCH_SHEET::Resize( const wxSize& aSize )
     m_size = aSize;
 
     /* Move the sheet labels according to the new sheet size. */
-    BOOST_FOREACH( SCH_SHEET_PIN& label, m_pins )
+    for( SCH_SHEET_PIN& label : m_pins )
     {
         label.ConstrainOnEdge( label.GetPosition() );
     }
 }
 
 
-bool SCH_SHEET::Matches( wxFindReplaceData& aSearchData, void* aAuxData, wxPoint* aFindLocation )
+bool SCH_SHEET::Matches( wxFindReplaceData& aSearchData, void* aAuxData )
 {
-    wxLogTrace( traceFindItem, wxT( "  item " ) + GetSelectMenuText() );
+    wxLogTrace( traceFindItem, wxT( "  item " ) + GetSelectMenuText( MILLIMETRES ) );
 
     // Ignore the sheet file name if searching to replace.
     if( !(aSearchData.GetFlags() & FR_SEARCH_REPLACE)
         && SCH_ITEM::Matches( m_fileName, aSearchData ) )
     {
-        if( aFindLocation )
-            *aFindLocation = GetFileNamePosition();
-
         return true;
     }
 
     if( SCH_ITEM::Matches( m_name, aSearchData ) )
     {
-        if( aFindLocation )
-            *aFindLocation = GetSheetNamePosition();
-
         return true;
     }
 
@@ -939,7 +763,7 @@ void SCH_SHEET::renumberPins()
 {
     int id = 2;
 
-    BOOST_FOREACH( SCH_SHEET_PIN& pin, m_pins )
+    for( SCH_SHEET_PIN& pin : m_pins )
     {
         pin.SetNumber( id );
         id++;
@@ -961,44 +785,14 @@ void SCH_SHEET::GetEndPoints( std::vector <DANGLING_END_ITEM>& aItemList )
 }
 
 
-bool SCH_SHEET::IsDanglingStateChanged( std::vector< DANGLING_END_ITEM >& aItemList )
+bool SCH_SHEET::UpdateDanglingState( std::vector<DANGLING_END_ITEM>& aItemList )
 {
-    bool currentState = IsDangling();
+    bool changed = false;
 
-    BOOST_FOREACH( SCH_SHEET_PIN& pinsheet, GetPins() )
-    {
-        pinsheet.IsDanglingStateChanged( aItemList );
-    }
+    for( SCH_SHEET_PIN& pinsheet : GetPins() )
+        changed |= pinsheet.UpdateDanglingState( aItemList );
 
-    return currentState != IsDangling();
-}
-
-
-bool SCH_SHEET::IsDangling() const
-{
-    // If any hierarchical label in the sheet is dangling, then the sheet is dangling.
-    for( size_t i = 0; i < GetPins().size(); i++ )
-    {
-        if( GetPins()[i].IsDangling() )
-            return true;
-    }
-
-    return false;
-}
-
-
-bool SCH_SHEET::IsSelectStateChanged( const wxRect& aRect )
-{
-    bool previousState = IsSelected();
-
-    EDA_RECT boundingBox = GetBoundingBox();
-
-    if( aRect.Intersects( boundingBox ) )
-        SetFlags( SELECTED );
-    else
-        ClearFlags( SELECTED );
-
-    return previousState != IsSelected();
+    return changed;
 }
 
 
@@ -1009,25 +803,25 @@ void SCH_SHEET::GetConnectionPoints( std::vector< wxPoint >& aPoints ) const
 }
 
 
-SEARCH_RESULT SCH_SHEET::Visit( INSPECTOR* aInspector, const void* aTestData,
-                                const KICAD_T aFilterTypes[] )
+SEARCH_RESULT SCH_SHEET::Visit( INSPECTOR aInspector, void* testData, const KICAD_T aFilterTypes[] )
 {
     KICAD_T stype;
 
     for( const KICAD_T* p = aFilterTypes;  (stype = *p) != EOT;   ++p )
     {
         // If caller wants to inspect my type
-        if( stype == Type() )
+        if( stype == SCH_LOCATE_ANY_T || stype == Type() )
         {
-            if( SEARCH_QUIT == aInspector->Inspect( this, NULL ) )
+            if( SEARCH_QUIT == aInspector( this, NULL ) )
                 return SEARCH_QUIT;
         }
-        else if( stype == SCH_SHEET_PIN_T )
+
+        if( stype == SCH_LOCATE_ANY_T || stype == SCH_SHEET_PIN_T )
         {
             // Test the sheet labels.
             for( size_t i = 0;  i < m_pins.size();  i++ )
             {
-                if( SEARCH_QUIT == aInspector->Inspect( &m_pins[ i ], (void*) this ) )
+                if( SEARCH_QUIT == aInspector( &m_pins[ i ], this ) )
                     return SEARCH_QUIT;
             }
         }
@@ -1037,11 +831,15 @@ SEARCH_RESULT SCH_SHEET::Visit( INSPECTOR* aInspector, const void* aTestData,
 }
 
 
-wxString SCH_SHEET::GetSelectMenuText() const
+wxString SCH_SHEET::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
-    wxString tmp;
-    tmp.Printf( _( "Hierarchical Sheet %s" ), GetChars( m_name ) );
-    return tmp;
+    return wxString::Format( _( "Hierarchical Sheet %s" ), m_name );
+}
+
+
+BITMAP_DEF SCH_SHEET::GetMenuImage() const
+{
+    return add_hierarchical_subsheet_xpm;
 }
 
 
@@ -1068,17 +866,11 @@ bool SCH_SHEET::HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy )
 }
 
 
-wxPoint SCH_SHEET::GetResizePosition() const
-{
-    return wxPoint( m_pos.x + m_size.GetWidth(), m_pos.y + m_size.GetHeight() );
-}
-
-
 void SCH_SHEET::GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
                                 SCH_SHEET_PATH*      aSheetPath )
 {
     SCH_SHEET_PATH sheetPath = *aSheetPath;
-    sheetPath.Push( this );
+    sheetPath.push_back( this );
 
     for( size_t i = 0;  i < m_pins.size();  i++ )
     {
@@ -1088,12 +880,12 @@ void SCH_SHEET::GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
         item->m_Comp = &m_pins[i];
         item->m_Link = this;
         item->m_Type = NET_SHEETLABEL;
-        item->m_ElectricalType = m_pins[i].GetShape();
         item->m_Label = m_pins[i].GetText();
         item->m_Start = item->m_End = m_pins[i].GetPosition();
         aNetListItems.push_back( item );
 
-        if( IsBusLabel( m_pins[i].GetText() ) )
+        SCH_CONNECTION conn;
+        if( conn.IsBusLabel( m_pins[i].GetText() ) )
             item->ConvertBusToNetListItems( aNetListItems );
     }
 }
@@ -1101,7 +893,7 @@ void SCH_SHEET::GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
 
 void SCH_SHEET::Plot( PLOTTER* aPlotter )
 {
-    EDA_COLOR_T txtcolor = UNSPECIFIED_COLOR;
+    COLOR4D    txtcolor = COLOR4D::UNSPECIFIED;
     wxSize      size;
     wxString    Text;
     int         name_orientation;
@@ -1131,13 +923,13 @@ void SCH_SHEET::Plot( PLOTTER* aPlotter )
     {
         pos_sheetname    = wxPoint( m_pos.x - 8, m_pos.y + m_size.y );
         pos_filename     = wxPoint( m_pos.x + m_size.x + 4, m_pos.y + m_size.y );
-        name_orientation = TEXT_ORIENT_VERT;
+        name_orientation = TEXT_ANGLE_VERT;
     }
     else
     {
         pos_sheetname    = wxPoint( m_pos.x, m_pos.y - 4 );
         pos_filename     = wxPoint( m_pos.x, m_pos.y + m_size.y + 4 );
-        name_orientation = TEXT_ORIENT_HORIZ;
+        name_orientation = TEXT_ANGLE_HORIZ;
     }
 
     /* Draw texts: SheetName */
@@ -1151,7 +943,7 @@ void SCH_SHEET::Plot( PLOTTER* aPlotter )
     aPlotter->SetColor( GetLayerColor( LAYER_SHEETNAME ) );
 
     bool italic = false;
-    aPlotter->Text( pos_sheetname, txtcolor, Text, name_orientation, size,
+    aPlotter->Text( pos_sheetname, txtcolor, wxT( "Sheet: " ) + Text, name_orientation, size,
                     GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_BOTTOM,
                     thickness, italic, false );
 
@@ -1163,7 +955,7 @@ void SCH_SHEET::Plot( PLOTTER* aPlotter )
 
     aPlotter->SetColor( GetLayerColor( LAYER_SHEETFILENAME ) );
 
-    aPlotter->Text( pos_filename, txtcolor, Text, name_orientation, size,
+    aPlotter->Text( pos_filename, txtcolor, wxT( "File: " ) + Text, name_orientation, size,
                     GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_TOP,
                     thickness, italic, false );
 
@@ -1200,7 +992,7 @@ SCH_ITEM& SCH_SHEET::operator=( const SCH_ITEM& aItem )
 
         // Ensure sheet labels have their #m_Parent member pointing really on their
         // parent, after assigning.
-        BOOST_FOREACH( SCH_SHEET_PIN& sheetPin, m_pins )
+        for( SCH_SHEET_PIN& sheetPin : m_pins )
         {
             sheetPin.SetParent( this );
         }
@@ -1221,7 +1013,7 @@ void SCH_SHEET::Show( int nestLevel, std::ostream& os ) const
                                  << TO_UTF8( m_name ) << '"' << ">\n";
 
     // show all the pins, and check the linked list integrity
-    BOOST_FOREACH( const SCH_SHEET_PIN& label, m_pins )
+    for( const SCH_SHEET_PIN& label : m_pins )
     {
         label.Show( nestLevel + 1, os );
     }

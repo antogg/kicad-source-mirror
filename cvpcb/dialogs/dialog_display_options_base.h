@@ -1,8 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Oct  8 2012)
+// C++ code generated with wxFormBuilder (version Dec 30 2017)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #ifndef __DIALOG_DISPLAY_OPTIONS_BASE_H__
@@ -11,17 +11,14 @@
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class DIALOG_SHIM;
-
 #include "dialog_shim.h"
 #include <wx/string.h>
-#include <wx/radiobox.h>
+#include <wx/checkbox.h>
 #include <wx/gdicmn.h>
 #include <wx/font.h>
 #include <wx/colour.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
-#include <wx/checkbox.h>
 #include <wx/statbox.h>
 #include <wx/statline.h>
 #include <wx/button.h>
@@ -29,9 +26,7 @@ class DIALOG_SHIM;
 
 ///////////////////////////////////////////////////////////////////////////
 
-#define ID_EDGE_SELECT 1000
-#define ID_TEXT_SELECT 1001
-#define ID_PADFILL_OPT 1002
+#define ID_PADFILL_OPT 1000
 
 ///////////////////////////////////////////////////////////////////////////////
 /// Class DIALOG_FOOTPRINTS_DISPLAY_OPTIONS_BASE
@@ -41,24 +36,19 @@ class DIALOG_FOOTPRINTS_DISPLAY_OPTIONS_BASE : public DIALOG_SHIM
 	private:
 	
 	protected:
-		wxRadioBox* m_EdgesDisplayOption;
-		wxRadioBox* m_TextDisplayOption;
-		wxCheckBox* m_IsShowPadFill;
-		wxCheckBox* m_IsShowPadNum;
-		wxCheckBox* m_IsZoomNoCenter;
-		wxCheckBox* m_IsMiddleButtonPan;
-		wxCheckBox* m_IsMiddleButtonPanLimited;
+		wxCheckBox* m_EdgesDisplayOption;
+		wxCheckBox* m_TextDisplayOption;
+		wxCheckBox* m_ShowPadSketch;
+		wxCheckBox* m_ShowPadNum;
+		wxCheckBox* m_autoZoomOption;
 		wxStaticLine* m_staticline1;
-		wxStdDialogButtonSizer* m_sdbSizer1;
-		wxButton* m_sdbSizer1OK;
-		wxButton* m_sdbSizer1Apply;
-		wxButton* m_sdbSizer1Cancel;
+		wxStdDialogButtonSizer* m_sdbSizer;
+		wxButton* m_sdbSizerOK;
+		wxButton* m_sdbSizerApply;
+		wxButton* m_sdbSizerCancel;
 		
 		// Virtual event handlers, overide them in your derived class
-		virtual void OnMiddleBtnPanEnbl( wxCommandEvent& event ) { event.Skip(); }
 		virtual void OnApplyClick( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnCancelClick( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnOkClick( wxCommandEvent& event ) { event.Skip(); }
 		
 	
 	public:

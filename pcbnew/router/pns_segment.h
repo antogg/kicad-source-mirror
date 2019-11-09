@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -30,44 +31,51 @@
 #include "pns_item.h"
 #include "pns_line.h"
 
-class PNS_NODE;
+namespace PNS {
 
-class PNS_SEGMENT : public PNS_ITEM
+class NODE;
+
+class SEGMENT : public ITEM
 {
 public:
-    PNS_SEGMENT() :
-        PNS_ITEM( SEGMENT )
+    SEGMENT() :
+        ITEM( SEGMENT_T )
     {}
 
-    PNS_SEGMENT( const SEG& aSeg, int aNet ) :
-        PNS_ITEM( SEGMENT ), m_seg( aSeg, 0 )
+    SEGMENT( const SEG& aSeg, int aNet ) :
+        ITEM( SEGMENT_T ), m_seg( aSeg, 0 )
     {
         m_net = aNet;
     }
 
-    PNS_SEGMENT( const PNS_LINE& aParentLine, const SEG& aSeg ) :
-        PNS_ITEM( SEGMENT ), 
+    SEGMENT( const LINE& aParentLine, const SEG& aSeg ) :
+        ITEM( SEGMENT_T ),
         m_seg( aSeg, aParentLine.Width() )
     {
         m_net = aParentLine.Net();
         m_layers = aParentLine.Layers();
         m_marker = aParentLine.Marker();
         m_rank = aParentLine.Rank();
-    };
+    }
 
-    PNS_SEGMENT* Clone( ) const;
+    static inline bool ClassOf( const ITEM* aItem )
+    {
+        return aItem && SEGMENT_T == aItem->Kind();
+    }
 
-    const SHAPE* Shape() const
+    SEGMENT* Clone() const override;
+
+    const SHAPE* Shape() const override
     {
         return static_cast<const SHAPE*>( &m_seg );
     }
 
     void SetLayer( int aLayer )
     {
-        SetLayers( PNS_LAYERSET( aLayer ) );
+        SetLayers( LAYER_RANGE( aLayer ) );
     }
 
-    int Layer() const
+    int Layer() const override
     {
         return Layers().Start();
     }
@@ -95,7 +103,7 @@ public:
     void SetEnds( const VECTOR2I& a, const VECTOR2I& b )
     {
         m_seg.SetSeg( SEG ( a, b ) );
-	}
+    }
 
     void SwapEnds()
     {
@@ -103,9 +111,9 @@ public:
         m_seg.SetSeg( SEG (tmp.B , tmp.A ) );
     }
 
-    const SHAPE_LINE_CHAIN Hull( int aClearance, int aWalkaroundThickness ) const;
+    const SHAPE_LINE_CHAIN Hull( int aClearance, int aWalkaroundThickness ) const override;
 
-    virtual VECTOR2I Anchor(int n) const 
+    virtual VECTOR2I Anchor( int n ) const override
     {
         if( n == 0 )
             return m_seg.GetSeg().A;
@@ -113,13 +121,15 @@ public:
             return m_seg.GetSeg().B;
     }
 
-    virtual int AnchorCount() const 
+    virtual int AnchorCount() const override
     {
-        return 2; 
+        return 2;
     }
 
 private:
     SHAPE_SEGMENT m_seg;
 };
+
+}
 
 #endif

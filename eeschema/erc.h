@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
+ * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2009-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2009-2015 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,9 +31,9 @@
 #define _ERC_H
 
 
-class EDA_DRAW_PANEL;
 class NETLIST_OBJECT;
 class NETLIST_OBJECT_LIST;
+class SCH_SHEET_LIST;
 
 /* For ERC markers: error types (used in diags, and to set the color):
 */
@@ -49,14 +49,30 @@ extern const wxString CommentERC_H[];
 extern const wxString CommentERC_V[];
 
 /// DRC error codes:
-#define ERCE_UNSPECIFIED          0
-#define ERCE_DUPLICATE_SHEET_NAME 1    // duplicate sheet names within a given sheet
-#define ERCE_PIN_NOT_CONNECTED    2    // pin not connected and not no connect symbol
-#define ERCE_PIN_NOT_DRIVEN       3    // pin connected to some others pins but no pin to drive it
-#define ERCE_PIN_TO_PIN_WARNING   4    // pin connected to an other pin: warning level
-#define ERCE_PIN_TO_PIN_ERROR     5    // pin connected to an other pin: error level
-#define ERCE_HIERACHICAL_LABEL    6    // mismatch between hierarchical labels and pins sheets
-#define ERCE_NOCONNECT_CONNECTED  7    // a no connect symbol is connected to more than 1 pin
+enum ERCE_T
+{
+    ERCE_UNSPECIFIED = 0,
+    ERCE_DUPLICATE_SHEET_NAME,  // duplicate sheet names within a given sheet
+    ERCE_PIN_NOT_CONNECTED,     // pin not connected and not no connect symbol
+    ERCE_PIN_NOT_DRIVEN,        // pin connected to some others pins but no pin to drive it
+    ERCE_PIN_TO_PIN_WARNING,    // pin connected to an other pin: warning level
+    ERCE_PIN_TO_PIN_ERROR,      // pin connected to an other pin: error level
+    ERCE_HIERACHICAL_LABEL,     // mismatch between hierarchical labels and pins sheets
+    ERCE_NOCONNECT_CONNECTED,   // a no connect symbol is connected to more than 1 pin
+    ERCE_NOCONNECT_NOT_CONNECTED, // a no connect symbol is not connected to anything
+    ERCE_LABEL_NOT_CONNECTED,   // label not connected to anything
+    ERCE_SIMILAR_LABELS,        // 2 labels are equal fir case insensitive comparisons
+    ERCE_SIMILAR_GLBL_LABELS,   // 2 labels are equal fir case insensitive comparisons
+    ERCE_DIFFERENT_UNIT_FP,     // different units of the same component have different footprints assigned
+    ERCE_DIFFERENT_UNIT_NET,    // a shared pin in a multi-unit component is connected to more than one net
+    ERCE_BUS_ALIAS_CONFLICT,    // conflicting bus alias definitions across sheets
+    ERCE_DRIVER_CONFLICT,       // conflicting drivers (labels, etc) on a subgraph
+    ERCE_BUS_ENTRY_CONFLICT,    // a wire connected to a bus doesn't match the bus
+    ERCE_BUS_LABEL_ERROR,       // a label attached to a bus isn't in bus format
+    ERCE_BUS_TO_BUS_CONFLICT,   // a connection between bus objects doesn't share at least one net
+    ERCE_BUS_TO_NET_CONFLICT,   // a bus wire is graphically connected to a net port/pin (or vice versa)
+    ERCE_GLOBLABEL,             // a global label is unique
+};
 
 /* Minimal connection table */
 #define NPI    4  // Net with Pin isolated, this pin has type Not Connected and must be left N.C.
@@ -72,30 +88,28 @@ extern const wxString CommentERC_V[];
  *
  * @param aFullFileName A wxString object containing the file name and path.
  */
-extern bool WriteDiagnosticERC( const wxString& aFullFileName );
+bool WriteDiagnosticERC( EDA_UNITS_T aUnits, const wxString& aFullFileName );
 
 /**
  * Performs ERC testing and creates an ERC marker to show the ERC problem for aNetItemRef
  * or between aNetItemRef and aNetItemTst.
  *  if MinConn < 0: this is an error on labels
  */
-extern void Diagnose( NETLIST_OBJECT* NetItemRef, NETLIST_OBJECT* NetItemTst,
+void Diagnose( NETLIST_OBJECT* NetItemRef, NETLIST_OBJECT* NetItemTst,
                       int MinConnexion, int Diag );
 
 /**
  * Perform ERC testing for electrical conflicts between \a NetItemRef and other items
- * on the same net.
+ * (mainly pin) on the same net.
+ * @param aList = a reference to the list of connected objects
+ * @param aNetItemRef = index in list of the current object
+ * @param aNetStart = index in list of net objects of the first item
+ * @param aMinConnexion = a pointer to a variable to store the minimal connection
+ * found( NOD, DRV, NPI, NET_NC)
  */
-extern void TestOthersItems( NETLIST_OBJECT_LIST* aList,
+void TestOthersItems( NETLIST_OBJECT_LIST* aList,
                              unsigned aNetItemRef, unsigned aNetStart,
-                             int* aNetNbItems, int* aMinConnexion );
-
-/**
- * Function TestLabel
- * performs an ERC on a sheet labels to verify that it is connected to a corresponding
- * sub sheet global label.
- */
-extern void TestLabel( NETLIST_OBJECT_LIST* aList, unsigned aNetItemRef, unsigned aStartNet );
+                             int* aMinConnexion );
 
 /**
  * Function TestDuplicateSheetNames( )
@@ -105,7 +119,26 @@ extern void TestLabel( NETLIST_OBJECT_LIST* aList, unsigned aNetItemRef, unsigne
  * @param aCreateMarker: true = create error markers in schematic,
  *                       false = calculate error count only
  */
-extern int TestDuplicateSheetNames( bool aCreateMarker );
+int TestDuplicateSheetNames( bool aCreateMarker );
+
+/**
+ * Checks that there are not conflicting bus alias definitions in the schematic
+ *
+ * (for example, two hierarchical sub-sheets contain different definitions for
+ * the same bus alias)
+ *
+ * @param aCreateMarker: true = create error markers in schematic,
+ *                       false = calculate error count only
+ * @return the error count
+ */
+int TestConflictingBusAliases( bool aCreateMarker = true );
+
+/**
+ * Test if all units of each multiunit component have the same footprint assigned.
+ * @param aSheetList contains components to be validated.
+ * @return The error count.
+ */
+int TestMultiunitFootprints( SCH_SHEET_LIST& aSheetList );
 
 
 #endif  // _ERC_H

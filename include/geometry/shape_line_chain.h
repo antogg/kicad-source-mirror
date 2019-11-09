@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2013 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * Copyright (C) 2013-2019
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,11 +29,13 @@
 #include <vector>
 #include <sstream>
 
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <math/vector2d.h>
 #include <geometry/shape.h>
 #include <geometry/seg.h>
+
+#include <clipper.hpp>
 
 /**
  * Class SHAPE_LINE_CHAIN
@@ -103,7 +106,18 @@ public:
         m_points[2] = aC;
     }
 
-    SHAPE_LINE_CHAIN(const VECTOR2I* aV, int aCount ) :
+    SHAPE_LINE_CHAIN( const VECTOR2I& aA, const VECTOR2I& aB, const VECTOR2I& aC, const VECTOR2I& aD ) :
+        SHAPE( SH_LINE_CHAIN ), m_closed( false )
+    {
+        m_points.resize( 4 );
+        m_points[0] = aA;
+        m_points[1] = aB;
+        m_points[2] = aC;
+        m_points[3] = aD;
+    }
+
+
+    SHAPE_LINE_CHAIN( const VECTOR2I* aV, int aCount ) :
         SHAPE( SH_LINE_CHAIN ),
         m_closed( false )
     {
@@ -113,10 +127,31 @@ public:
             m_points[i] = *aV++;
     }
 
+
+    SHAPE_LINE_CHAIN( const std::vector<wxPoint>& aV ) :
+        SHAPE( SH_LINE_CHAIN ),
+        m_closed( false )
+    {
+        m_points.reserve( aV.size() );
+
+        for( auto pt : aV )
+            m_points.emplace_back( pt.x, pt.y );
+    }
+
+    SHAPE_LINE_CHAIN( const ClipperLib::Path& aPath ) :
+        SHAPE( SH_LINE_CHAIN ),
+        m_closed( true )
+    {
+        m_points.reserve( aPath.size() );
+
+        for( const auto& point : aPath )
+            m_points.emplace_back( point.X, point.Y );
+    }
+
     ~SHAPE_LINE_CHAIN()
     {}
 
-    SHAPE* Clone() const;
+    SHAPE* Clone() const override;
 
     /**
      * Function Clear()
@@ -179,11 +214,10 @@ public:
     /**
      * Function Segment()
      *
-     * Returns a segment referencing to the segment (index) in the line chain.
-     * Modifying ends of the returned segment will modify corresponding points in the line chain.
+     * Returns a copy of the aIndex-th segment in the line chain.
      * @param aIndex: index of the segment in the line chain. Negative values are counted from
      * the end (i.e. -1 means the last segment in the line chain)
-     * @return SEG referenced to given segment in the line chain
+     * @return SEG - aIndex-th segment in the line chain
      */
     SEG Segment( int aIndex )
     {
@@ -199,10 +233,10 @@ public:
     /**
      * Function CSegment()
      *
-     * Returns a read-only segment referencing to the segment (index) in the line chain.
+     * Returns a constant copy of the aIndex-th segment in the line chain.
      * @param aIndex: index of the segment in the line chain. Negative values are counted from
      * the end (i.e. -1 means the last segment in the line chain)
-     * @return SEG referenced to given segment in the line chain
+     * @return const SEG - aIndex-th segment in the line chain
      */
     const SEG CSegment( int aIndex ) const
     {
@@ -243,17 +277,48 @@ public:
     {
         if( aIndex < 0 )
             aIndex += PointCount();
+        else if( aIndex >= PointCount() )
+            aIndex -= PointCount();
 
         return m_points[aIndex];
     }
 
+    const std::vector<VECTOR2I>& CPoints() const
+    {
+        return m_points;
+    }
+
+    /**
+     * Returns the last point in the line chain.
+     */
+    VECTOR2I& LastPoint()
+    {
+        return m_points[PointCount() - 1];
+    }
+
+    /**
+     * Returns the last point in the line chain.
+     */
+    const VECTOR2I& CLastPoint() const
+    {
+        return m_points[PointCount() - 1];
+    }
+
     /// @copydoc SHAPE::BBox()
-    const BOX2I BBox( int aClearance = 0 ) const
+    const BOX2I BBox( int aClearance = 0 ) const override
     {
         BOX2I bbox;
         bbox.Compute( m_points );
 
+        if( aClearance != 0 )
+            bbox.Inflate( aClearance );
+
         return bbox;
+    }
+
+    void GenerateBBoxCache()
+    {
+        m_bbox.Compute( m_points );
     }
 
     /**
@@ -264,17 +329,7 @@ public:
      * @param aClearance minimum distance that does not qualify as a collision.
      * @return true, when a collision has been found
      */
-    bool Collide( const VECTOR2I& aP, int aClearance = 0 ) const;
-
-    /**
-     * Function Collide()
-     *
-     * Checks if box aBox lies closer to us than aClearance.
-     * @param aP the box to check for collisions with
-     * @param aClearance minimum distance that does not qualify as a collision.
-     * @return true, when a collision has been found
-     */
-    bool Collide( const BOX2I& aBox, int aClearance = 0 ) const;
+    bool Collide( const VECTOR2I& aP, int aClearance = 0 ) const override;
 
     /**
      * Function Collide()
@@ -284,7 +339,7 @@ public:
      * @param aClearance minimum distance that does not qualify as a collision.
      * @return true, when a collision has been found
      */
-    bool Collide( const SEG& aSeg, int aClearance = 0 ) const;
+    bool Collide( const SEG& aSeg, int aClearance = 0 ) const override;
 
     /**
      * Function Distance()
@@ -293,7 +348,7 @@ public:
      * @param aP the point
      * @return minimum distance.
      */
-    int Distance( const VECTOR2I& aP ) const;
+    int Distance( const VECTOR2I& aP, bool aOutlineOnly = false ) const;
 
     /**
      * Function Reverse()
@@ -309,7 +364,7 @@ public:
      * Returns length of the line chain in Euclidean metric.
      * @return length of the line chain
      */
-    int Length() const;
+    long long int Length() const;
 
     /**
      * Function Append()
@@ -317,11 +372,14 @@ public:
      * Appends a new point at the end of the line chain.
      * @param aX is X coordinate of the new point
      * @param aY is Y coordinate of the new point
+     * @param aAllowDuplication = true to append the new point
+     * even it is the same as the last entered point
+     * false (default) to skip it if it is the same as the last entered point
      */
-    void Append( int aX, int aY )
+    void Append( int aX, int aY, bool aAllowDuplication = false )
     {
         VECTOR2I v( aX, aY );
-        Append( v );
+        Append( v, aAllowDuplication );
     }
 
     /**
@@ -329,13 +387,16 @@ public:
      *
      * Appends a new point at the end of the line chain.
      * @param aP the new point
+     * @param aAllowDuplication = true to append the new point
+     * even it is the same as the last entered point
+     * false (default) to skip it if it is the same as the last entered point
      */
-    void Append( const VECTOR2I& aP )
+    void Append( const VECTOR2I& aP, bool aAllowDuplication = false )
     {
         if( m_points.size() == 0 )
             m_bbox = BOX2I( aP, VECTOR2I( 0, 0 ) );
 
-        if( m_points.size() == 0 || CPoint( -1 ) != aP )
+        if( m_points.size() == 0 || aAllowDuplication || CPoint( -1 ) != aP )
         {
             m_points.push_back( aP );
             m_bbox.Merge( aP );
@@ -403,6 +464,16 @@ public:
      * @param aEndIndex end of the point range to be replaced (inclusive)
      */
     void Remove( int aStartIndex, int aEndIndex );
+
+    /**
+     * Function Remove()
+     * removes the aIndex-th point from the line chain.
+     * @param aIndex is the index of the point to be removed.
+     */
+    void Remove( int aIndex )
+    {
+        Remove( aIndex, aIndex );
+    }
 
     /**
      * Function Split()
@@ -494,12 +565,14 @@ public:
     /**
      * Function PointInside()
      *
-     * Checks if point aP lies inside a convex polygon defined by the line chain. For closed
-     * shapes only.
-     * @param aP point to check
+     * Checks if point aP lies inside a polygon (any type) defined by the line chain.
+     * For closed shapes only.
+     * @param aPt point to check
+     * @param aUseBBoxCache gives better peformance if the bounding boxe caches have been
+     *                      generated.
      * @return true if the point is inside the shape (edge is not treated as being inside).
      */
-     bool PointInside( const VECTOR2I& aP ) const;
+     bool PointInside( const VECTOR2I& aPt, int aAccuracy = 0, bool aUseBBoxCache = false ) const;
 
     /**
      * Function PointOnEdge()
@@ -508,7 +581,26 @@ public:
      * @param aP point to check
      * @return true if the point lies on the edge.
      */
-    bool PointOnEdge( const VECTOR2I& aP ) const;
+    bool PointOnEdge( const VECTOR2I& aP, int aAccuracy = 0 ) const;
+
+    /**
+     * Function EdgeContainingPoint()
+     *
+     * Checks if point aP lies on an edge or vertex of the line chain.
+     * @param aP point to check
+     * @return index of the first edge containing the point, otherwise negative
+     */
+    int EdgeContainingPoint( const VECTOR2I& aP, int aAccuracy = 0 ) const;
+
+    /**
+     * Function CheckClearance()
+     *
+     * Checks if point aP is closer to (or on) an edge or vertex of the line chain.
+     * @param aP point to check
+     * @param aDist distance in internal units
+     * @return true if the point is equal to or closer than aDist to the line chain.
+     */
+    bool CheckClearance( const VECTOR2I& aP, const int aDist) const;
 
     /**
      * Function SelfIntersecting()
@@ -516,7 +608,7 @@ public:
      * Checks if the line chain is self-intersecting.
      * @return (optional) first found self-intersection point.
      */
-    const boost::optional<INTERSECTION> SelfIntersecting() const;
+    const OPT<INTERSECTION> SelfIntersecting() const;
 
     /**
      * Function Simplify()
@@ -527,6 +619,19 @@ public:
     SHAPE_LINE_CHAIN& Simplify();
 
     /**
+     * Function convertFromClipper()
+     * Appends the Clipper path to the current SHAPE_LINE_CHAIN
+     *
+     */
+    void convertFromClipper( const ClipperLib::Path& aPath );
+
+    /**
+     * Creates a new Clipper path from the SHAPE_LINE_CHAIN in a given orientation
+     *
+     */
+    ClipperLib::Path convertToClipper( bool aRequiredOrientation ) const;
+
+    /**
      * Function NearestPoint()
      *
      * Finds a point on the line chain that is closest to point aP.
@@ -534,8 +639,22 @@ public:
      */
     const VECTOR2I NearestPoint( const VECTOR2I& aP ) const;
 
+    /**
+     * Function NearestPoint()
+     *
+     * Finds a point on the line chain that is closest to the line defined
+     * by the points of segment aSeg, also returns the distance.
+     * @param aSeg Segment defining the line.
+     * @param dist reference receiving the distance to the nearest point.
+     * @return the nearest point.
+     */
+    const VECTOR2I NearestPoint( const SEG& aSeg, int& dist ) const;
+
     /// @copydoc SHAPE::Format()
-    const std::string Format() const;
+    const std::string Format() const override;
+
+    /// @copydoc SHAPE::Parse()
+    bool Parse( std::stringstream& aStream ) override;
 
     bool operator!=( const SHAPE_LINE_CHAIN& aRhs ) const
     {
@@ -551,7 +670,30 @@ public:
         return false;
     }
 
-    bool CompareGeometry( const SHAPE_LINE_CHAIN & aOther ) const;
+    bool CompareGeometry( const SHAPE_LINE_CHAIN& aOther ) const;
+
+    void Move( const VECTOR2I& aVector ) override
+    {
+        for( std::vector<VECTOR2I>::iterator i = m_points.begin(); i != m_points.end(); ++i )
+            (*i) += aVector;
+    }
+
+    /**
+     * Function Rotate
+     * rotates all vertices by a given angle
+     * @param aCenter is the rotation center
+     * @param aAngle rotation angle in radians
+     */
+    void Rotate( double aAngle, const VECTOR2I& aCenter );
+
+    bool IsSolid() const override
+    {
+        return false;
+    }
+
+    const VECTOR2I PointAlong( int aPathLength ) const;
+
+    double Area() const;
 
 private:
     /// array of vertices

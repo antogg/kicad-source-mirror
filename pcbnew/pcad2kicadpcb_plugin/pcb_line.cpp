@@ -51,10 +51,10 @@ PCB_LINE::~PCB_LINE()
 }
 
 
-void PCB_LINE::Parse( XNODE*        aNode,
-                      int           aLayer,
-                      wxString      aDefaultMeasurementUnit,
-                      wxString      aActualConversion )
+void PCB_LINE::Parse( XNODE*          aNode,
+                      int             aLayer,
+                      const wxString& aDefaultMeasurementUnit,
+                      const wxString& aActualConversion )
 {
     XNODE*      lNode;
     wxString    propValue;
@@ -72,7 +72,8 @@ void PCB_LINE::Parse( XNODE*        aNode,
         SetPosition( lNode->GetNodeContent(), aDefaultMeasurementUnit,
                      &m_positionX, &m_positionY, aActualConversion );
 
-    lNode = lNode->GetNext();
+    if( lNode )
+        lNode = lNode->GetNext();
 
     if( lNode )
         SetPosition( lNode->GetNodeContent(), aDefaultMeasurementUnit,
@@ -119,7 +120,7 @@ void PCB_LINE::AddToModule( MODULE* aModule )
     if( IsNonCopperLayer( m_KiCadLayer ) )
     {
         EDGE_MODULE* segment = new EDGE_MODULE( aModule, S_SEGMENT );
-        aModule->GraphicalItems().PushBack( segment );
+        aModule->Add( segment );
 
         segment->m_Start0   = wxPoint( m_positionX, m_positionY );
         segment->m_End0     = wxPoint( m_toX, m_toY );
@@ -137,7 +138,7 @@ void PCB_LINE::AddToBoard()
     if( IsCopperLayer( m_KiCadLayer ) )
     {
         TRACK* track = new TRACK( m_board );
-        m_board->m_Track.Append( track );
+        m_board->Add( track );
 
         track->SetTimeStamp( m_timestamp );
 

@@ -27,64 +27,13 @@
  * @file cvpcb.cpp
  */
 
-#include <fctsys.h>
-#include <macros.h>
+#include <confirm.h>
 #include <fp_lib_table.h>
 #include <kiface_i.h>
 #include <pgm_base.h>
-#include <wxstruct.h>
-#include <confirm.h>
-#include <3d_viewer.h>
-#include <pcbcommon.h>
 
-#include <cvpcb.h>
-#include <zones.h>
 #include <cvpcb_mainframe.h>
-#include <colors_selection.h>
-#include <cvpcb_id.h>
-
-#include <build_version.h>
-
-#include <wx/snglinst.h>
-
-// Colors for layers and items
-COLORS_DESIGN_SETTINGS g_ColorsSettings;
-
-// Constant string definitions for CvPcb
-const wxString FootprintAliasFileExtension( wxT( "equ" ) );
-
-// Wildcard for schematic retroannotation (import footprint names in schematic):
-const wxString FootprintAliasFileWildcard( _( "KiCad footprint alias files (*.equ)|*.equ" ) );
-
-#if 0   // add this logic to OpenProjectFiles()
-
-/*
- * MacOSX: Needed for file association
- * http://wiki.wxwidgets.org/WxMac-specific_topics
- */
-void PGM_BASE::MacOpenFile( const wxString& aFileName )
-{
-    wxFileName  filename = aFileName;
-    wxString    oldPath;
-
-    CVPCB_MAINFRAME* frame = (CVPCB_MAINFRAME*) GetTopWindow();
-
-    if( !filename.FileExists() )
-        return;
-
-    if( frame->m_NetlistFileName.DirExists() )
-        oldPath = frame->m_NetlistFileName.GetPath();
-
-    // Update the library search path list.
-    if( Pgm().GetLibraryPathList().Index( oldPath ) != wxNOT_FOUND )
-        Pgm().GetLibraryPathList().Remove( oldPath );
-
-    Pgm().GetLibraryPathList().Insert( filename.GetPath(), 0 );
-
-    frame->m_NetlistFileName = filename;
-    frame->ReadNetListAndLinkFiles();
-}
-#endif
+#include <display_footprints_frame.h>
 
 
 namespace CV {
@@ -97,26 +46,18 @@ static struct IFACE : public KIFACE_I
         KIFACE_I( aName, aType )
     {}
 
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits );
+    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits ) override;
 
-    void OnKifaceEnd();
+    void OnKifaceEnd() override;
 
-    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 )
+    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 ) override
     {
         switch( aClassId )
         {
-        case FRAME_CVPCB:
-            {
-                CVPCB_MAINFRAME* frame = new CVPCB_MAINFRAME( aKiway, aParent );
-                return frame;
-            }
-            break;
-
-        default:
-            ;
+        case FRAME_CVPCB:         return new CVPCB_MAINFRAME( aKiway, aParent );
+        case FRAME_CVPCB_DISPLAY: return new DISPLAY_FOOTPRINTS_FRAME( aKiway, aParent );
+        default:                  return NULL;
         }
-
-        return NULL;
     }
 
     /**
@@ -130,7 +71,7 @@ static struct IFACE : public KIFACE_I
      *
      * @return void* - and must be cast into the know type.
      */
-    void* IfaceOrAddress( int aDataId )
+    void* IfaceOrAddress( int aDataId ) override
     {
         return NULL;
     }
@@ -164,6 +105,14 @@ PGM_BASE& Pgm()
 }
 
 
+// Similar to PGM_BASE& Pgm(), but return nullptr when a *.ki_face
+// is run from a python script, mot from a Kicad application
+PGM_BASE* PgmOrNull()
+{
+    return process;
+}
+
+
 //!!!!!!!!!!!!!!! This code is obsolete because of the merge into pcbnew, don't bother with it.
 
 FP_LIB_TABLE GFootprintTable;
@@ -181,11 +130,6 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 
     start_common( aCtlBits );
 
-    // Set 3D shape path (environment variable KISYS3DMOD (if not defined or valid)
-    // Currently, called here, but could be moved ( OpenProjectFiles() ? )
-    // if KISYS3DMOD is defined in a project config file
-    Set3DShapesDefaultPath( KISYS3DMOD, aProgram );
-
     /*  Now that there are no *.mod files in the standard library, this function
         has no utility.  User should simply set the variable manually.
         Looking for *.mod files which do not exist is fruitless.
@@ -201,26 +145,24 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 
         if( !FP_LIB_TABLE::LoadGlobalTable( GFootprintTable ) )
         {
-            DisplayInfoMessage( NULL, wxT(
+            DisplayInfoMessage( NULL, _(
                 "You have run CvPcb for the first time using the "
                 "new footprint library table method for finding "
-                "footprints.  CvPcb has either copied the default "
+                "footprints.\nCvPcb has either copied the default "
                 "table or created an empty table in your home "
-                "folder.  You must first configure the library "
+                "folder.\nYou must first configure the library "
                 "table to include all footprint libraries not "
-                "included with KiCad.  See the \"Footprint Library "
+                "included with KiCad.\nSee the \"Footprint Library "
                 "Table\" section of the CvPcb documentation for "
                 "more information." ) );
         }
     }
     catch( const IO_ERROR& ioe )
     {
-        wxString msg = wxString::Format( _(
-            "An error occurred attempting to load the global footprint library "
-            "table:\n\n%s" ),
-            GetChars( ioe.errorText )
-            );
-        DisplayError( NULL, msg );
+        DisplayErrorMessage(
+            nullptr,
+            _( "An error occurred attempting to load the global footprint library table" ),
+            ioe.What() );
         return false;
     }
 

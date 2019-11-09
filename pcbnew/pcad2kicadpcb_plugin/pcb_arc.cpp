@@ -52,10 +52,10 @@ PCB_ARC::~PCB_ARC()
 }
 
 
-void PCB_ARC::Parse( XNODE*     aNode,
-                     int        aLayer,
-                     wxString   aDefaultMeasurementUnit,
-                     wxString   aActualConversion )
+void PCB_ARC::Parse( XNODE*          aNode,
+                     int             aLayer,
+                     const wxString& aDefaultMeasurementUnit,
+                     const wxString& aActualConversion )
 {
     XNODE*      lNode;
     double      a = 0.0;
@@ -80,24 +80,33 @@ void PCB_ARC::Parse( XNODE*     aNode,
                          &m_positionX, &m_positionY, aActualConversion );
 
         // start point
-        lNode = lNode->GetNext();
+        if( lNode )
+            lNode = lNode->GetNext();
 
         if( lNode )
             SetPosition( lNode->GetNodeContent(), aDefaultMeasurementUnit,
                          &m_startX, &m_startY, aActualConversion );
 
         // end point
-        lNode = lNode->GetNext();
+        if( lNode )
+            lNode = lNode->GetNext();
 
         if( lNode )
             SetPosition( lNode->GetNodeContent(), aDefaultMeasurementUnit,
                          &endX, &endY, aActualConversion );
 
-        double alpha1  = ArcTangente( m_startY - m_positionY, m_startX - m_positionX );
-        double alpha2  = ArcTangente( endY - m_positionY, endX - m_positionX );
-        m_angle = alpha1 - alpha2;
+        if( m_startX == endX && m_startY == endY )
+        {
+            m_angle = 3600;
+        }
+        else
+        {
+            double alpha1  = ArcTangente( m_startY - m_positionY, m_startX - m_positionX );
+            double alpha2  = ArcTangente( endY - m_positionY, endX - m_positionX );
+            m_angle = alpha1 - alpha2;
 
-        NORMALIZE_ANGLE_POS( m_angle );
+            NORMALIZE_ANGLE_POS( m_angle );
+        }
     }
     else if( aNode->GetName() == wxT( "arc" ) )
     {
@@ -151,8 +160,8 @@ void PCB_ARC::AddToModule( MODULE* aModule )
 {
     if( IsNonCopperLayer( m_KiCadLayer ) )
     {
-        EDGE_MODULE* arc = new EDGE_MODULE( aModule, S_ARC );
-        aModule->GraphicalItems().PushBack( arc );
+        EDGE_MODULE* arc = new EDGE_MODULE( aModule, ( IsCircle() ? S_CIRCLE : S_ARC ) );
+        aModule->Add( arc );
 
         arc->SetAngle( -m_angle );
         arc->m_Start0   = wxPoint( m_positionX, m_positionY );
@@ -172,13 +181,19 @@ void PCB_ARC::AddToBoard()
 
     m_board->Add( dseg, ADD_APPEND );
 
-    dseg->SetShape( S_ARC );
+    dseg->SetShape( IsCircle() ? S_CIRCLE : S_ARC );
     dseg->SetTimeStamp( m_timestamp );
     dseg->SetLayer( m_KiCadLayer );
     dseg->SetStart( wxPoint( m_positionX, m_positionY ) );
     dseg->SetEnd( wxPoint( m_startX, m_startY ) );
     dseg->SetAngle( -m_angle );
     dseg->SetWidth( m_width );
+}
+
+
+bool PCB_ARC::IsCircle()
+{
+    return ( m_angle == 3600 );
 }
 
 } // namespace PCAD2KICAD

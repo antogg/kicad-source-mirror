@@ -1,3 +1,22 @@
+/*
+ * This program source code file is part of KICAD, a free EDA CAD application.
+ *
+ * Copyright (C) 1992-2015 Kicad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 3
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along
+ * with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 /**
  * @file pcb_calculator.h
  */
@@ -26,17 +45,26 @@ private:
     bool m_RegulatorListChanged;        // set to true when m_RegulatorList
                                         // was modified, and the corresponging file
                                         // must be rewritten
-    wxSize          m_FrameSize;
-    wxPoint         m_FramePos;
-    wxConfigBase*   m_Config;
+
+    enum                                // Which dimension is controlling the track
+    {                                   // width / current calculations:
+        TW_MASTER_CURRENT,              // the maximum current,
+        TW_MASTER_EXT_WIDTH,            // the external trace width,
+        TW_MASTER_INT_WIDTH             // or the internal trace width?
+    } m_TWMode;
+
+    bool m_TWNested;                    // Used to stop events caused by setting the answers.
+
     enum TRANSLINE_TYPE_ID m_currTransLineType;
     TRANSLINE * m_currTransLine;        // a pointer to the active transline
     // List of translines: ordered like in dialog menu list
     std::vector <TRANSLINE_IDENT *> m_transline_list;
+
     ATTENUATOR * m_currAttenuator;
     // List ofattenuators: ordered like in dialog menu list
     std::vector <ATTENUATOR *> m_attenuator_list;
     wxString m_lastSelectedRegulatorName;   // last regulator name selected
+
 
 
 public:
@@ -46,17 +74,16 @@ public:
 private:
 
     // Event handlers
-    void OnClosePcbCalc( wxCloseEvent& event );
+    void OnClosePcbCalc( wxCloseEvent& event ) override;
 
     // These 3 functions are called by the OnPaint event, to draw
     // icons that show the current item on the specific panels
-    void OnPaintTranslinePanel( wxPaintEvent& event );
-    void OnPaintAttenuatorPanel( wxPaintEvent& event );
-    void OnPaintAttFormulaPanel( wxPaintEvent& event );
+    void OnPaintTranslinePanel( wxPaintEvent& event ) override;
+    void OnPaintAttenuatorPanel( wxPaintEvent& event ) override;
 
-    // Config read-write
-    void ReadConfig();
-    void WriteConfig();
+    // Config read-write, virtual from EDA_BASE_FRAME
+    void LoadSettings( wxConfigBase* aCfg ) override;
+    void SaveSettings( wxConfigBase* aCfg ) override;
 
     // R/W data files:
     bool ReadDataFile();
@@ -74,35 +101,123 @@ private:
      */
     void SetDataFilename( const wxString & aFilename);
 
-    // tracks width versus current functions:
-    /**
-     * Function OnTWCalculateButt
-     * Called by clicking on the calculate button
-     */
-    void OnTWCalculateButt( wxCommandEvent& event );
+    // Trace width / maximum current capability calculations.
 
     /**
      * Function TW_Init
      * Read config and init dialog widgets values
      */
-    void TW_Init();
+    void TW_Init( wxConfigBase* aCfg );
 
     /**
      * Function TW_WriteConfig
      * Write Track width prameters in config
      */
-    void TW_WriteConfig();
+    void TW_WriteConfig( wxConfigBase* aCfg );
 
     /**
-     * Function TWCalculate
-     * Performs track caracteristics values calculations.
+     * Function OnTWParametersChanged
+     * Called when the user changes the general parameters (i.e., anything that
+     * is not one of the controlling values). This update the calculations.
      */
-    double TWCalculate( double aCurrent, double aThickness, double aDeltaT_C,
+    void OnTWParametersChanged( wxCommandEvent& event ) override;
+
+    /**
+     * Function OnTWCalculateFromCurrent
+     * Called when the user changes the desired maximum current. This sets the
+     * current as the controlling value and performs the calculations.
+     */
+    void OnTWCalculateFromCurrent( wxCommandEvent& event ) override;
+
+    /**
+     * Function OnTWCalculateFromExtWidth
+     * Called when the user changes the desired external trace width. This sets
+     * the external width as the controlling value and performs the calculations.
+     */
+    void OnTWCalculateFromExtWidth( wxCommandEvent& event ) override;
+
+    /**
+     * Function OnTWCalculateFromIntWidth
+     * Called when the user changes the desired internal trace width. This sets
+     * the internal width as the controlling value and performs the calculations.
+     */
+    void OnTWCalculateFromIntWidth( wxCommandEvent& event ) override;
+
+    /**
+     * Function TWCalculateWidth
+     * Calculate track width required based on given current and temperature rise.
+     */
+    double TWCalculateWidth( double aCurrent, double aThickness, double aDeltaT_C,
                     bool aUseInternalLayer );
 
+    /**
+     * Function TWCalculateCurrent
+     * Calculate maximum current based on given width and temperature rise.
+     */
+    double TWCalculateCurrent( double aWidth, double aThickness, double aDeltaT_C,
+                    bool aUseInternalLayer );
+
+    /**
+     * Function TWDisplayValues
+     * Displays the results of a calculation (including resulting values such
+     * as the resistance and power loss).
+     */
+    void TWDisplayValues( double aCurrent, double aExtWidth, double aIntWidth,
+                    double aExtThickness, double aIntThickness );
+
+    /**
+     * Function TWUpdateModeDisplay
+     * Updates the fields to show whether the maximum current, external trace
+     * width, or internal trace width is currently the controlling parameter.
+     */
+    void TWUpdateModeDisplay();
+
+    // Via size calculations
+
+    /**
+     * Function VS_Init
+     * Read config and init dialog widgets values
+     */
+    void VS_Init( wxConfigBase* aCfg );
+
+    /**
+     * Function VS_WriteConfig
+     * Write Via Size prameters in config
+     */
+    void VS_WriteConfig( wxConfigBase* aCfg );
+
+    /**
+     * Function OnViaCalculate
+     * Called when the user changes any value in the via calcultor.
+     */
+    void OnViaCalculate( wxCommandEvent& event ) override;
+
+    /**
+     * Function OnViaEpsilonR_Button
+     */
+    void OnViaEpsilonR_Button( wxCommandEvent& event ) override;
+
+    /**
+     * Function OnViaRho_Button
+     */
+    void OnViaRho_Button( wxCommandEvent& event ) override;
+
+    /**
+     * Update the Error message in Via calculation panel
+     */
+	void onUpdateViaCalcErrorText( wxUpdateUIEvent& event ) override;
+
+    /**
+     * Function VSDisplayValues
+     * Displays the results of the calculation.
+     */
+    void VSDisplayValues( double aViaResistance, double aVoltageDrop, double aPowerLoss,
+                    double aEstimatedAmpacity, double aThermalResistance, double aCapacitance,
+                    double aTimeDegradation, double aInductance, double aReactance );
+
     // Electrical spacing panel:
-    void OnElectricalSpacingUnitsSelection( wxCommandEvent& event );
-    void OnElectricalSpacingRefresh( wxCommandEvent& event );
+    void OnElectricalSpacingUnitsSelection( wxCommandEvent& event ) override;
+    void OnElectricalSpacingRefresh( wxCommandEvent& event ) override;
     void ElectricalSpacingUpdateData( double aUnitScale );
 
     // Transline functions:
@@ -110,42 +225,42 @@ private:
      * Function OnTranslineSelection
      * Called on new transmission line selection
     */
-    void OnTranslineSelection( wxCommandEvent& event );
+    void OnTranslineSelection( wxCommandEvent& event ) override;
 
     /**
      * Function OnTranslineAnalyse
      * Run a new analyse for the current transline with current parameters
-     * and displays the electrical parmeters
+     * and displays the electrical parameters
      */
-    void OnTranslineAnalyse( wxCommandEvent& event );
+    void OnTranslineAnalyse( wxCommandEvent& event ) override;
 
     /**
      * Function OnTranslineSynthetize
      * Run a new synthezis for the current transline with current parameters
-     * and displays the geometrical parmeters
+     * and displays the geometrical parameters
      */
-    void OnTranslineSynthetize( wxCommandEvent& event );
+    void OnTranslineSynthetize( wxCommandEvent& event ) override;
 
     /**
      * Function OnTranslineEpsilonR_Button
      * Shows a list of current relative dielectric constant(Er)
      * and set the selected value in main dialog frame
      */
-    void OnTranslineEpsilonR_Button( wxCommandEvent& event );
+    void OnTranslineEpsilonR_Button( wxCommandEvent& event ) override;
 
     /**
      * Function OnTranslineTanD_Button
      * Shows a list of current dielectric loss factor (tangent delta)
      * and set the selected value in main dialog frame
      */
-    void OnTranslineTanD_Button( wxCommandEvent& event );
+    void OnTranslineTanD_Button( wxCommandEvent& event ) override;
 
     /**
      * Function OnTranslineRho_Button
      * Shows a list of current Specific resistance list (rho)
      * and set the selected value in main dialog frame
      */
-    void OnTranslineRho_Button( wxCommandEvent& event );
+    void OnTranslineRho_Button( wxCommandEvent& event ) override;
 
     /**
      * Function TranslineTypeSelection
@@ -165,25 +280,25 @@ private:
     void TransfDlgDataToTranslineParams();
 
     // Color Code panel
-    void OnToleranceSelection( wxCommandEvent& event );
+    void OnToleranceSelection( wxCommandEvent& event ) override;
     void ToleranceSelection( int aSelection );
 
     // Attenuators Panel
-    void OnAttenuatorSelection( wxCommandEvent& event );
+    void OnAttenuatorSelection( wxCommandEvent& event ) override;
     void SetAttenuator( unsigned aIdx );
-    void OnCalculateAttenuator( wxCommandEvent& event );
+    void OnCalculateAttenuator( wxCommandEvent& event ) override;
     void TransfPanelDataToAttenuator();
     void TransfAttenuatorDataToPanel();
     void TransfAttenuatorResultsToPanel();
 
     // Regulators Panel
-    void OnRegulatorCalcButtonClick( wxCommandEvent& event );
-    void OnRegulTypeSelection( wxCommandEvent& event );
-    void OnRegulatorSelection( wxCommandEvent& event );
-    void OnDataFileSelection( wxCommandEvent& event );
-    void OnAddRegulator( wxCommandEvent& event );
-    void OnEditRegulator( wxCommandEvent& event );
-    void OnRemoveRegulator( wxCommandEvent& event );
+    void OnRegulatorCalcButtonClick( wxCommandEvent& event ) override;
+    void OnRegulTypeSelection( wxCommandEvent& event ) override;
+    void OnRegulatorSelection( wxCommandEvent& event ) override;
+    void OnDataFileSelection( wxCommandEvent& event ) override;
+    void OnAddRegulator( wxCommandEvent& event ) override;
+    void OnEditRegulator( wxCommandEvent& event ) override;
+    void OnRemoveRegulator( wxCommandEvent& event ) override;
 
     /**
      * Function RegulatorPageUpdate:
@@ -239,7 +354,7 @@ public:
     bool   IsPrmSelected( enum PRMS_ID aPrmId );
 
     // Board classes panel:
-    void OnBoardClassesUnitsSelection( wxCommandEvent& event );
+    void OnBoardClassesUnitsSelection( wxCommandEvent& event ) override;
     void BoardClassesUpdateData( double aUnitScale );
 
 };

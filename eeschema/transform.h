@@ -6,7 +6,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2007-2010 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2007 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2007-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,13 +32,15 @@
 
 #include <wx/gdicmn.h>
 
+class EDA_RECT;
+
 /**
- * Class for tranforming drawing coordinates for a wxDC device context.
+ * Class for transforming drawing coordinates for a wxDC device context.
  *
- * This probably should be a base class with all pure methods and a derived class
- * named WXDC_TRANFORM be created.  Then in the future if some new device context
- * is used, a new transform could be derived from the base class and all the drawable
- * objects would have to do is provide overloaded draw methods to use the new transorm.
+ * This probably should be a base class with all pure virtual methods and a WXDC_TRANSFORM
+ * derived class.  Then in the future if some new device context is used, a new transform could
+ * be derived from the base class and all the drawable objects would have to do is provide
+ * overloaded draw methods to use the new transorm.
  */
 class TRANSFORM
 {
@@ -49,20 +51,18 @@ public:
     int y2;
 
     /**
-     * The default construct creates a tranform that draws object is the normal orientation.
+     * The default construct creates a transform that draws object is the normal orientation.
      */
     TRANSFORM() : x1( 1 ), y1( 0 ), x2( 0 ), y2( -1 ) {}
 
-    TRANSFORM( int x1, int y1, int x2, int y2 ) : x1( x1 ), y1( y1 ), x2( x2 ), y2( y2 ) {}
-
-    TRANSFORM& operator=( const TRANSFORM& aTransform );
+    TRANSFORM( int ax1, int ay1, int ax2, int ay2 ) : x1( ax1 ), y1( ay1 ), x2( ax2 ), y2( ay2 ) {}
 
     bool operator==( const TRANSFORM& aTransform ) const;
 
     bool operator!=( const TRANSFORM& aTransform ) const { return !( *this == aTransform ); }
 
    /**
-    * Calculate new coordinate according to the mirror/rotation transform.
+    * Calculate a new coordinate according to the mirror/rotation transform.
     * Useful to calculate actual coordinates of a point
     * from coordinates relative to a component
     * which are given for a non rotated, non mirrored item
@@ -72,6 +72,16 @@ public:
     wxPoint TransformCoordinate( const wxPoint& aPoint ) const;
 
    /**
+    * Calculate a new rect according to the mirror/rotation transform.
+    * Useful to calculate actual coordinates of a point
+    * from coordinates relative to a component
+    * which are given for a non rotated, non mirrored item
+    * @param aRect = The rectangle to transform
+    * @return The transformed rectangle.
+    */
+    EDA_RECT TransformCoordinate( const EDA_RECT& aRect ) const;
+
+    /**
     * Calculate the Inverse mirror/rotation transform.
     * Useful to calculate coordinates relative to a component
     * which must be for a non rotated, non mirrored item

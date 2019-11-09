@@ -27,14 +27,21 @@
 
 #include <cstdio>
 #include <deque>
+#include <iterator>
 
 #include <math/vector2d.h>
-#include <cassert>
+#include <core/optional.h>
 
-#include <boost/optional.hpp>
+#ifdef WX_COMPATIBILITY
+#include <wx/debug.h>
+#else
+#include <cassert>
+#endif
+
 
 class TOOL_ACTION;
 class TOOL_MANAGER;
+class TOOL_BASE;
 
 /**
  * Internal (GUI-independent) event definitions.
@@ -82,20 +89,34 @@ enum TOOL_ACTIONS
 
     // Context menu update. Issued whenever context menu is open and the user hovers the mouse
     // over one of choices. Used in dynamic highligting in disambiguation menu
-    TA_CONTEXT_MENU_UPDATE  = 0x4000,
+    TA_CHOICE_MENU_UPDATE   = 0x4000,
 
     // Context menu choice. Sent if the user picked something from the context menu or
     // closed it without selecting anything.
-    TA_CONTEXT_MENU_CHOICE  = 0x8000,
+    TA_CHOICE_MENU_CHOICE   = 0x8000,
+
+    // Context menu is closed, no matter whether anything has been chosen or not.
+    TA_CHOICE_MENU_CLOSED   = 0x10000,
+
+    TA_CHOICE_MENU = TA_CHOICE_MENU_UPDATE | TA_CHOICE_MENU_CHOICE | TA_CHOICE_MENU_CLOSED,
 
     // This event is sent *before* undo/redo command is performed.
-    TA_UNDO_REDO            = 0x10000,
+    TA_UNDO_REDO_PRE        = 0x20000,
 
-    // Tool action (allows to control tools).
-    TA_ACTION               = 0x20000,
+    // This event is sent *after* undo/redo command is performed.
+    TA_UNDO_REDO_POST       = 0x40000,
+
+    // Tool action (allows one to control tools).
+    TA_ACTION               = 0x80000,
 
     // Tool activation event.
-    TA_ACTIVATE             = 0x40000,
+    TA_ACTIVATE             = 0x100000,
+
+    // Model has changed (partial update).
+    TA_MODEL_CHANGE         = 0x200000,
+
+    // Tool priming event (a special mouse click)
+    TA_PRIME                = 0x400001,
 
     TA_ANY = 0xffffffff
 };
@@ -159,26 +180,33 @@ public:
     const std::string Format() const;
 
     TOOL_EVENT( TOOL_EVENT_CATEGORY aCategory = TC_NONE, TOOL_ACTIONS aAction = TA_NONE,
-            TOOL_ACTION_SCOPE aScope = AS_GLOBAL ) :
+                TOOL_ACTION_SCOPE aScope = AS_GLOBAL, void* aParameter = nullptr ) :
         m_category( aCategory ),
         m_actions( aAction ),
         m_scope( aScope ),
         m_mouseButtons( 0 ),
         m_keyCode( 0 ),
-        m_modifiers( 0 ) {}
+        m_modifiers( 0 ),
+        m_param( aParameter ),
+        m_firstResponder( nullptr )
+    {
+        init();
+    }
 
     TOOL_EVENT( TOOL_EVENT_CATEGORY aCategory, TOOL_ACTIONS aAction, int aExtraParam,
-            TOOL_ACTION_SCOPE aScope = AS_GLOBAL ) :
+                TOOL_ACTION_SCOPE aScope = AS_GLOBAL, void* aParameter = nullptr ) :
         m_category( aCategory ),
         m_actions( aAction ),
         m_scope( aScope ),
         m_mouseButtons( 0 ),
         m_keyCode( 0 ),
-        m_modifiers( 0 )
+        m_modifiers( 0 ),
+        m_param( aParameter ),
+        m_firstResponder( nullptr )
     {
         if( aCategory == TC_MOUSE )
         {
-            m_mouseButtons = aExtraParam & BUT_BUTTON_MASK;
+            setMouseButtons( aExtraParam & BUT_BUTTON_MASK );
         }
         else if( aCategory == TC_KEYBOARD )
         {
@@ -193,53 +221,65 @@ public:
         {
             m_modifiers = aExtraParam & MD_MODIFIER_MASK;
         }
+
+        init();
     }
 
     TOOL_EVENT( TOOL_EVENT_CATEGORY aCategory, TOOL_ACTIONS aAction,
-            const std::string& aExtraParam, TOOL_ACTION_SCOPE aScope = AS_GLOBAL ) :
+            const std::string& aExtraParam, TOOL_ACTION_SCOPE aScope = AS_GLOBAL,
+            void* aParameter = nullptr ) :
         m_category( aCategory ),
         m_actions( aAction ),
         m_scope( aScope ),
         m_mouseButtons( 0 ),
         m_keyCode( 0 ),
-        m_modifiers( 0 )
+        m_modifiers( 0 ),
+        m_param( aParameter ),
+        m_firstResponder( nullptr )
     {
         if( aCategory == TC_COMMAND || aCategory == TC_MESSAGE )
             m_commandStr = aExtraParam;
+
+        init();
     }
 
     ///> Returns the category (eg. mouse/keyboard/action) of an event..
-    TOOL_EVENT_CATEGORY Category() const
-    {
-        return m_category;
-    }
+    TOOL_EVENT_CATEGORY Category() const { return m_category; }
 
     ///> Returns more specific information about the type of an event.
-    TOOL_ACTIONS Action() const
-    {
-        return m_actions;
-    }
+    TOOL_ACTIONS Action() const { return m_actions; }
+
+    ///> These give a tool a method of informing the TOOL_MANAGER that a particular event should
+    ///> be passed on to subsequent tools on the stack.  Defaults to true for TC_MESSAGES; false
+    ///> for everything else.
+    bool PassEvent() const { return m_passEvent; }
+    void SetPassEvent() { m_passEvent = true; }
+
+    ///> Returns if it this event has a valid position (true for mouse events and context-menu
+    ///> or hotkey-based command events)
+    bool HasPosition() const { return m_hasPosition; }
+    void SetHasPosition( bool aHasPosition ) { m_hasPosition = aHasPosition; }
+
+    TOOL_BASE* FirstResponder() const { return m_firstResponder; }
+    void SetFirstResponder( TOOL_BASE* aTool ) { m_firstResponder = aTool; }
 
     ///> Returns information about difference between current mouse cursor position and the place
     ///> where dragging has started.
-    const VECTOR2D& Delta() const
+    const VECTOR2D Delta() const
     {
-        assert( m_category == TC_MOUSE );    // this should be used only with mouse events
-        return m_mouseDelta;
+        return returnCheckedPosition( m_mouseDelta );
     }
 
     ///> Returns mouse cursor position in world coordinates.
-    const VECTOR2D& Position() const
+    const VECTOR2D Position() const
     {
-        assert( m_category == TC_MOUSE );    // this should be used only with mouse events
-        return m_mousePos;
+        return returnCheckedPosition( m_mousePos );
     }
 
     ///> Returns the point where dragging has started.
-    const VECTOR2D& DragOrigin() const
+    const VECTOR2D DragOrigin() const
     {
-        assert( m_category == TC_MOUSE );    // this should be used only with mouse events
-        return m_mouseDragOrigin;
+        return returnCheckedPosition( m_mouseDragOrigin );
     }
 
     ///> Returns information about mouse buttons state.
@@ -249,31 +289,28 @@ public:
         return m_mouseButtons;
     }
 
-    bool IsClick( int aButtonMask = BUT_ANY ) const
-    {
-        return ( m_actions == TA_MOUSE_CLICK )
-               && ( ( m_mouseButtons & aButtonMask ) == aButtonMask );
-    }
+    bool IsClick( int aButtonMask = BUT_ANY ) const;
 
-    bool IsDblClick( int aButtonMask = BUT_ANY ) const
-    {
-        return ( m_actions == TA_MOUSE_DBLCLICK )
-               && ( ( m_mouseButtons & aButtonMask ) == aButtonMask );
-    }
+    bool IsDblClick( int aButtonMask = BUT_ANY ) const;
 
     bool IsDrag( int aButtonMask = BUT_ANY ) const
     {
-        return ( m_actions == TA_MOUSE_DRAG ) && ( ( m_mouseButtons & aButtonMask ) == aButtonMask );
+        return m_actions == TA_MOUSE_DRAG && ( m_mouseButtons & aButtonMask ) == m_mouseButtons;
     }
 
     bool IsMouseUp( int aButtonMask = BUT_ANY ) const
     {
-        return ( m_actions == TA_MOUSE_UP ) && ( ( m_mouseButtons & aButtonMask ) == aButtonMask );
+        return m_actions == TA_MOUSE_UP && ( m_mouseButtons & aButtonMask ) == m_mouseButtons;
     }
 
     bool IsMotion() const
     {
         return m_actions == TA_MOUSE_MOTION;
+    }
+
+    bool IsMouseAction() const
+    {
+        return ( m_actions & TA_MOUSE );
     }
 
     bool IsCancel() const
@@ -284,6 +321,21 @@ public:
     bool IsActivate() const
     {
         return m_actions == TA_ACTIVATE;
+    }
+
+    bool IsUndoRedo() const
+    {
+        return m_actions & ( TA_UNDO_REDO_PRE | TA_UNDO_REDO_POST );
+    }
+
+    bool IsChoiceMenu() const
+    {
+        return m_actions & TA_CHOICE_MENU;
+    }
+
+    bool IsPrime() const
+    {
+        return m_actions == TA_PRIME;
     }
 
     ///> Returns information about key modifiers state (Ctrl, Alt, etc.)
@@ -302,21 +354,6 @@ public:
         return m_actions == TA_KEY_PRESSED;
     }
 
-    void SetMouseDragOrigin( const VECTOR2D& aP )
-    {
-        m_mouseDragOrigin = aP;
-     }
-
-    void SetMousePosition( const VECTOR2D& aP )
-    {
-        m_mousePos = aP;
-    }
-
-    void SetMouseDelta( const VECTOR2D& aP )
-    {
-        m_mouseDelta = aP;
-    }
-
     /**
      * Function Matches()
      * Tests whether two events match in terms of category & action or command.
@@ -329,9 +366,6 @@ public:
         if( !( m_category & aEvent.m_category ) )
             return false;
 
-        if( !( m_actions & aEvent.m_actions ) )
-            return false;
-
         if( m_category == TC_COMMAND || m_category == TC_MESSAGE )
         {
             if( (bool) m_commandStr && (bool) aEvent.m_commandStr )
@@ -340,6 +374,15 @@ public:
             if( (bool) m_commandId && (bool) aEvent.m_commandId )
                 return *m_commandId == *aEvent.m_commandId;
         }
+
+        // BUGFIX: TA_ANY should match EVERYTHING, even TA_NONE (for TC_MESSAGE)
+        if( m_actions == TA_ANY && aEvent.m_actions == TA_NONE && aEvent.m_category == TC_MESSAGE )
+            return true;
+
+        // BUGFIX: This check must happen after the TC_COMMAND check because otherwise events of
+        // the form { TC_COMMAND, TA_NONE } will be incorrectly skipped
+        if( !( m_actions & aEvent.m_actions ) )
+            return false;
 
         return true;
     }
@@ -352,22 +395,134 @@ public:
      */
     bool IsAction( const TOOL_ACTION* aAction ) const;
 
-    boost::optional<int> GetCommandId() const
+    /**
+     * Function IsCancelInteractive()
+     *
+     * Indicates the event should restart/end an ongoing interactive tool's event loop (eg esc
+     * key, click cancel, start different tool).
+     */
+    bool IsCancelInteractive();
+
+    /**
+     * Function IsSelectionEvent()
+     *
+     * Indicates an selection-changed notification event.
+     */
+    bool IsSelectionEvent();
+
+    /**
+     * Function IsPointEditor
+     *
+     * Indicates if the event is from one of the point editors.  Usually used to allow the
+     * point editor to activate itself without de-activating the current drawing tool.
+     */
+    bool IsPointEditor();
+
+    /**
+     * Function IsMoveTool
+     *
+     * Indicates if the event is from one of the move tools.  Usually used to allow move to
+     * be done without de-activating the current drawing tool.
+     */
+    bool IsMoveTool();
+
+    /**
+     * Function Parameter()
+     * Returns a non-standard parameter assigned to the event. Its meaning depends on the
+     * target tool.
+     */
+    template<typename T>
+    inline T Parameter() const
+    {
+        // Exhibit #798 on why I love to hate C++
+        // - reinterpret_cast needs to be used for pointers
+        // - static_cast must be used for enums
+        // - templates can't usefully distinguish between pointer and non-pointer types
+        // Fortunately good old C's cast can be a reinterpret_cast or a static_cast, and
+        // C99 gave us intptr_t which is guaranteed to be round-trippable with a pointer.
+        return (T) reinterpret_cast<intptr_t>( m_param );
+    }
+
+    /**
+     * Function SetParameter()
+     * Sets a non-standard parameter assigned to the event. Its meaning depends on the
+     * target tool.
+     * @param aParam is the new parameter.
+     */
+    template<typename T>
+    void SetParameter(T aParam)
+    {
+        m_param = (void*) aParam;
+    }
+
+    OPT<int> GetCommandId() const
     {
         return m_commandId;
     }
 
-    boost::optional<std::string> GetCommandStr() const
+    OPT<std::string> GetCommandStr() const
     {
         return m_commandStr;
     }
 
+    void SetMousePosition( const VECTOR2D& aP )
+    {
+        m_mousePos = aP;
+    }
+
 private:
-    friend class TOOL_MANAGER;
+    friend class TOOL_DISPATCHER;
+
+    void init();
+
+    void setMouseDragOrigin( const VECTOR2D& aP )
+    {
+        m_mouseDragOrigin = aP;
+     }
+
+    void setMouseDelta( const VECTOR2D& aP )
+    {
+        m_mouseDelta = aP;
+    }
+
+    void setMouseButtons( int aButtons )
+    {
+        assert( ( aButtons & ~BUT_BUTTON_MASK ) == 0 );
+        m_mouseButtons = aButtons;
+    }
+
+    void setModifiers( int aMods )
+    {
+        assert( ( aMods & ~MD_MODIFIER_MASK ) == 0 );
+        m_modifiers = aMods;
+    }
+
+    /**
+     * Ensure that the event is a type that has a position before returning a
+     * position, otherwise return a null-constructed position.
+     * Used to defend the position accessors from runtime access when the event
+     * does not have a valid position.
+     *
+     * @param aPos the position to return if the event is valid
+     * @return the checked position
+     */
+    VECTOR2D returnCheckedPosition( const VECTOR2D& aPos ) const
+    {
+    #ifdef WX_COMPATIBILITY
+        wxCHECK_MSG( HasPosition(), VECTOR2D(),
+            "Attempted to get position from non-position event" );
+    #else
+        assert( HasPosition() );
+    #endif
+
+        return aPos;
+    }
 
     TOOL_EVENT_CATEGORY m_category;
     TOOL_ACTIONS m_actions;
     TOOL_ACTION_SCOPE m_scope;
+    bool m_passEvent;
+    bool m_hasPosition;
 
     ///> Difference between mouse cursor position and
     ///> the point where dragging event has started
@@ -388,11 +543,17 @@ private:
     ///> State of key modifierts (Ctrl/Alt/etc.)
     int m_modifiers;
 
-    boost::optional<int> m_commandId;
-    boost::optional<std::string> m_commandStr;
+    ///> Generic parameter used for passing non-standard data.
+    void* m_param;
+
+    ///> The first tool to receive the event
+    TOOL_BASE* m_firstResponder;
+
+    OPT<int> m_commandId;
+    OPT<std::string> m_commandStr;
 };
 
-typedef boost::optional<TOOL_EVENT> OPT_TOOL_EVENT;
+typedef OPT<TOOL_EVENT> OPT_TOOL_EVENT;
 
 /**
  * Class TOOL_EVENT_LIST
@@ -425,13 +586,15 @@ public:
      */
     const std::string Format() const;
 
-    boost::optional<const TOOL_EVENT&> Matches( const TOOL_EVENT& aEvent ) const
+    OPT<const TOOL_EVENT&> Matches( const TOOL_EVENT& aEvent ) const
     {
-        for( const_iterator i = m_events.begin(); i != m_events.end(); ++i )
-            if( i->Matches( aEvent ) )
-                return *i;
+        for( const TOOL_EVENT& event : m_events )
+        {
+            if( event.Matches( aEvent ) )
+                return event;
+        }
 
-        return boost::optional<const TOOL_EVENT&>();
+        return OPT<const TOOL_EVENT&>();
     }
 
     /**
@@ -478,11 +641,8 @@ public:
     {
         m_events.clear();
 
-        for( std::deque<TOOL_EVENT>::const_iterator i = aEventList.m_events.begin();
-             i != aEventList.m_events.end(); ++i )
-        {
-            m_events.push_back( *i );
-        }
+        for( const TOOL_EVENT& event : aEventList.m_events )
+            m_events.push_back( event );
 
         return *this;
     }
@@ -502,12 +662,14 @@ public:
 
     TOOL_EVENT_LIST& operator||( const TOOL_EVENT_LIST& aEvent )
     {
+        std::copy( aEvent.m_events.begin(), aEvent.m_events.end(), std::back_inserter( m_events ) );
         return *this;
     }
 
 private:
     std::deque<TOOL_EVENT> m_events;
 };
+
 
 inline const TOOL_EVENT_LIST operator||( const TOOL_EVENT& aEventA, const TOOL_EVENT& aEventB )
 {
@@ -519,6 +681,7 @@ inline const TOOL_EVENT_LIST operator||( const TOOL_EVENT& aEventA, const TOOL_E
     return l;
 }
 
+
 inline const TOOL_EVENT_LIST operator||( const TOOL_EVENT& aEvent,
                                          const TOOL_EVENT_LIST& aEventList )
 {
@@ -527,5 +690,6 @@ inline const TOOL_EVENT_LIST operator||( const TOOL_EVENT& aEvent,
     l.Add( aEvent );
     return l;
 }
+
 
 #endif

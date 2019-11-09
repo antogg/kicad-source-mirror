@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2012 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
+ * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -35,67 +35,32 @@
 #include <fctsys.h>
 #include <pgm_base.h>
 #include <kiface_i.h>
+#include <kiface_ids.h>
 #include <confirm.h>
 #include <macros.h>
-#include <class_drawpanel.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <eda_dde.h>
-#include <pcbcommon.h>
-#include <colors_selection.h>
 #include <wx/stdpaths.h>
-
 #include <wx/file.h>
 #include <wx/snglinst.h>
 #include <wx/dir.h>
 #include <gestfich.h>
-
 #include <pcbnew.h>
-#include <hotkeys.h>
 #include <wildcards_and_files_ext.h>
 #include <class_board.h>
-#include <3d_viewer.h>
+#include <class_draw_panel_gal.h>
 #include <fp_lib_table.h>
-#include <module_editor_frame.h>
-#include <modview_frame.h>
+#include <footprint_edit_frame.h>
+#include <footprint_viewer_frame.h>
 #include <footprint_wizard_frame.h>
+#include <footprint_preview_panel.h>
+#include <footprint_info_impl.h>
+#include <gl_context_mgr.h>
+#include <dialog_configure_paths.h>
+#include "invoke_pcb_dialog.h"
+#include "dialog_global_fp_lib_table_config.h"
 
-
-// Colors for layers and items
-COLORS_DESIGN_SETTINGS g_ColorsSettings;
-
-bool        g_Drc_On = true;
-bool        g_AutoDeleteOldTrack = true;
-bool        g_Show_Module_Ratsnest;
-bool        g_Raccord_45_Auto = true;
-bool        g_Alternate_Track_Posture = false;
-bool        g_Track_45_Only_Allowed = true;  // True to allow horiz, vert. and 45deg only tracks
-bool        g_Segments_45_Only;              // True to allow horiz, vert. and 45deg only graphic segments
-bool        g_TwoSegmentTrackBuild = true;
-
-LAYER_ID    g_Route_Layer_TOP;
-LAYER_ID    g_Route_Layer_BOTTOM;
-int         g_MaxLinksShowed;
-int         g_MagneticPadOption   = capture_cursor_in_track_tool;
-int         g_MagneticTrackOption = capture_cursor_in_track_tool;
-
-wxPoint     g_Offset_Module;     // module offset used when moving a footprint
-
-DISPLAY_OPTIONS DisplayOpt;      // General display options
-
-/* Name of the document footprint list
- * usually located in share/modules/footprints_doc
- * this is of the responsibility to users to create this file
- * if they want to have a list of footprints
- */
-wxString    g_DocModulesFileName = wxT( "footprints_doc/footprints.pdf" );
-
-/*
- * Used in track creation, a list of track segments currently being created,
- * with the newest track at the end of the list, sorted by new-ness.  e.g. use
- * TRACK->Back() to get the next older track, TRACK->Next() to get the next
- * newer track.
- */
-DLIST<TRACK> g_CurrentTrackList;
+extern bool IsWxPythonLoaded();
 
 namespace PCB {
 
@@ -107,63 +72,65 @@ static struct IFACE : public KIFACE_I
         KIFACE_I( aName, aType )
     {}
 
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits );
+    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits ) override;
 
-    void OnKifaceEnd();
+    void OnKifaceEnd() override;
 
-    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 )
+    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 ) override
     {
         switch( aClassId )
         {
-        case FRAME_PCB:
-            {
-                PCB_EDIT_FRAME* frame = new PCB_EDIT_FRAME( aKiway, aParent );
+        case FRAME_PCB_EDITOR:
+        {
+            auto frame = new PCB_EDIT_FRAME( aKiway, aParent );
 
-#if defined(KICAD_SCRIPTING)
-                // give the scripting helpers access to our frame
-                ScriptingSetPcbEditFrame( frame );
+#if defined( KICAD_SCRIPTING )
+            // give the scripting helpers access to our frame
+            ScriptingSetPcbEditFrame( frame );
 #endif
 
-                if( Kiface().IsSingle() )
-                {
-                    // only run this under single_top, not under a project manager.
-                    CreateServer( frame, KICAD_PCB_PORT_SERVICE_NUMBER );
-                }
-                return frame;
-            }
-            break;
-
-        case FRAME_PCB_MODULE_EDITOR:
+            if( Kiface().IsSingle() )
             {
-                FOOTPRINT_EDIT_FRAME* frame = new FOOTPRINT_EDIT_FRAME( aKiway, aParent );
-                return frame;
+                // only run this under single_top, not under a project manager.
+                frame->CreateServer( KICAD_PCB_PORT_SERVICE_NUMBER );
             }
-            break;
 
-        case FRAME_PCB_MODULE_VIEWER:
-        case FRAME_PCB_MODULE_VIEWER_MODAL:
-            {
-                FOOTPRINT_VIEWER_FRAME* frame = new FOOTPRINT_VIEWER_FRAME(
-                        aKiway, aParent, FRAME_T( aClassId ) );
-
-                return frame;
-            }
-            break;
-
-        case FRAME_PCB_FOOTPRINT_WIZARD_MODAL:
-            {
-                FOOTPRINT_WIZARD_FRAME* frame = new FOOTPRINT_WIZARD_FRAME(
-                        aKiway, aParent, FRAME_T( aClassId ) );
-
-                return frame;
-            }
-            break;
-
-        default:
-            ;
+            return frame;
         }
 
-        return NULL;
+        case FRAME_FOOTPRINT_EDITOR:
+            return new FOOTPRINT_EDIT_FRAME( aKiway, aParent,
+                                             EDA_DRAW_PANEL_GAL::GAL_TYPE_UNKNOWN );
+
+        case FRAME_FOOTPRINT_VIEWER:
+        case FRAME_FOOTPRINT_VIEWER_MODAL:
+            return new FOOTPRINT_VIEWER_FRAME( aKiway, aParent, FRAME_T( aClassId ) );
+
+        case FRAME_FOOTPRINT_WIZARD:
+            return new FOOTPRINT_WIZARD_FRAME( aKiway, aParent, FRAME_T( aClassId ) );
+
+        case FRAME_FOOTPRINT_PREVIEW:
+            return dynamic_cast< wxWindow* >( FOOTPRINT_PREVIEW_PANEL::New( aKiway, aParent ) );
+
+        case DIALOG_CONFIGUREPATHS:
+        {
+            DIALOG_CONFIGURE_PATHS dlg( aParent, aKiway->Prj().Get3DFilenameResolver() );
+
+            if( dlg.ShowModal() == wxID_OK )
+                aKiway->CommonSettingsChanged( true );
+
+            // Dialog has completed; nothing to return.
+            return nullptr;
+        }
+
+        case DIALOG_PCB_LIBRARY_TABLE:
+            InvokePcbLibTableEditor( aKiway, aParent );
+            // Dialog has completed; nothing to return.
+            return nullptr;
+
+        default:
+            return nullptr;
+        }
     }
 
     /**
@@ -177,9 +144,25 @@ static struct IFACE : public KIFACE_I
      *
      * @return void* - and must be cast into the know type.
      */
-    void* IfaceOrAddress( int aDataId )
+    void* IfaceOrAddress( int aDataId ) override
     {
-        return NULL;
+        switch( aDataId )
+        {
+        // Return a pointer to the global instance of the footprint list.
+        case KIFACE_FOOTPRINT_LIST:
+            return (void*) &GFootprintList;
+
+        // Return a new FP_LIB_TABLE with the global table installed as a fallback.
+        case KIFACE_NEW_FOOTPRINT_TABLE:
+            return (void*) new FP_LIB_TABLE( &GFootprintTable );
+
+        // Return a pointer to the global instance of the global footprint table.
+        case KIFACE_GLOBAL_FOOTPRINT_TABLE:
+            return (void*) &GFootprintTable;
+
+        default:
+            return nullptr;
+        }
     }
 
 } kiface( "pcbnew", KIWAY::FACE_PCB );
@@ -197,114 +180,141 @@ KIFACE_I& Kiface() { return kiface; }
 
 // KIFACE_GETTER's actual spelling is a substitution macro found in kiway.h.
 // KIFACE_GETTER will not have name mangling due to declaration in kiway.h.
-MY_API( KIFACE* ) KIFACE_GETTER(  int* aKIFACEversion, int aKiwayVersion, PGM_BASE* aProgram )
+MY_API( KIFACE* ) KIFACE_GETTER( int* aKIFACEversion, int aKiwayVersion, PGM_BASE* aProgram )
 {
-    process = (PGM_BASE*) aProgram;
+    process = aProgram;
     return &kiface;
 }
 
-#if defined(BUILD_KIWAY_DLL)
+#if defined( BUILD_KIWAY_DLL )
 PGM_BASE& Pgm()
 {
     wxASSERT( process );    // KIFACE_GETTER has already been called.
     return *process;
 }
+
+// Similar to PGM_BASE& Pgm(), but return nullptr when a *.ki_face
+// is run from a python script, mot from a Kicad application
+PGM_BASE* PgmOrNull()
+{
+    return process;
+}
+
 #endif
 
 
-#if defined(KICAD_SCRIPTING)
+#if defined( KICAD_SCRIPTING )
 static bool scriptingSetup()
 {
-    wxString path_frag;
 
- #ifdef __MINGW32__
-    // force python environment under Windows:
-    const wxString python_us( "python27_us" );
+#if defined( __WINDOWS__ )
+    // If our python.exe (in kicad/bin) exists, force our kicad python environment
+    wxString kipython = FindKicadFile( "python.exe" );
 
-    // Build our python path inside kicad
-    wxString kipython =  FindKicadFile( python_us + wxT("/python.exe") );
-
-    //we need only the path:
-    wxFileName fn( kipython );
+    // we need only the path:
+    wxFileName fn( kipython  );
     kipython = fn.GetPath();
 
     // If our python install is existing inside kicad, use it
+    // Note: this is useful only when another python version is installed
     if( wxDirExists( kipython ) )
     {
+        // clear any PYTHONPATH and PYTHONHOME env var definition: the default
+        // values work fine inside Kicad:
+        wxSetEnv( wxT( "PYTHONPATH" ), wxEmptyString );
+        wxSetEnv( wxT( "PYTHONHOME" ), wxEmptyString );
+
+        // Add our python executable path in first position:
         wxString ppath;
+        wxGetEnv( wxT( "PATH" ), &ppath );
 
-        if( !wxGetEnv( wxT( "PYTHONPATH" ), &ppath ) || !ppath.Contains( python_us ) )
-        {
-            ppath << kipython << wxT("/pylib;");
-            ppath << kipython << wxT("/lib;");
-            ppath << kipython << wxT("/dll");
-            wxSetEnv( wxT( "PYTHONPATH" ), ppath );
-            DBG( std::cout << "set PYTHONPATH to "  << TO_UTF8(ppath) << "\n"; )
-
-            // Add python executable path:
-            wxGetEnv( wxT( "PATH" ), &ppath );
-            if( !ppath.Contains( python_us ) )
-            {
-                kipython << wxT(";") << ppath;
-                wxSetEnv( wxT( "PATH" ), kipython );
-                DBG( std::cout << "set PATH to " << TO_UTF8(kipython) << "\n"; )
-            }
-        }
+        kipython << wxT( ";" ) << ppath;
+        wxSetEnv( wxT( "PATH" ), kipython );
     }
 
-    // TODO: make this path definable by the user, and set more than one path
-    // (and remove the fixed paths from <src>/scripting/kicadplugins.i)
+#elif defined( __WXMAC__ )
 
-    // wizard plugins are stored in kicad/bin/plugins.
-    // so add this path to python scripting default search paths
-    // which are ( [KICAD_PATH] is an environment variable to define)
-    // [KICAD_PATH]/scripting/plugins
-    // Add this default search path:
-    path_frag = Pgm().GetExecutablePath() + wxT( "scripting/plugins" );
- #else
-    // Add this default search path:
-    path_frag = wxT( "/usr/local/kicad/bin/scripting/plugins" );
+    // Add default paths to PYTHONPATH
+    wxString pypath;
 
-  #ifdef  __WXMAC__
-    // OSX
-    // System Library first
-    // User Library then
-    // (TODO) Bundle package ? where to place ? Shared Support ?
-    path_frag = wxT( "/Library/Application Support/kicad/scripting" );
-    path_frag = wxString( wxGetenv("HOME") ) + wxT( "/Library/Application Support/kicad/scripting" );
+    // Bundle scripting folder (<kicad.app>/Contents/SharedSupport/scripting)
+    pypath += GetOSXKicadDataDir() + wxT( "/scripting" );
 
-    // Get pcbnew.app/Contents directory
-    wxFileName bundledir( wxStandardPaths::Get().GetExecutablePath() ) ;
-    bundledir.RemoveLastDir();
-
-    // Prepend in PYTHONPATH the content of the bundle libraries !
-    wxSetEnv( "PYTHONPATH", ((wxGetenv("PYTHONPATH") != NULL ) ? (wxString(wxGetenv("PYTHONPATH")) + ":") : wxString("")) +
-            bundledir.GetPath() +
-            "/Frameworks/wxPython/lib/python2.6/site-packages/wx-3.0-osx_cocoa" + ":" +
-            "/Library/Application Support/kicad/" + ":" +
-            bundledir.GetPath() + "/PlugIns" + ":" +
-            wxString( wxGetenv("HOME") )  + "/Library/Application Support/kicad/"
-            );
-  #endif
- #endif
-
-    // On linux and osx, 2 others paths are
-    // [HOME]/.kicad_plugins/
-    // [HOME]/.kicad/scripting/plugins/
-    if( !pcbnewInitPythonScripting( TO_UTF8( path_frag ) ) )
+    // $(KICAD_PATH)/scripting/plugins is always added in kicadplugins.i
+    if( wxGetenv("KICAD_PATH") != NULL )
     {
-        wxLogSysError( wxT( "pcbnewInitPythonScripting() failed." ) );
+        pypath += wxT( ":" ) + wxString( wxGetenv("KICAD_PATH") );
+    }
+
+    // Bundle wxPython folder (<kicad.app>/Contents/Frameworks/python/site-packages)
+    pypath += wxT( ":" ) + Pgm().GetExecutablePath() +
+              wxT( "Contents/Frameworks/python/site-packages" );
+
+    // Original content of $PYTHONPATH
+    if( wxGetenv( wxT( "PYTHONPATH" ) ) != NULL )
+    {
+        pypath = wxString( wxGetenv( wxT( "PYTHONPATH" ) ) ) + wxT( ":" ) + pypath;
+    }
+
+    // set $PYTHONPATH
+    wxSetEnv( "PYTHONPATH", pypath );
+
+#else
+    wxString pypath;
+
+    // PYTHON_DEST is the scripts install dir as determined by the build system.
+    pypath = Pgm().GetExecutablePath() + wxT( "../" PYTHON_DEST );
+
+    if( !wxIsEmpty( wxGetenv( wxT( "PYTHONPATH" ) ) ) )
+        pypath = wxString( wxGetenv( wxT( "PYTHONPATH" ) ) ) + wxT( ":" ) + pypath;
+
+    wxSetEnv( wxT( "PYTHONPATH" ), pypath );
+
+#endif
+
+    if( !pcbnewInitPythonScripting( TO_UTF8( PyScriptingPath() ) ) )
+    {
+        wxLogError( "pcbnewInitPythonScripting() failed." );
         return false;
     }
+
     return true;
 }
 #endif  // KICAD_SCRIPTING
 
 
+void PythonPluginsReloadBase()
+{
+#if defined( KICAD_SCRIPTING )
+    // Reload plugin list: reload Python plugins if they are newer than
+    // the already loaded, and load new plugins
+    char cmd[1024];
+
+    snprintf( cmd, sizeof( cmd ),
+              "pcbnew.LoadPlugins(\"%s\")", TO_UTF8( PyScriptingPath() ) );
+
+    PyLOCK lock;
+
+    // ReRun the Python method pcbnew.LoadPlugins
+    // (already called when starting Pcbnew)
+    int retv = PyRun_SimpleString( cmd );
+
+    if( retv != 0 )
+        wxLogError( "Python error %d occurred running command:\n\n`%s`", retv, cmd );
+#endif
+}
+
+
 /// The global footprint library table.  This is not dynamically allocated because
 /// in a multiple project environment we must keep its address constant (since it is
 /// the fallback table for multiple projects).
-FP_LIB_TABLE    GFootprintTable;
+FP_LIB_TABLE          GFootprintTable;
+
+/// The global footprint info table.  This is performance-intensive to build so we
+/// keep a hash-stamped global version.  Any deviation from the request vs. stored
+/// hash will result in it being rebuilt.
+FOOTPRINT_LIST_IMPL   GFootprintList;
+
 
 
 bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
@@ -315,47 +325,39 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 
     start_common( aCtlBits );
 
-    // Must be called before creating the main frame in order to
-    // display the real hotkeys in menus or tool tips
-    ReadHotkeyConfig( wxT( "PcbFrame" ), g_Board_Editor_Hokeys_Descr );
+    wxFileName fn = FP_LIB_TABLE::GetGlobalTableFileName();
 
-    // Set 3D shape path (environment variable KISYS3DMOD) if not defined or valid
-    // Currently, called here, but could be moved ( OpenProjectFiles() ? )
-    // if KISYS3DMOD is defined in a project config file
-    Set3DShapesDefaultPath( KISYS3DMOD, aProgram );
-
-    try
+    if( !fn.FileExists() )
     {
-        // The global table is not related to a specific project.  All projects
-        // will use the same global table.  So the KIFACE::OnKifaceStart() contract
-        // of avoiding anything project specific is not violated here.
+        DIALOG_GLOBAL_FP_LIB_TABLE_CONFIG fpDialog( NULL );
 
-        if( !FP_LIB_TABLE::LoadGlobalTable( GFootprintTable ) )
+        fpDialog.ShowModal();
+    }
+    else
+    {
+        try
         {
-            DisplayInfoMessage( NULL, wxT(
-                "You have run Pcbnew for the first time using the "
-                "new footprint library table method for finding "
-                "footprints.  Pcbnew has either copied the default "
-                "table or created an empty table in the kicad configuration "
-                "folder.  You must first configure the library "
-                "table to include all footprint libraries not "
-                "included with KiCad.  See the \"Footprint Library "
-                "Table\" section of the CvPcb or Pcbnew documentation for "
-                "more information." ) );
+            // The global table is not related to a specific project.  All projects
+            // will use the same global table.  So the KIFACE::OnKifaceStart() contract
+            // of avoiding anything project specific is not violated here.
+            if( !FP_LIB_TABLE::LoadGlobalTable( GFootprintTable ) )
+                return false;
+        }
+        catch( const IO_ERROR& ioe )
+        {
+            // if we are here, a incorrect global footprint library table was found.
+            // Incorrect global symbol library table is not a fatal error:
+            // the user just has to edit the (partially) loaded table.
+            wxString msg = _(
+                "An error occurred attempting to load the global footprint library table.\n"
+                "Please edit this global footprint library table in Preferences menu."
+                );
+
+            DisplayErrorMessage( NULL, msg, ioe.What() );
         }
     }
-    catch( const IO_ERROR& ioe )
-    {
-        wxString msg = wxString::Format( _(
-            "An error occurred attempting to load the global footprint library "
-            "table:\n\n%s" ),
-            GetChars( ioe.errorText )
-            );
-        DisplayError( NULL, msg );
-        return false;
-    }
 
-#if defined(KICAD_SCRIPTING)
+#if defined( KICAD_SCRIPTING )
     scriptingSetup();
 #endif
 
@@ -365,13 +367,14 @@ bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 
 void IFACE::OnKifaceEnd()
 {
-    end_common();
-
-#if KICAD_SCRIPTING_WXPYTHON
+#if defined( KICAD_SCRIPTING_WXPYTHON )
     // Restore the thread state and tell Python to cleanup after itself.
     // wxPython will do its own cleanup as part of that process.
     // This should only be called if python was setup correctly.
 
-    pcbnewFinishPythonScripting();
+    if( IsWxPythonLoaded() )
+        pcbnewFinishPythonScripting();
 #endif
+
+    end_common();
 }

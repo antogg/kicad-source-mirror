@@ -1,9 +1,32 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2010 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
+ * Copyright (C) 2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 
 #ifndef _TEMPLATE_FIELDNAME_H_
 #define _TEMPLATE_FIELDNAME_H_
 
 #include <richio.h>
-#include <wxstruct.h>
 #include <macros.h>
 #include <template_fieldnames_lexer.h>
 
@@ -48,25 +71,34 @@ enum  NumFieldType {
 struct TEMPLATE_FIELDNAME
 {
     wxString    m_Name;         ///<  The field name
-    wxString    m_Value;        ///<  The default value or empty
     bool        m_Visible;      ///<  If first appearance of the field's editor has as visible.
+    bool        m_URL;          ///<  If field should have a browse button
 
     TEMPLATE_FIELDNAME() :
-        m_Visible( false )
+        m_Visible( false ),
+        m_URL( false )
     {
     }
 
     TEMPLATE_FIELDNAME( const wxString& aName ) :
         m_Name( aName ),
-        m_Visible( false )
+        m_Visible( false ),
+        m_URL( false )
     {
+    }
+
+    TEMPLATE_FIELDNAME( const TEMPLATE_FIELDNAME& ref )
+    {
+        m_Name = ref.m_Name;
+        m_Visible = ref.m_Visible;
+        m_URL = ref.m_URL;
     }
 
     /**
      * Function Format
      * serializes this object out as text into the given OUTPUTFORMATTER.
      */
-    void Format( OUTPUTFORMATTER* out, int nestLevel ) const throw( IO_ERROR );
+    void Format( OUTPUTFORMATTER* out, int nestLevel ) const ;
 
     /**
      * Function Parse
@@ -81,7 +113,7 @@ struct TEMPLATE_FIELDNAME
      *
      * @param aSpec is the input token stream of keywords and symbols.
      */
-    void Parse( TEMPLATE_FIELDNAMES_LEXER* aSpec ) throw( IO_ERROR );
+    void Parse( TEMPLATE_FIELDNAMES_LEXER* aSpec );
 
     /**
      * Function GetDefaultFieldName
@@ -89,7 +121,7 @@ struct TEMPLATE_FIELDNAME
      * These fieldnames are not modifiable, but template fieldnames are.
      * @param aFieldNdx The field number index, > 0
      */
-    static wxString GetDefaultFieldName( int aFieldNdx );
+    static const wxString GetDefaultFieldName( int aFieldNdx );
 };
 
 typedef std::vector< TEMPLATE_FIELDNAME > TEMPLATE_FIELDNAMES;
@@ -106,13 +138,13 @@ public:
      * Function Format
      * serializes this object out as text into the given OUTPUTFORMATTER.
      */
-    void Format( OUTPUTFORMATTER* out, int nestLevel ) const throw( IO_ERROR );
+    void Format( OUTPUTFORMATTER* out, int nestLevel ) const ;
 
     /**
      * Function Parse
      * fills this object from information in the input stream handled by TEMPLATE_FIELDNAMES_LEXER
      */
-    void Parse( TEMPLATE_FIELDNAMES_LEXER* in ) throw( IO_ERROR );
+    void Parse( TEMPLATE_FIELDNAMES_LEXER* in );
 
 
     /**
@@ -141,19 +173,19 @@ public:
      * Function GetTemplateFieldName
      * returns a template fieldnames list for read only access.
      */
-    const TEMPLATE_FIELDNAMES& GetTemplateFieldNames()
+    const TEMPLATE_FIELDNAMES& GetTemplateFieldNames() const
     {
         return m_Fields;
     }
 
     /**
-     * Function HasFieldName
-     * checks for \a aName in the the template field name list.
+     * Function GetFieldName
+     * searches for \a aName in the the template field name list.
      *
      * @param aName A wxString object containing the field name to search for.
-     * @return True if \a aName is found in the list.
+     * @return the template fieldname if found; NULL otherwise.
      */
-    bool HasFieldName( const wxString& aName ) const;
+    const TEMPLATE_FIELDNAME* GetFieldName( const wxString& aName ) const;
 };
 
 #endif // _TEMPLATE_FIELDNAME_H_

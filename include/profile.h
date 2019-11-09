@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2013 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * 2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,65 +28,183 @@
  * @brief Simple profiling functions for measuring code execution time.
  */
 
-#ifndef __TPROFILE_H
-#define __TPROFILE_H
+#ifndef TPROFILE_H
+#define TPROFILE_H
 
-#include <sys/time.h>
+#include <chrono>
 #include <string>
-#include <stdint.h>
+#include <iostream>
+#include <iomanip>
 
 /**
- * Function get_tics
- * Returns the number of microseconds that have elapsed since the system was started.
- * @return uint64_t Number of microseconds.
+ * The class PROF_COUNTER is a small class to help profiling.
+ * It allows the calculation of the elapsed time (in milliseconds) between
+ * its creation (or the last call to Start() ) and the last call to Stop()
  */
-static inline uint64_t get_tics()
+class PROF_COUNTER
 {
-    struct timeval tv;
-    gettimeofday( &tv, NULL );
-
-    return (uint64_t) tv.tv_sec * 1000000ULL + (uint64_t) tv.tv_usec;
-}
-
-/**
- * Structure for storing data related to profiling counters.
- */
-struct prof_counter
-{
-    uint64_t start, end;         // Stored timer value
-
-    uint64_t usecs() const
+public:
+    /**
+     * Creates a PROF_COUNTER for measuring an elapsed time in milliseconds
+     * @param aName = a string that will be printed in message.
+     * @param aAutostart = true (default) to immediately start the timer
+     */
+    PROF_COUNTER( const std::string& aName, bool aAutostart = true ) :
+        m_name( aName ), m_running( false )
     {
-        return end - start;
+        if( aAutostart )
+            Start();
     }
 
-    float msecs() const
+    /**
+     * Creates a PROF_COUNTER for measuring an elapsed time in milliseconds
+     * The counter is started and the string to print in message is left empty.
+     */
+    PROF_COUNTER()
     {
-        return ( end - start ) / 1000.0;
+        Start();
     }
+
+    /**
+     * Starts or restarts the counter
+     */
+    void Start()
+    {
+        m_running = true;
+        m_starttime = CLOCK::now();
+        m_lasttime = m_starttime;
+    }
+
+
+    /**
+     * save the time when this function was called, and set the counter stane to stop
+     */
+    void Stop()
+    {
+        if( !m_running )
+            return;
+
+        m_stoptime = CLOCK::now();
+        m_running = false;
+    }
+
+    /**
+     * Print the elapsed time (in a suitable unit) to a stream.
+     *
+     * The unit is automatically chosen from ns, us, ms and s, depending on the
+     * size of the current count.
+     *
+     * @param the stream to print to.
+     */
+    void Show( std::ostream& aStream = std::cerr )
+    {
+        using DURATION = std::chrono::duration<double, std::nano>;
+
+        const auto   duration = SinceStart<DURATION>();
+        const double cnt = duration.count();
+
+        if( m_name.size() )
+        {
+            aStream << m_name << " took ";
+        }
+
+        if( cnt < 1e3 )
+            aStream << cnt << "ns";
+        else if( cnt < 1e6 )
+            aStream << cnt / 1e3 << "µs";
+        else if( cnt < 1e9 )
+            aStream << cnt / 1e6 << "ms";
+        else
+            aStream << cnt / 1e9 << "s";
+
+        aStream << std::endl;
+    }
+
+    /**
+     * @return the time since the timer was started. If the timer is stopped,
+     * the duration is from the start time to the time it was stopped, else it
+     * is to the current time.
+     */
+    template <typename DURATION>
+    DURATION SinceStart( bool aSinceLast = false )
+    {
+        const TIME_POINT stoptime = m_running ? CLOCK::now() : m_stoptime;
+        const TIME_POINT starttime = aSinceLast ? m_lasttime : m_starttime;
+
+        m_lasttime = stoptime;
+
+        return std::chrono::duration_cast<DURATION>( stoptime - starttime );
+    }
+
+    /**
+     * @param aSinceLast: only get the time since the last time the time was read
+     * @return the elapsed time in ms since the timer was started.
+     */
+    double msecs( bool aSinceLast = false )
+    {
+        using DUR_MS = std::chrono::duration<double, std::milli>;
+        return SinceStart<DUR_MS>( aSinceLast ).count();
+    }
+
+private:
+    std::string m_name;     // a string printed in message
+    bool m_running;
+
+    using CLOCK = std::chrono::high_resolution_clock;
+    using TIME_POINT = std::chrono::time_point<CLOCK>;
+
+    TIME_POINT m_starttime, m_lasttime, m_stoptime;
 };
 
-/**
- * Function prof_start
- * Begins code execution time counting for a given profiling counter.
- * @param cnt is the counter which should be started.
- * @param use_rdtsc tells if processor's time-stamp counter should be used for time counting.
- *      Otherwise is system tics method will be used. IMPORTANT: time-stamp counter should not
- *      be used on multicore machines executing threaded code.
- */
-static inline void prof_start( prof_counter* aCnt )
-{
-    aCnt->start = get_tics();
-}
 
 /**
- * Function prof_stop
- * Ends code execution time counting for a given profiling counter.
- * @param cnt is the counter which should be stopped.
+ * A simple RAII class to measure the time of an operation.
+ *
+ * On construction, a timer is started, and on destruction, the timer is
+ * ended, and the time difference is written into the given duration.
+ *
+ * For example:
+ *
+ * DURATION duration; // select a duration type as needed
+ * {
+ *     SCOPED_PROF_COUNTER<DURATION> timer( duration );
+ *     timed_activity();
+ * }
+ * // duration is now the time timed activity took
+ *
+ * From C++17, with class template argument deduction, you should be able to
+ * omit the <DURATION>.
  */
-static inline void prof_end( prof_counter* aCnt )
+template <typename DURATION>
+class SCOPED_PROF_COUNTER
 {
-    aCnt->end = get_tics();
-}
+public:
+    SCOPED_PROF_COUNTER( DURATION& aDuration ) : m_counter(), m_duration( aDuration )
+    {
+    }
 
-#endif
+    ~SCOPED_PROF_COUNTER()
+    {
+        // update the output
+        m_duration = m_counter.SinceStart<DURATION>();
+    }
+
+private:
+    ///< The counter to use to do the profiling
+    PROF_COUNTER m_counter;
+
+    ///< The duration to update at the end of the scope
+    DURATION& m_duration;
+};
+
+
+/**
+ * Function GetRunningMicroSecs
+ * An alternate way to calculate an elapset time (in microsecondes) to class PROF_COUNTER
+ * @return an ever increasing indication of elapsed microseconds.
+ * Use this by computing differences between two calls.
+ * @author Dick Hollenbeck
+ */
+unsigned GetRunningMicroSecs();
+
+#endif  // TPROFILE_H

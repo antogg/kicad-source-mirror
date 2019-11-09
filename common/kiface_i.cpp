@@ -29,6 +29,7 @@
 
 #include <kiface_i.h>
 #include <pgm_base.h>
+#include <systemdirsappend.h>
 
 #include <common.h>
 
@@ -80,10 +81,8 @@ static void setSearchPaths( SEARCH_STACK* aDst, KIWAY::FACE_T aId )
         aDst->AddPaths( fn.GetPath() );
     }
 
+#ifndef __WXMAC__
     aDst->AddPaths( wxT( "/usr/local/share" ) );
-
-#if 1 && defined(DEBUG)
-    aDst->Show( "kiface" );
 #endif
 }
 

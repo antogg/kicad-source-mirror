@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2013 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,11 +27,11 @@
 #define __TOOL_INTERACTIVE_H
 
 #include <string>
-
+#include <tool/tool_menu.h>
 #include <tool/tool_event.h>
 #include <tool/tool_base.h>
 
-class CONTEXT_MENU;
+class ACTION_MENU;
 
 class TOOL_INTERACTIVE : public TOOL_BASE
 {
@@ -54,6 +55,8 @@ public:
      */
     void Activate();
 
+    TOOL_MENU& GetToolMenu() { return m_menu; }
+    
     /**
      * Function SetContextMenu()
      *
@@ -61,7 +64,15 @@ public:
      * @param aMenu is the menu to be assigned.
      * @param aTrigger determines conditions upon which the context menu is activated.
      */
-    void SetContextMenu( CONTEXT_MENU* aMenu, CONTEXT_MENU_TRIGGER aTrigger = CMENU_BUTTON );
+    void SetContextMenu( ACTION_MENU* aMenu, CONTEXT_MENU_TRIGGER aTrigger = CMENU_BUTTON );
+
+    /**
+     * Function RunMainStack()
+     *
+     * Calls a function using the main stack.
+     * @param aFunc is the function to be calls.
+     */
+    void RunMainStack( std::function<void()> aFunc );
 
     /**
      * Function Go()
@@ -70,7 +81,7 @@ public:
      * No conditions means any event.
      */
     template <class T>
-    void Go( int (T::* aStateFunc)( TOOL_EVENT& ),
+    void Go( int (T::* aStateFunc)( const TOOL_EVENT& ),
             const TOOL_EVENT_LIST& aConditions = TOOL_EVENT( TC_ANY, TA_ANY ) );
 
     /**
@@ -79,7 +90,7 @@ public:
      * Suspends execution of the tool until an event specified in aEventList arrives.
      * No parameters means waiting for any event.
      */
-    OPT_TOOL_EVENT Wait( const TOOL_EVENT_LIST& aEventList = TOOL_EVENT( TC_ANY, TA_ANY ) );
+    TOOL_EVENT* Wait( const TOOL_EVENT_LIST& aEventList = TOOL_EVENT( TC_ANY, TA_ANY ) );
 
     /** functions below are not yet implemented - their interface may change */
     /*template <class Parameters, class ReturnValue>
@@ -94,26 +105,31 @@ public:
         void Yield( const T& returnValue );*/
 
 protected:
-    /* helper functions for constructing events for Wait() and Go() with less typing */
-    const TOOL_EVENT evActivate( std::string aToolName = "" );
-    const TOOL_EVENT evCommand( int aCommandId = -1 );
-    const TOOL_EVENT evCommand( std::string aCommandStr = "" );
-    const TOOL_EVENT evMotion();
-    const TOOL_EVENT evClick( int aButton = BUT_ANY );
-    const TOOL_EVENT evDrag( int aButton = BUT_ANY );
-    const TOOL_EVENT evButtonUp( int aButton = BUT_ANY );
-    const TOOL_EVENT evButtonDown(int aButton = BUT_ANY );
+    TOOL_MENU m_menu;
 
 private:
+    /**
+     * This method is meant to be overridden in order to specify handlers for events. It is called
+     * every time tool is reset or finished.
+     */
+    virtual void setTransitions() = 0;
+
+    /**
+     * Clears the current transition map and restores the default one created by setTransitions().
+     */
+    void resetTransitions();
+
     void goInternal( TOOL_STATE_FUNC& aState, const TOOL_EVENT_LIST& aConditions );
+
+    friend class TOOL_MANAGER;
 };
 
 // hide TOOL_MANAGER implementation
 template <class T>
-void TOOL_INTERACTIVE::Go( int (T::* aStateFunc)( TOOL_EVENT& ),
+void TOOL_INTERACTIVE::Go( int (T::* aStateFunc)( const TOOL_EVENT& ),
                            const TOOL_EVENT_LIST& aConditions )
 {
-    TOOL_STATE_FUNC sptr( static_cast<T*>( this ), aStateFunc );
+    TOOL_STATE_FUNC sptr = std::bind( aStateFunc, static_cast<T*>( this ), std::placeholders::_1 );
 
     goInternal( sptr, aConditions );
 }

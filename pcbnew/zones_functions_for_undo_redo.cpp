@@ -6,7 +6,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2009 Jean-Pierre Charras <jp.charras@wanadoo.fr>
- * Copyright (C) 2007 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2007-2015 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,24 +28,22 @@
 
 
 /* These functions are relative to undo redo function, when zones are involved.
- * When a zone outline is modified (or created) this zone, or others zones on the same layer
- * and with the same netcode can change or can be deleted
- * This is due to the fact overlapping zones are merged
- * Also, when a zone outline is modified by adding a cutout area,
- * this zone can be converted to more than one area, if the outline is break to 2 or more outlines
- * and therefore new zones are created
  *
- * Due to the complexity of potential changes, and the fact there are only few zones
- * in a board, and a zone has only few segments outlines, the more easy way to
- * undo redo changes is to make a copy of all zones that can be changed
- * and see after zone edition or creation what zones that are really modified,
- * and ones they are modified (changes, deletion or addition)
+ * When a zone outline is modified (or created) this zone, or others zones on the same layer
+ * and with the same netcode can change or can be deleted due to the fact overlapping zones are
+ * merged.  Also, when a zone outline is modified by adding a cutout area, this zone can be
+ * converted to more than one area, if the outline is break to 2 or more outlines and therefore
+ * new zones are created
+ *
+ * Due to the complexity of potential changes, and the fact there are only few zones in a board,
+ * and a zone has only few segments outlines, the more easy way to undo redo changes is to make
+ * a copy of all zones that can be changed and see after zone editing or creation what zones that
+ * are really modified, and ones they are modified (changes, deletion or addition)
  */
 
 #include <fctsys.h>
 #include <pgm_base.h>
-#include <class_drawpanel.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 
 #include <class_board.h>
 #include <class_zone.h>
@@ -89,9 +87,6 @@ bool ZONE_CONTAINER::IsSame( const ZONE_CONTAINER& aZoneToCompare )
             return false;
     }
 
-    if( m_ArcToSegmentsCount != aZoneToCompare.GetArcSegmentCount() )
-        return false;
-
     if( m_ZoneClearance != aZoneToCompare.m_ZoneClearance )
         return false;
 
@@ -115,8 +110,7 @@ bool ZONE_CONTAINER::IsSame( const ZONE_CONTAINER& aZoneToCompare )
     wxASSERT( m_Poly );                                      // m_Poly == NULL Should never happen
     wxASSERT( aZoneToCompare.Outline() );
 
-    if( Outline()->m_CornersList.GetList() !=
-        aZoneToCompare.Outline()->m_CornersList.GetList() )    // Compare vector
+    if( Outline() != aZoneToCompare.Outline() )    // Compare vector
         return false;
 
     return true;
@@ -128,7 +122,7 @@ bool ZONE_CONTAINER::IsSame( const ZONE_CONTAINER& aZoneToCompare )
  * creates a copy of zones having a given netcode on a given layer,
  * and fill a pick list with pickers to handle these copies
  * the UndoRedo status is set to UR_CHANGED for all items in list
- * Later, UpdateCopyOfZonesList will change and update these pickers after a zone edition
+ * Later, UpdateCopyOfZonesList will change and update these pickers after a zone editing
  * @param aPickList = the pick list
  * @param aPcb = the Board
  * @param aNetCode = the reference netcode. if aNetCode < 0 all netcodes are used
@@ -166,10 +160,9 @@ int SaveCopyOfZones( PICKED_ITEMS_LIST& aPickList, BOARD* aPcb, int aNetCode, LA
 
 /**
  * Function UpdateCopyOfZonesList
- * check a pick list to remove zones identical to their copies
- * and set the type of operation in picker (UR_DELETED, UR_CHANGED)
- * if an item is deleted, the initial values are retrievered,
- * because they can have changed in edition
+ * Check a pick list to remove zones identical to their copies and set the type of operation in
+ * picker (UR_DELETED, UR_CHANGED).  If an item is deleted, the initial values are retrievered,
+ * because they can have changed during editing.
  * @param aPickList = the main pick list
  * @param aAuxiliaryList = the list of deleted or added (new created) items after calculations
  * @param aPcb = the Board
@@ -184,7 +177,7 @@ int SaveCopyOfZones( PICKED_ITEMS_LIST& aPickList, BOARD* aPcb, int aNetCode, LA
  *          its status becomes UR_DELETED
  *          the aAuxiliaryList corresponding picker is removed (if not found : set an error)
  *  >> if the picked zone was flagged as UR_NEW, and was after deleted ,
- *  perhaps combined with an other zone  (i.e. not found in board list):
+ *  perhaps combined with another zone  (i.e. not found in board list):
  *          the picker is removed
  *          the zone itself if really deleted
  *          the aAuxiliaryList corresponding picker is removed (if not found : set an error)
@@ -225,6 +218,7 @@ void UpdateCopyOfZonesList( PICKED_ITEMS_LIST& aPickList,
                 if( status == UR_NEW )
                 {
                     delete ref;
+                    ref = NULL;
                     aPickList.RemovePicker( kk );
                     kk--;
                 }
@@ -233,10 +227,10 @@ void UpdateCopyOfZonesList( PICKED_ITEMS_LIST& aPickList,
                     ZONE_CONTAINER* zcopy = (ZONE_CONTAINER*) aPickList.GetPickedItemLink( kk );
                     aPickList.SetPickedItemStatus( UR_DELETED, kk );
 
-                    if( zcopy )
-                        ref->Copy( zcopy );
-                    else
-                        wxMessageBox( wxT( "UpdateCopyOfZonesList() error: link = NULL" ) );
+                    wxASSERT_MSG( zcopy != NULL,
+                                  wxT( "UpdateCopyOfZonesList() error: link = NULL" ) );
+
+                    *ref = *zcopy;
 
                     // the copy was deleted; the link does not exists now.
                     aPickList.SetPickedItemLink( NULL, kk );
@@ -248,7 +242,7 @@ void UpdateCopyOfZonesList( PICKED_ITEMS_LIST& aPickList,
 
                 for( unsigned nn = 0; nn < aAuxiliaryList.GetCount(); nn++ )
                 {
-                    if( aAuxiliaryList.GetPickedItem( nn ) == ref )
+                    if( ref != NULL && aAuxiliaryList.GetPickedItem( nn ) == ref )
                     {
                         aAuxiliaryList.RemovePicker( nn );
                         notfound = false;
@@ -256,11 +250,16 @@ void UpdateCopyOfZonesList( PICKED_ITEMS_LIST& aPickList,
                     }
                 }
 
-                if( notfound )
-                    wxMessageBox( wxT( "UpdateCopyOfZonesList() error: item not found in aAuxiliaryList" ) );
-
+                if( notfound )  // happens when the new zone overlaps an existing zone
+                                // and these zones are combined
+                {
+                    DBG( printf(
+                        "UpdateCopyOfZonesList(): item not found in aAuxiliaryList,"
+                        "combined with another zone\n" ) );
+                }
                 break;
             }
+
             if( zone == ref )      // picked zone found
             {
                 if( aPickList.GetPickedItemStatus( kk ) != UR_NEW )
@@ -279,7 +278,6 @@ void UpdateCopyOfZonesList( PICKED_ITEMS_LIST& aPickList,
             }
         }
     }
-
 
     // Add new zones in main pick list, and remove pickers from Auxiliary List
     for( unsigned ii = 0; ii < aAuxiliaryList.GetCount(); )
@@ -300,17 +298,6 @@ void UpdateCopyOfZonesList( PICKED_ITEMS_LIST& aPickList,
     }
 
     // Should not occur:
-    if( aAuxiliaryList.GetCount()> 0 )
-    {
-        wxString msg;
-        msg.Printf( wxT( "UpdateCopyOfZonesList() error: aAuxiliaryList not void: %d item left (status %d)" ),
-                    aAuxiliaryList.GetCount(), aAuxiliaryList.GetPickedItemStatus( 0 ) );
-        wxMessageBox( msg );
-
-        while( aAuxiliaryList.GetCount() > 0 )
-        {
-            delete aAuxiliaryList.GetPickedItemLink( 0 );
-            aAuxiliaryList.RemovePicker( 0 );
-        }
-    }
+    wxASSERT_MSG( aAuxiliaryList.GetCount() == 0,
+                  wxT( "UpdateCopyOfZonesList() error: aAuxiliaryList not empty." ) );
 }

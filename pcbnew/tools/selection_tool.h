@@ -1,9 +1,10 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2017 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * @author Maciej Suminski <maciej.suminski@cern.ch>
+ * Copyright (C) 2017-2019 KiCad Developers, see CHANGELOG.TXT for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,57 +27,27 @@
 #ifndef __SELECTION_TOOL_H
 #define __SELECTION_TOOL_H
 
-#include <math/vector2d.h>
-#include <tool/tool_interactive.h>
-#include <tool/context_menu.h>
-#include <class_undoredo_container.h>
+#include <memory>
 
-#include "selection_conditions.h"
+#include <math/vector2d.h>
+#include <tools/pcb_tool_base.h>
+#include <tool/action_menu.h>
+#include <tools/pcbnew_selection.h>
+#include <tools/pcb_selection_conditions.h>
+#include <tool/tool_menu.h>
 
 class PCB_BASE_FRAME;
-class SELECTION_AREA;
 class BOARD_ITEM;
 class GENERAL_COLLECTOR;
 
 namespace KIGFX
 {
-class VIEW_GROUP;
+    class GAL;
 }
 
-struct SELECTION
-{
-    /// Set of selected items
-    PICKED_ITEMS_LIST items;
 
-    /// VIEW_GROUP that holds currently selected items
-    KIGFX::VIEW_GROUP* group;
+typedef void (*CLIENT_SELECTION_FILTER)( const VECTOR2I&, GENERAL_COLLECTOR& );
 
-    /// Checks if there is anything selected
-    bool Empty() const
-    {
-        return ( items.GetCount() == 0 );
-    }
-
-    /// Returns the number of selected parts
-    int Size() const
-    {
-        return items.GetCount();
-    }
-
-    /// Alias to make code shorter and clearer
-    template <typename T>
-    T* Item( unsigned int aIndex ) const
-    {
-        return static_cast<T*>( items.GetPickedItem( aIndex ) );
-    }
-
-private:
-    /// Clears both the VIEW_GROUP and set of selected items. Please note that it does not
-    /// change properties of selected items (e.g. selection flag).
-    void clear();
-
-    friend class SELECTION_TOOL;
-};
 
 /**
  * Class SELECTION_TOOL
@@ -89,137 +60,68 @@ private:
  * - takes into account high-contrast & layer visibility settings
  * - invokes InteractiveEdit tool when user starts to drag selected items
  */
-class SELECTION_TOOL : public TOOL_INTERACTIVE
+class SELECTION_TOOL : public PCB_TOOL_BASE
 {
 public:
     SELECTION_TOOL();
     ~SELECTION_TOOL();
 
-    /// @copydoc TOOL_INTERACTIVE::Reset()
-    void Reset( RESET_REASON aReason );
+    /// @copydoc TOOL_BASE::Init()
+    bool Init() override;
+
+    /// @copydoc TOOL_BASE::Reset()
+    void Reset( RESET_REASON aReason ) override;
 
     /**
      * Function Main()
      *
      * The main loop.
      */
-    int Main( TOOL_EVENT& aEvent );
+    int Main( const TOOL_EVENT& aEvent );
 
     /**
      * Function GetSelection()
      *
      * Returns the set of currently selected items.
      */
-    const SELECTION& GetSelection() const
-    {
-        return m_selection;
-    }
+    PCBNEW_SELECTION& GetSelection();
 
     /**
-     * Function AddMenuItem()
+     * Function RequestSelection()
      *
-     * Adds a menu entry to run a TOOL_ACTION on selected items.
-     * @param aAction is a menu entry to be added.
-     * @param aCondition is a condition that has to be fulfilled to enable the menu entry.
+     * Returns the current selection set, filtered according to aFlags
+     * and aClientFilter.
+     * If the set is empty, performs the legacy-style hover selection.
+     * @param aFiltered is an optional vector, that is filled with items removed by the filter
      */
-    void AddMenuItem( const TOOL_ACTION& aAction,
-                      const SELECTION_CONDITION& aCondition = SELECTION_CONDITIONS::ShowAlways );
-
-    /**
-     * Function AddSubMenu()
-     *
-     * Adds a submenu to the selection tool right-click context menu.
-     * @param aMenu is the submenu to be added.
-     * @param aLabel is the label of added submenu.
-     * @param aCondition is a condition that has to be fulfilled to enable the submenu entry.
-     */
-    void AddSubMenu( CONTEXT_MENU* aMenu, const wxString& aLabel,
-                     const SELECTION_CONDITION& aCondition = SELECTION_CONDITIONS::ShowAlways );
-
-    /**
-     * Function EditModules()
-     *
-     * Toggles edit module mode. When enabled, one may select parts of modules individually
-     * (graphics, pads, etc.), so they can be modified.
-     * @param aEnabled decides if the mode should be enabled.
-     */
-    void EditModules( bool aEnabled )
-    {
-        m_editModules = aEnabled;
-    }
+    PCBNEW_SELECTION& RequestSelection( CLIENT_SELECTION_FILTER aClientFilter,
+            std::vector<BOARD_ITEM*>* aFiltered = nullptr, bool aConfirmLockedItems = false );
 
     ///> Checks if the user has agreed to modify locked items for the given selection.
-    bool CheckLock();
+    SELECTION_LOCK_FLAGS CheckLock();
 
-    ///> Select single item event handler.
-    int SingleSelection( TOOL_EVENT& aEvent );
+    ///> Select a single item under cursor event handler.
+    int CursorSelection( const TOOL_EVENT& aEvent );
 
     ///> Clear current selection event handler.
-    int ClearSelection( TOOL_EVENT& aEvent );
+    int ClearSelection( const TOOL_EVENT& aEvent );
+    void ClearSelection( bool aQuietMode = false );
 
-    ///> Event sent after an item is selected.
-    const TOOL_EVENT SelectedEvent;
+    ///> Item selection event handler.
+    int SelectItem( const TOOL_EVENT& aEvent );
+    void AddItemToSel( BOARD_ITEM* aItem, bool aQuietMode = false );
 
-    ///> Event sent after an item is deselected.
-    const TOOL_EVENT DeselectedEvent;
+    ///> Multiple item selection event handler
+    int SelectItems( const TOOL_EVENT& aEvent );
 
-    ///> Event sent after selection is cleared.
-    const TOOL_EVENT ClearedEvent;
+    ///> Item unselection event handler.
+    int UnselectItem( const TOOL_EVENT& aEvent );
 
-private:
-    /**
-     * Function selectSingle()
-     * Selects an item pointed by the parameter aWhere. If there is more than one item at that
-     * place, there is a menu displayed that allows to choose the item.
-     *
-     * @param aWhere is the place where the item should be selected.
-     * @param aAllowDisambiguation decides what to do in case of disambiguation. If true, then
-     * a menu is shown, otherise function finishes without selecting anything.
-     * @return True if an item was selected, false otherwise.
-     */
-    bool selectSingle( const VECTOR2I& aWhere, bool aAllowDisambiguation = true );
+    ///> Multiple item unselection event handler
+    int UnselectItems( const TOOL_EVENT& aEvent );
 
-    /**
-     * Function selectMultiple()
-     * Handles drawing a selection box that allows to select many items at the same time.
-     *
-     * @return true if the function was cancelled (i.e. CancelEvent was received).
-     */
-    bool selectMultiple();
-
-    ///> Sets up handlers for various events.
-    void setTransitions();
-
-    /**
-     * Function ClearSelection()
-     * Clears the current selection.
-     */
-    void clearSelection();
-
-    /**
-     * Function disambiguationMenu()
-     * Handles the menu that allows to select one of many items in case there is more than one
-     * item at the selected point (@see selectSingle()).
-     *
-     * @param aItems contains list of items that are displayed to the user.
-     */
-    BOARD_ITEM* disambiguationMenu( GENERAL_COLLECTOR* aItems );
-
-    /**
-     * Function pickSmallestComponent()
-     * Allows to find the smallest (in terms of bounding box area) item from the list.
-     *
-     * @param aCollector containes the list of items.
-     */
-    BOARD_ITEM* pickSmallestComponent( GENERAL_COLLECTOR* aCollector );
-
-    /**
-     * Function toggleSelection()
-     * Changes selection status of a given item.
-     *
-     * @param aItem is the item to have selection status changed.
-     */
-    void toggleSelection( BOARD_ITEM* aItem );
+    void BrightenItem( BOARD_ITEM* aItem );
+    void UnbrightenItem( BOARD_ITEM* aItem );
 
     /**
      * Function selectable()
@@ -227,10 +129,149 @@ private:
      *
      * @return True if the item fulfills conditions to be selected.
      */
-    bool selectable( const BOARD_ITEM* aItem ) const;
+    bool Selectable( const BOARD_ITEM* aItem, bool checkVisibilityOnly = false ) const;
 
     /**
-     * Function selectItem()
+     * Function guessSelectionCandidates()
+     * Tries to guess best selection candidates in case multiple items are clicked, by doing
+     * some brain-dead heuristics.
+     * @param aCollector is the collector that has a list of items to be queried.
+     * @param aWhere is the selection point to consider
+     */
+    void GuessSelectionCandidates( GENERAL_COLLECTOR& aCollector, const VECTOR2I& aWhere ) const;
+
+    /**
+     * Function SelectionMenu()
+     * Shows a popup menu to trim the COLLECTOR passed as aEvent's parameter down to a single
+     * item.
+     *
+     * NOTE: this routine DOES NOT modify the selection.
+     */
+    int SelectionMenu( const TOOL_EVENT& aEvent );
+
+    /**
+     * Rebuilds the selection from the EDA_ITEMs' selection flags.  Commonly called after
+     * rolling back an undo state to make sure there aren't any stale pointers.
+     */
+    void RebuildSelection();
+
+    ///> Sets up handlers for various events.
+    void setTransitions() override;
+
+    ///> Zooms the screen to center and fit the current selection.
+    void zoomFitSelection();
+
+private:
+    /**
+     * Function selectPoint()
+     * Selects an item pointed by the parameter aWhere. If there is more than one item at that
+     * place, there is a menu displayed that allows one to choose the item.
+     *
+     * @param aWhere is the place where the item should be selected.
+     * @param aOnDrag indicates whether a drag operation is being performed.
+     * @param aSelectionCancelledFlag allows the function to inform its caller that a selection
+     * was cancelled (for instance, by clicking outside of the disambiguation menu).
+     * @param aClientFilter allows the client to perform tool- or action-specific filtering.
+     * @return True if an item was selected, false otherwise.
+     */
+    bool selectPoint( const VECTOR2I& aWhere, bool aOnDrag = false,
+                      bool* aSelectionCancelledFlag = NULL,
+                      CLIENT_SELECTION_FILTER aClientFilter = NULL );
+
+    /**
+     * Function selectCursor()
+     * Selects an item under the cursor unless there is something already selected or aSelectAlways
+     * is true.
+     * @param aForceSelect forces to select an item even if there is an item already selected.
+     * @param aClientFilter allows the client to perform tool- or action-specific filtering.
+     * @return true if eventually there is an item selected, false otherwise.
+     */
+    bool selectCursor( bool aForceSelect = false,
+                       CLIENT_SELECTION_FILTER aClientFilter = NULL );
+
+    /**
+     * Function selectMultiple()
+     * Handles drawing a selection box that allows one to select many items at
+     * the same time.
+     *
+     * @return true if the function was cancelled (i.e. CancelEvent was received).
+     */
+    bool selectMultiple();
+
+    /**
+     * Allows the selection of a single item from a list via pop-up menu.  The items are
+     * highlighted on the canvas when hovered in the menu.  The collector is trimmed to
+     * the picked item.
+     * @param aTitle (optional) Allows the menu to be titled (ie: "Clarify Selection").
+     * @return true if an item was picked
+     */
+    bool doSelectionMenu( GENERAL_COLLECTOR* aItems, const wxString& aTitle );
+
+    ///> Selects a trivial connection (between two junctions) of items in selection
+    int selectConnection( const TOOL_EVENT& aEvent );
+
+    ///> Expands the current selection to select a connection between two junctions
+    int expandConnection( const TOOL_EVENT& aEvent );
+
+    ///> Selects items with a continuous copper connection to items in selection
+    int selectCopper( const TOOL_EVENT& aEvent );
+
+    /**
+     * Selects all copper connections belonging to the same net(s) as the
+     * items in the selection
+     */
+    int selectNet( const TOOL_EVENT& aEvent );
+
+    /**
+     * Selects all items connected by copper tracks to the given TRACK
+     * This selects tracks and vias but stops at pads
+     */
+    void selectAllItemsConnectedToTrack( TRACK& aSourceTrack );
+
+    /**
+     * Selects all items connected (by copper) to the given item
+     * This selects tracks and vias _and_ continues through pads without selecting
+     */
+    void selectAllItemsConnectedToItem( BOARD_CONNECTED_ITEM& aSourceItem );
+
+    /**
+     * Selects all items with the given net code
+     */
+    void selectAllItemsOnNet( int aNetCode );
+
+    /**
+     * Selects all items with the given sheet timestamp name
+     * (the sheet path)
+     */
+    void selectAllItemsOnSheet( wxString& aSheetpath );
+
+    ///> Selects all modules belonging to same sheet, from Eeschema,
+    ///> using crossprobing
+    int selectSheetContents( const TOOL_EVENT& aEvent );
+
+    ///> Selects all modules belonging to same hierarchical sheet
+    ///> as the selected footprint.
+    int selectSameSheet( const TOOL_EVENT& aEvent );
+
+    ///> Find dialog callback.
+    void findCallback( BOARD_ITEM* aItem );
+
+    ///> Find an item.
+    int find( const TOOL_EVENT& aEvent );
+
+    ///> Invoke filter dialog and modify current selection
+    int filterSelection( const TOOL_EVENT& aEvent );
+
+    /**
+     * Function pickSmallestComponent()
+     * Allows one to find the smallest (in terms of bounding box area) item from the list.
+     *
+     * @param aCollector containes the list of items.
+     */
+    BOARD_ITEM* pickSmallestComponent( GENERAL_COLLECTOR* aCollector );
+
+    /**
+     * Function select()
      * Takes necessary action mark an item as selected.
      *
      * @param aItem is an item to be selected.
@@ -238,89 +279,63 @@ private:
     void select( BOARD_ITEM* aItem );
 
     /**
-     * Function deselectItem()
-     * Takes necessary action mark an item as deselected.
+     * Function unselect()
+     * Takes necessary action mark an item as unselected.
      *
-     * @param aItem is an item to be deselected.
+     * @param aItem is an item to be unselected.
      */
-    void deselect( BOARD_ITEM* aItem );
+    void unselect( BOARD_ITEM* aItem );
 
     /**
-     * Function deselectVisually()
-     * Marks item as selected, but does not add it to the ITEMS_PICKED_LIST.
-     * @param aItem is an item to be be marked.
+     * Function highlight()
+     * Highlights the item visually.
+     * @param aItem is an item to be be highlighted.
+     * @param aHighlightMode should be either SELECTED or BRIGHTENED
+     * @param aGroup is the group to add the item to in the BRIGHTENED mode.
      */
-    void selectVisually( BOARD_ITEM* aItem ) const;
+    void highlight( BOARD_ITEM* aItem, int aHighlightMode, PCBNEW_SELECTION* aGroup = nullptr );
 
     /**
-     * Function deselectVisually()
-     * Marks item as selected, but does not add it to the ITEMS_PICKED_LIST.
-     * @param aItem is an item to be be marked.
+     * Function unhighlight()
+     * Unhighlights the item visually.
+     * @param aItem is an item to be be highlighted.
+     * @param aHighlightMode should be either SELECTED or BRIGHTENED
+     * @param aGroup is the group to remove the item from.
      */
-    void deselectVisually( BOARD_ITEM* aItem ) const;
+    void unhighlight( BOARD_ITEM* aItem, int aHighlightMode, PCBNEW_SELECTION* aGroup = nullptr );
 
     /**
-     * Function containsSelected()
-     * Checks if the given point is placed within any of selected items' bounding box.
-     *
-     * @return True if the given point is contained in any of selected items' bouding box.
+     * Function selectionContains()
+     * @return True if the given point is contained in any of selected items' bounding box.
      */
     bool selectionContains( const VECTOR2I& aPoint ) const;
 
     /**
-     * Function highlightNet()
-     * Looks for a BOARD_CONNECTED_ITEM in a given spot, and if one is found - it enables
-     * highlight for its net.
-     * @param aPoint is the point where an item is expected (world coordinates).
+     * Event handler to update the selection VIEW_ITEM.
      */
-    void highlightNet( const VECTOR2I& aPoint );
+    int updateSelection( const TOOL_EVENT& aEvent );
 
     /**
-     * Function prefer()
-     * Checks if collector's list contains only single entry of asked types. If so, it returns it.
-     * @param aCollector is the collector that has a list of items to be queried.
-     * @param aTypes is the list of searched/preferred types.
-     * @return Pointer to the preferred item, if there is only one entry of given type or NULL
-     * if there are more entries or no entries at all.
+     * Pass the selection to a conditional menu for updating.
      */
-    BOARD_ITEM* prefer( GENERAL_COLLECTOR& aCollector, const KICAD_T aTypes[] ) const;
+    int UpdateMenu( const TOOL_EVENT& aEvent );
 
-    /**
-     * Function generateMenu()
-     * Creates a copy of context menu that is filtered by menu conditions and displayed to
-     * the user.
-     */
-    void generateMenu();
+    const GENERAL_COLLECTORS_GUIDE getCollectorsGuide() const;
 
-    /// Pointer to the parent frame.
-    PCB_BASE_FRAME* m_frame;
+private:
+    PCB_BASE_FRAME*  m_frame;     // Pointer to the parent frame
+    PCBNEW_SELECTION m_selection; // Current state of selection
 
-    /// Visual representation of selection box.
-    SELECTION_AREA* m_selArea;
+    bool m_additive;              // Items should be added to selection (instead of replacing)
+    bool m_subtractive;           // Items should be removed from selection
+    bool m_exclusive_or;          // Items' selection state should be toggled
+    bool m_multiple;              // Multiple selection mode is active
+    bool m_skip_heuristics;       // Heuristics are not allowed when choosing item under cursor
+    bool m_locked;                // Other tools are not allowed to modify locked items
 
-    /// Current state of selection.
-    SELECTION m_selection;
-
-    /// Flag saying if items should be added to the current selection or rather replace it.
-    bool m_additive;
-
-    /// Flag saying if multiple selection mode is active.
-    bool m_multiple;
-
-    /// Right click popup menu (master instance).
-    CONTEXT_MENU m_menu;
-
-    /// Copy of the context menu that is filtered by menu conditions and displayed to the user.
-    CONTEXT_MENU m_menuCopy;
-
-    /// Edit module mode flag.
-    bool m_editModules;
-
-    /// Can other tools modify locked items.
-    bool m_locked;
-
-    /// Conditions for specific context menu entries.
-    std::deque<SELECTION_CONDITION> m_menuConditions;
+    /// Private state (opaque pointer/compilation firewall)
+    class PRIV;
+    std::unique_ptr<PRIV> m_priv;
 };
 
 #endif

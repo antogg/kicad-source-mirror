@@ -1,21 +1,32 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2010 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 2015-2017 KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
 
 #include <macros.h>
 #include <trigo.h>
 #include <transform.h>
 #include <common.h>
-
-
-TRANSFORM& TRANSFORM::operator=( const TRANSFORM& aTransform )
-{
-    if( this == &aTransform )       // Check for self assingnemt;
-        return *this;
-
-    x1 = aTransform.x1;
-    y1 = aTransform.y1;
-    x2 = aTransform.x2;
-    y2 = aTransform.y2;
-    return *this;
-}
+#include <eda_rect.h>
 
 
 bool TRANSFORM::operator==( const TRANSFORM& aTransform ) const
@@ -31,6 +42,14 @@ wxPoint TRANSFORM::TransformCoordinate( const wxPoint& aPoint ) const
 {
     return wxPoint( ( x1 * aPoint.x ) + ( y1 * aPoint.y ),
                     ( x2 * aPoint.x ) + ( y2 * aPoint.y ) );
+}
+
+EDA_RECT TRANSFORM::TransformCoordinate( const EDA_RECT& aRect ) const
+{
+    EDA_RECT rect;
+    rect.SetOrigin( TransformCoordinate( aRect.GetOrigin() ) );
+    rect.SetEnd( TransformCoordinate( aRect.GetEnd() ) );
+    return rect;
 }
 
 /*

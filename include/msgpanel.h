@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
  * Copyright (C) 2011-2012 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2015 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,12 +32,13 @@
 #define  _MSGPANEL_H_
 
 
-#include <colors.h>
+#include <gal/color4d.h>
 
 #include <wx/window.h>
 
 #include <vector>
 
+using KIGFX::COLOR4D;
 
 #define MSG_PANEL_DEFAULT_PAD      6  ///< The default number of spaces between each text string.
 
@@ -56,23 +57,32 @@ class MSG_PANEL_ITEM
     int         m_LowerY;
     wxString    m_UpperText;
     wxString    m_LowerText;
-    EDA_COLOR_T m_Color;
+    COLOR4D     m_Color;
     int         m_Pad;
 
     friend class EDA_MSG_PANEL;
 
 public:
-    MSG_PANEL_ITEM( const wxString& aUpperText, const wxString& aLowerText, EDA_COLOR_T aColor,
+    MSG_PANEL_ITEM( const wxString& aUpperText, const wxString& aLowerText, COLOR4D aColor,
                     int aPad = MSG_PANEL_DEFAULT_PAD ) :
         m_UpperText( aUpperText ),
         m_LowerText( aLowerText ),
         m_Color( aColor ),
         m_Pad( aPad )
     {
+        m_X = 0;
+        m_UpperY = 0;
+        m_LowerY = 0;
     }
 
-    MSG_PANEL_ITEM()
+    MSG_PANEL_ITEM() :
+        m_Pad( MSG_PANEL_DEFAULT_PAD )
+
     {
+        m_X = 0;
+        m_UpperY = 0;
+        m_LowerY = 0;
+        m_Color = COLOR4D::UNSPECIFIED;
     }
 
     void SetUpperText( const wxString& aUpperText ) { m_UpperText = aUpperText; }
@@ -81,8 +91,8 @@ public:
     void SetLowerText( const wxString& aLowerText )  { m_LowerText = aLowerText; }
     const wxString& GetLowerText() const { return m_LowerText; }
 
-    void SetColor( EDA_COLOR_T aColor ) { m_Color = aColor; }
-    EDA_COLOR_T GetColor() const { return m_Color; }
+    void SetColor( COLOR4D aColor ) { m_Color = aColor; }
+    COLOR4D GetColor() const { return m_Color; }
 
     void SetPadding( int aPad )  { m_Pad = aPad; }
     int GetPadding() const { return m_Pad; }
@@ -147,7 +157,7 @@ public:
      * @param aColor Color of the text to display.
      */
     void SetMessage( int aXPosition, const wxString& aUpperText,
-                     const wxString& aLowerText, EDA_COLOR_T aColor );
+                     const wxString& aLowerText, COLOR4D aColor );
 
    /**
     * Function AppendMessage
@@ -160,11 +170,11 @@ public:
     *
     * @param aUpperText The message upper text.
     * @param aLowerText The message lower text.
-    * @param aColor A color ID from the KiCad color list (see colors.h).
+    * @param aColor A color to use for the message text
     * @param aPad Number of spaces to pad between messages (default = 4).
     */
     void AppendMessage( const wxString& aUpperText, const wxString& aLowerText,
-                        EDA_COLOR_T aColor, int aPad = 6 );
+                        COLOR4D aColor, int aPad = 6 );
 
    /**
     * Function AppendMessage

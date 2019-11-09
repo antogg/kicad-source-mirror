@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2014 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2008-2014 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2014 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2016 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 2004-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -23,25 +23,22 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file viewlib_frame.h
- */
 
-#ifndef LIBVIEWFRM_H_
-#define LIBVIEWFRM_H_
-
-
-#include <wx/gdicmn.h>
+#ifndef LIB_VIEW_FRAME_H__
+#define LIB_VIEW_FRAME_H__
 
 #include <sch_base_frame.h>
-#include <class_sch_screen.h>
+#include <sch_screen.h>
 
 class wxListBox;
-class PART_LIB;
+class SCHLIB_FILTER;
+class LIB_ALIAS;
+class LIB_PART;
+class SYMBOL_LIB_TABLE_ROW;
 
 
 /**
- * Component library viewer main window.
+ * Symbol library viewer main window.
  */
 class LIB_VIEW_FRAME : public SCH_BASE_FRAME
 {
@@ -49,48 +46,72 @@ public:
 
     /**
      * Constructor
-     * @param aFrameType must be given either FRAME_SCH_LIB_VIEWER or
-     *  FRAME_SCH_LIB_VIEWER_MODAL
+     * @param aKiway
+     * @param aParent = the parent frame
+     * @param aFrameType must be either FRAME_SCH_LIB_VIEWER or FRAME_SCH_LIB_VIEWER_MODAL
+     * @param aLibrary = the library to open when starting (default = NULL)
      */
     LIB_VIEW_FRAME( KIWAY* aKiway, wxWindow* aParent,
-            FRAME_T aFrameType, PART_LIB* aLibrary = NULL );
+                    FRAME_T aFrameType, const wxString& aLibraryName = wxEmptyString );
 
     ~LIB_VIEW_FRAME();
 
     /**
-     * Function GetLibViewerFrameName (static)
-     * @return the frame name used when creating the frame
-     * used to get a reference to this frame, if exists
+     * Function ShowModal
+     *
+     * Runs the Symbol Viewer as a modal dialog.
+     * @param aSymbol an optional FPID string to initialize the viewer with and to
+     *                return a selected footprint through.
      */
-    static const wxChar* GetLibViewerFrameName();
-
-    void OnSize( wxSizeEvent& event );
+    bool ShowModal( wxString* aSymbol, wxWindow* aParent ) override;
 
     /**
-     * Function ReCreateListLib
-     *
-     * Creates or recreates the list of current loaded libraries.
-     * This list is sorted, with the library cache always at end of the list
+     * Send the selected symbol back to the caller.
      */
-    void ReCreateListLib();
+    void FinishModal();
 
-    void ReCreateListCmp();
-    void Process_Special_Functions( wxCommandEvent& event );
+    void OnSize( wxSizeEvent& event ) override;
+
+    /**
+     * Creates or recreates a sorted list of currently loaded libraries.
+     *
+     * @return whether the selection of either library or component was changed (i.e. because the
+     * selected library no longer exists)
+     */
+    bool ReCreateListLib();
+
+    /**
+     * Create or recreate the list of components in the currently selected library.
+     *
+     * @return whether the selection was changed (i.e. because the selected component no longer
+     * exists)
+     */
+    bool ReCreateListCmp();
+
     void DisplayLibInfos();
-    void RedrawActiveWindow( wxDC* DC, bool EraseBg );
     void OnCloseWindow( wxCloseEvent& Event );
-    void ReCreateHToolbar();
-    void ReCreateVToolbar();
-    void OnLeftClick( wxDC* DC, const wxPoint& MousePos );
-    double BestZoom();
+    void CloseLibraryViewer( wxCommandEvent& event );
+    void ReCreateHToolbar() override;
+    void ReCreateVToolbar() override;
+    void ReCreateOptToolbar() override {}
+    void ReCreateMenuBar() override;
+
     void ClickOnLibList( wxCommandEvent& event );
     void ClickOnCmpList( wxCommandEvent& event );
-    void OnSetRelativeOffset( wxCommandEvent& event );
+    void OnSelectSymbol( wxCommandEvent& aEvent );
 
-    bool GeneralControl( wxDC* aDC, const wxPoint& aPosition, int aHotKey = 0 );
+    void LoadSettings( wxConfigBase* aCfg ) override;
+    void SaveSettings( wxConfigBase* aCfg ) override;
+    void CommonSettingsChanged( bool aEnvVarsChanged ) override;
 
-    void LoadSettings( wxConfigBase* aCfg );
-    void SaveSettings( wxConfigBase* aCfg );
+    /**
+     * Set a filter to display only libraries and/or components which match the filter.
+     *
+     * @param aFilter is a filter to pass the allowed library name list and/or some other filter
+     *                see SCH_BASE_FRAME::SelectComponentFromLibrary() for details.
+     *                if aFilter == NULL, remove all filtering
+     */
+    void SetFilter( const SCHLIB_FILTER* aFilter );
 
     /**
      * Set the selected library in the library window.
@@ -102,37 +123,50 @@ public:
     /**
      * Set the selected component.
      *
-     * @param the alias name of the component to be selected.
+     * @param aComponentName : the name of the component to be selected.
      */
     void SetSelectedComponent( const wxString& aComponentName );
 
-    void SetUnit( int aUnit ) { m_unit = aUnit; }
-    int GetUnit( void ) { return m_unit; }
+    // Accessors:
+    /**
+     * Set unit and convert, and set flag preventing them from automatically resetting to 1
+     *
+     * @param aUnit - unit; if invalid will be set to 1
+     * @param aConvert - convert; if invalid will be set to 1
+     */
+    void SetUnitAndConvert( int aUnit, int aConvert );
+    int GetUnit() const { return m_unit; }
+    int GetConvert() const { return m_convert; }
 
-    void SetConvert( int aConvert ) { m_convert = aConvert; }
-    int GetConvert( void ) { return m_convert; }
+    LIB_PART* GetSelectedSymbol() const;
+    LIB_ALIAS* GetSelectedAlias() const;
+
+    const BOX2I GetDocumentExtents() const override;
+
+    void SyncToolbars() override;
 
 private:
+    // Sets up the tool framework
+    void setupTools();
+
     /**
-     * Function OnActivate
-     * is called when the frame frame is activate to reload the libraries and component lists
+     * Called when the frame is activated to reload the libraries and component lists
      * that can be changed by the schematic editor or the library editor.
      */
-    virtual void OnActivate( wxActivateEvent& event );
+    void OnActivate( wxActivateEvent& event );
 
-    void SelectCurrentLibrary();
-    void SelectAndViewLibraryPart( int option );
-
-    /**
-     * Function ExportToSchematicLibraryPart
-     * exports the current component to schematic and close the library browser.
-     */
-    void ExportToSchematicLibraryPart( wxCommandEvent& event );
-    void ViewOneLibraryContent( PART_LIB* Lib, int Flag );
-    bool OnRightClick( const wxPoint& MousePos, wxMenu* PopMenu );
     void DClickOnCmpList( wxCommandEvent& event );
 
-    wxComboBox*         m_selpartBox;
+    void onUpdateUnitChoice( wxUpdateUIEvent& aEvent );
+
+    void onSelectNextSymbol( wxCommandEvent& aEvent );
+    void onSelectPreviousSymbol( wxCommandEvent& aEvent );
+    void onSelectSymbolUnit( wxCommandEvent& aEvent );
+
+    void updatePreviewSymbol();
+
+// Private members:
+    wxChoice*           m_unitChoice;
 
     // List of libraries (for selection )
     wxListBox*          m_libList;          // The list of libs
@@ -142,19 +176,26 @@ private:
     wxListBox*          m_cmpList;          // The list of components
     int                 m_cmpListWidth;     // Last width of the window
 
-    wxString            m_configPath;       // subpath for configuration
+    // Filters to build list of libs/list of parts
+    bool                m_listPowerCmpOnly;
+    wxArrayString       m_allowedLibs;
 
-    // TODO(hzeller): looks like these members were chosen to be static to survive different
-    // instances of this browser and communicate it to the next instance. This looks like an
-    // ugly hack, and should be solved differently.
-    static wxString m_libraryName;
+    static wxString     m_libraryName;
+    static wxString     m_entryName;
 
-    static wxString m_entryName;
+    static int          m_unit;
+    static int          m_convert;
 
-    static int      m_unit;
-    static int      m_convert;
+    /**
+     * Updated to `true` if a list rewrite on GUI activation resulted in the component
+     * selection changing, or if the user has changed the selection manually.
+     */
+    bool m_selection_changed;
+
+    LIB_ALIAS*      m_previewItem;
 
     DECLARE_EVENT_TABLE()
 };
 
-#endif  // LIBVIEWFRM_H_
+#endif  // LIB_VIEW_FRAME_H__
+

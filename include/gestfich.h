@@ -1,3 +1,27 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2009-2014 Jerry Jacobs
+ * Copyright (C) 1992-2017 KiCad Developers, see CHANGELOG.TXT for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 /**
  * This file is part of the common library
  * TODO brief description
@@ -13,6 +37,12 @@
 #include <wx/process.h>
 
 
+/**
+ * @note Do we really need these defined?
+ */
+#define UNIX_STRING_DIR_SEP wxT( "/" )
+#define WIN_STRING_DIR_SEP  wxT( "\\" )
+
 /* Forward class declarations. */
 class EDA_LIST_DIALOG;
 
@@ -24,35 +54,41 @@ class EDA_LIST_DIALOG;
  * @return true is success, false if no PDF viewer found
  */
 bool OpenPDF( const wxString& file );
-
 void OpenFile( const wxString& file );
 
-bool EDA_DirectorySelector( const wxString& Title,
-                            wxString&       Path,
-                            int             flag,       /* reserve */
-                            wxWindow*       Frame,
-                            const wxPoint&  Pos );
+void PrintFile( const wxString& file );
+bool CanPrintFile( const wxString& file );
 
-/* Selection file dialog box:
- * Dialog title
- * Default path
- * default filename
- * default filename extension
- * filter for filename list
- * parent frame
- * wxFD_SAVE, wxFD_OPEN ..
- * true = keep the current path
+/**
+ * Function EDA_FILE_SELECTOR
+ *
+ * is a helper function that wraps a call to wxFileSelector.
+ *
+ * @param aTitle is a string to display in the dialog title bar.
+ * @param aPath is a string contain the default path for the path dialog.
+ * @param aFileName is a string containing the default file name.
+ * @param aExtension is a string containing the default file extension.
+ * @param aWildcard is a string containing the default wildcard.
+ * @param aParent is the parent window of the dialog.
+ * @param aStyle is the style of the path dialog, wxFD_???.
+ * @param aKeepWorkingDirectory determines if current working directory should be set to the
+ *                              user selected path.
+ * @param aPosition is the position of the dialog.
+ * @param aMruPath is a pointer to a string to copy the path selected by the user when
+ *                 the OK button is pressed to dismiss the dialog.  This can be NULL.
+ * @return the full path and file name of the selected file or wxEmptyString if the user
+ *         pressed the cancel button to dismiss the dialog.
  */
-wxString EDA_FileSelector( const wxString& Title,
-                           const wxString& Path,
-                           const wxString& FileName,
-                           const wxString& Ext,
-                           const wxString& Mask,
-                           wxWindow*       Frame,
-                           int             flag,
-                           const bool      keep_working_directory,
-                           const wxPoint&  Pos = wxPoint( -1, -1 ) );
-
+wxString EDA_FILE_SELECTOR( const wxString& aTitle,
+                            const wxString& aPath,
+                            const wxString& aFileName,
+                            const wxString& aExtension,
+                            const wxString& aWildcard,
+                            wxWindow*       aParent,
+                            int             aStyle,
+                            const bool      aKeepWorkingDirectory,
+                            const wxPoint&  aPosition = wxDefaultPosition,
+                            wxString*       aMruPath = NULL );
 
 EDA_LIST_DIALOG* GetFileNames( char* Directory, char* Mask );
 

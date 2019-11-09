@@ -29,40 +29,35 @@
 #include <climits>
 
 #include <math/vector2d.h>
+#include <core/optional.h>
 
-#include <boost/optional/optional.hpp>
-
-typedef boost::optional<VECTOR2I> OPT_VECTOR2I;
+typedef OPT<VECTOR2I> OPT_VECTOR2I;
 
 class SEG
 {
-private:
-    typedef VECTOR2I::extended_type ecoord;
-
 public:
+    using ecoord = VECTOR2I::extended_type;
     friend inline std::ostream& operator<<( std::ostream& aStream, const SEG& aSeg );
 
-    /* Start and the of the segment. Public, to make access simpler. These are references
-     * to an object the segment belongs to (e.g. a line chain) or references to locally stored
-     * points (m_a, m_b).
+    /* Start and the of the segment. Public, to make access simpler.
      */
     VECTOR2I A;
     VECTOR2I B;
 
     /** Default constructor
-     * Creates an empty (0, 0) segment, locally-referenced
+     * Creates an empty (0, 0) segment
      */
-    SEG() 
+    SEG()
     {
         m_index = -1;
     }
 
     /**
      * Constructor
-     * Creates a segment between (aX1, aY1) and (aX2, aY2), locally referenced
+     * Creates a segment between (aX1, aY1) and (aX2, aY2)
      */
-    SEG( int aX1, int aY1, int aX2, int aY2 ) : 
-        A ( VECTOR2I( aX1, aY1 ) ), 
+    SEG( int aX1, int aY1, int aX2, int aY2 ) :
+        A ( VECTOR2I( aX1, aY1 ) ),
         B ( VECTOR2I( aX2, aY2 ) )
     {
         m_index = -1;
@@ -70,7 +65,7 @@ public:
 
     /**
      * Constructor
-     * Creates a segment between (aA) and (aB), locally referenced
+     * Creates a segment between (aA) and (aB)
      */
     SEG( const VECTOR2I& aA, const VECTOR2I& aB ) : A( aA ), B( aB )
     {
@@ -84,7 +79,7 @@ public:
      * @param aB reference to the end point in the parent shape
      * @param aIndex index of the segment within the parent shape
      */
-    SEG ( const VECTOR2I& aA, const VECTOR2I& aB, int aIndex ) : A( aA ), B( aB )
+    SEG( const VECTOR2I& aA, const VECTOR2I& aB, int aIndex ) : A( aA ), B( aB )
     {
         m_index = aIndex;
     }
@@ -92,7 +87,7 @@ public:
     /**
      * Copy constructor
      */
-    SEG ( const SEG& aSeg ) : A( aSeg.A ), B( aSeg.B ), m_index ( aSeg.m_index )
+    SEG( const SEG& aSeg ) : A( aSeg.A ), B( aSeg.B ), m_index( aSeg.m_index )
     {
     }
 
@@ -101,8 +96,18 @@ public:
         A = aSeg.A;
         B = aSeg.B;
         m_index = aSeg.m_index;
-    
+
         return *this;
+    }
+
+    bool operator==( const SEG& aSeg ) const
+    {
+        return (A == aSeg.A && B == aSeg.B) ;
+    }
+
+    bool operator!=( const SEG& aSeg ) const
+    {
+        return (A != aSeg.A || B != aSeg.B);
     }
 
     /**
@@ -134,6 +139,7 @@ public:
       *
       * Returns the closest Euclidean distance between point aP and the line defined by
       * the ends of segment (this).
+      * @param aP the point to test
       * @param aDetermineSide: when true, the sign of the returned value indicates
       * the side of the line at which we are (negative = left)
       * @return the distance
@@ -144,9 +150,15 @@ public:
       * Function NearestPoint()
       *
       * Computes a point on the segment (this) that is closest to point aP.
-      * @return: nearest point
+      * @return the nearest point
       */
     const VECTOR2I NearestPoint( const VECTOR2I &aP ) const;
+
+    /**
+      * Computes a point on the segment (this) that is closest to any point on aSeg.
+      * @return the nearest point
+      */
+    const VECTOR2I NearestPoint( const SEG &aSeg ) const;
 
     /**
      * Function Intersect()
@@ -206,6 +218,13 @@ public:
         return sqrt( SquaredDistance( aP ) );
     }
 
+    void CanonicalCoefs( ecoord& qA, ecoord& qB, ecoord& qC ) const
+    {
+        qA = A.y - B.y;
+        qB = B.x - A.x;
+        qC = -qA * A.x - qB * A.y;
+    }
+
     /**
      * Function Collinear()
      *
@@ -215,14 +234,57 @@ public:
      */
     bool Collinear( const SEG& aSeg ) const
     {
-        ecoord qa1 = A.y - B.y;
-        ecoord qb1 = B.x - A.x;
-        ecoord qc1 = -qa1 * A.x - qb1 * A.y;
-        ecoord qa2 = aSeg.A.y - aSeg.B.y;
-        ecoord qb2 = aSeg.B.x - aSeg.A.x;
-        ecoord qc2 = -qa2 * aSeg.A.x - qb2 * aSeg.A.y;
+        ecoord qa, qb, qc;
+        CanonicalCoefs( qa, qb, qc );
 
-        return ( qa1 == qa2 ) && ( qb1 == qb2 ) && ( qc1 == qc2 );
+        ecoord d1 = std::abs( aSeg.A.x * qa + aSeg.A.y * qb + qc );
+        ecoord d2 = std::abs( aSeg.B.x * qa + aSeg.B.y * qb + qc );
+
+        return ( d1 <= 1 && d2 <= 1 );
+    }
+
+    bool ApproxCollinear( const SEG& aSeg ) const
+    {
+        ecoord p, q, r;
+        CanonicalCoefs( p, q, r );
+
+        ecoord dist1 = ( p * aSeg.A.x + q * aSeg.A.y + r ) / sqrt( p * p + q * q );
+        ecoord dist2 = ( p * aSeg.B.x + q * aSeg.B.y + r ) / sqrt( p * p + q * q );
+
+        return std::abs( dist1 ) <= 1 && std::abs( dist2 ) <= 1;
+    }
+
+    bool ApproxParallel ( const SEG& aSeg ) const
+    {
+        ecoord p, q, r;
+        CanonicalCoefs( p, q, r );
+
+        ecoord dist1 = ( p * aSeg.A.x + q * aSeg.A.y + r ) / sqrt( p * p + q * q );
+        ecoord dist2 = ( p * aSeg.B.x + q * aSeg.B.y + r ) / sqrt( p * p + q * q );
+
+        return std::abs( dist1 - dist2 ) <= 1;
+    }
+
+
+    bool Overlaps( const SEG& aSeg ) const
+    {
+        if( aSeg.A == aSeg.B ) // single point corner case
+        {
+            if( A == aSeg.A || B == aSeg.A )
+                return false;
+
+            return Contains( aSeg.A );
+        }
+
+        if( !Collinear( aSeg ) )
+            return false;
+
+        if( Contains( aSeg.A ) || Contains( aSeg.B ) )
+            return true;
+        if( aSeg.Contains( A ) || aSeg.Contains( B ) )
+            return true;
+
+        return false;
     }
 
     /**
@@ -241,6 +303,8 @@ public:
         return ( A - B ).SquaredEuclideanNorm();
     }
 
+    ecoord TCoef( const VECTOR2I& aP ) const;
+
     /**
      * Function Index()
      *
@@ -256,7 +320,17 @@ public:
 
     bool PointCloserThan( const VECTOR2I& aP, int aDist ) const;
 
-//    friend std::ostream& operator<<( std::ostream& stream, const SEG& aSeg );
+    void Reverse()
+    {
+        std::swap( A, B );
+    }
+
+    ///> Returns the center point of the line
+    VECTOR2I Center() const
+    {
+        return A + ( B - A ) / 2;
+    }
+
 private:
     bool ccw( const VECTOR2I& aA, const VECTOR2I& aB, const VECTOR2I &aC ) const;
 
@@ -264,14 +338,21 @@ private:
     int m_index;
 };
 
-
 inline VECTOR2I SEG::LineProject( const VECTOR2I& aP ) const
 {
-    // fixme: numerical errors for large integers
-    assert( false );
-    return VECTOR2I( 0, 0 );
-}
+    VECTOR2I d = B - A;
+    ecoord l_squared = d.Dot( d );
 
+    if( l_squared == 0 )
+        return A;
+
+    ecoord t = d.Dot( aP - A );
+
+    int xp = rescale( t, (ecoord)d.x, l_squared );
+    int yp = rescale( t, (ecoord)d.y, l_squared );
+
+    return A + VECTOR2I( xp, yp );
+}
 
 inline int SEG::LineDistance( const VECTOR2I& aP, bool aDetermineSide ) const
 {
@@ -281,9 +362,14 @@ inline int SEG::LineDistance( const VECTOR2I& aP, bool aDetermineSide ) const
 
     ecoord dist = ( p * aP.x + q * aP.y + r ) / sqrt( p * p + q * q );
 
-    return aDetermineSide ? dist : abs( dist );
+    return aDetermineSide ? dist : std::abs( dist );
 }
 
+inline SEG::ecoord SEG::TCoef( const VECTOR2I& aP ) const
+{
+    VECTOR2I d = B - A;
+    return d.Dot( aP - A);
+}
 
 inline const VECTOR2I SEG::NearestPoint( const VECTOR2I& aP ) const
 {
@@ -305,7 +391,6 @@ inline const VECTOR2I SEG::NearestPoint( const VECTOR2I& aP ) const
 
     return A + VECTOR2I( xp, yp );
 }
-
 
 inline std::ostream& operator<<( std::ostream& aStream, const SEG& aSeg )
 {

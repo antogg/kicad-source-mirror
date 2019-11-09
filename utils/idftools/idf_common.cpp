@@ -3,7 +3,7 @@
  *
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013-2014  Cirilo Bernardo
+ * Copyright (C) 2013-2017  Cirilo Bernardo
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,10 +24,10 @@
  */
 
 
+#include <algorithm>
 #include <list>
 #include <string>
 #include <iostream>
-#include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <cerrno>
@@ -90,7 +90,7 @@ IDF_NOTE::IDF_NOTE()
 }
 
 
-bool IDF_NOTE::readNote( std::ifstream& aBoardFile, IDF3::FILE_STATE& aBoardState,
+bool IDF_NOTE::readNote( std::istream& aBoardFile, IDF3::FILE_STATE& aBoardState,
                          IDF3::IDF_UNIT aBoardUnit )
 {
     std::string iline;      // the input line
@@ -249,7 +249,7 @@ bool IDF_NOTE::readNote( std::ifstream& aBoardFile, IDF3::FILE_STATE& aBoardStat
 }
 
 
-bool IDF_NOTE::writeNote( std::ofstream& aBoardFile, IDF3::IDF_UNIT aBoardUnit )
+bool IDF_NOTE::writeNote( std::ostream& aBoardFile, IDF3::IDF_UNIT aBoardUnit )
 {
     if( aBoardUnit == UNIT_THOU )
     {
@@ -330,8 +330,8 @@ IDF_DRILL_DATA::IDF_DRILL_DATA()
 
 IDF_DRILL_DATA::IDF_DRILL_DATA( double aDrillDia, double aPosX, double aPosY,
                                 IDF3::KEY_PLATING aPlating,
-                                const std::string aRefDes,
-                                const std::string aHoleType,
+                                const std::string& aRefDes,
+                                const std::string& aHoleType,
                                 IDF3::KEY_OWNER aOwner )
 {
     if( aDrillDia < 0.3 )
@@ -402,7 +402,7 @@ bool IDF_DRILL_DATA::Matches( double aDrillDia, double aPosX, double aPosY )
     return false;
 }
 
-bool IDF_DRILL_DATA::read( std::ifstream& aBoardFile, IDF3::IDF_UNIT aBoardUnit,
+bool IDF_DRILL_DATA::read( std::istream& aBoardFile, IDF3::IDF_UNIT aBoardUnit,
                            IDF3::FILE_STATE aBoardState, IDF3::IDF_VERSION aIdfVersion )
 {
     std::string iline;      // the input line
@@ -500,22 +500,22 @@ bool IDF_DRILL_DATA::read( std::ifstream& aBoardFile, IDF3::IDF_UNIT aBoardUnit,
                               "invalid IDFv3 file\n"
                               "* Violation of specification: missing PLATING for drilled hole" ) );
 
-            if( CompareToken( "PTH", token ) )
-            {
-                plating = IDF3::PTH;
-            }
-            else if( CompareToken( "NPTH", token ) )
-            {
-                plating = IDF3::NPTH;
-            }
-            else
-            {
-                ostringstream ostr;
-                ostr << "invalid IDFv3 file\n";
-                ostr << "* Violation of specification: invalid PLATING type ('" << token << "')";
+        if( CompareToken( "PTH", token ) )
+        {
+            plating = IDF3::PTH;
+        }
+        else if( CompareToken( "NPTH", token ) )
+        {
+            plating = IDF3::NPTH;
+        }
+        else
+        {
+            ostringstream ostr;
+            ostr << "invalid IDFv3 file\n";
+            ostr << "* Violation of specification: invalid PLATING type ('" << token << "')";
 
-                throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
-            }
+            throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+        }
     }
     else
     {
@@ -613,14 +613,14 @@ bool IDF_DRILL_DATA::read( std::ifstream& aBoardFile, IDF3::IDF_UNIT aBoardUnit,
                               "invalid IDFv3 file\n"
                               "* Violation of specification: missing OWNER for drilled hole" ) );
 
-            if( !ParseOwner( token, owner ) )
-            {
-                ostringstream ostr;
-                ostr << "invalid IDFv3 file\n";
-                ostr << "* Violation of specification: invalid OWNER for drilled hole ('" << token << "')";
+        if( !ParseOwner( token, owner ) )
+        {
+            ostringstream ostr;
+            ostr << "invalid IDFv3 file\n";
+            ostr << "* Violation of specification: invalid OWNER for drilled hole ('" << token << "')";
 
-                throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
-            }
+            throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+        }
     }
     else
     {
@@ -650,7 +650,7 @@ bool IDF_DRILL_DATA::read( std::ifstream& aBoardFile, IDF3::IDF_UNIT aBoardUnit,
     return true;
 }
 
-void IDF_DRILL_DATA::write( std::ofstream& aBoardFile, IDF3::IDF_UNIT aBoardUnit )
+void IDF_DRILL_DATA::write( std::ostream& aBoardFile, IDF3::IDF_UNIT aBoardUnit )
 {
     std::string holestr;
     std::string refstr;
@@ -950,7 +950,7 @@ void IDF3::GetOutline( std::list<IDF_SEGMENT*>& aLines,
                     PrintSeg( *bl );
 #endif
                     aOutline.push( *bl );
-                    aLines.erase( bl );
+                    bl = aLines.erase( bl );
                 }
 
                 continue;
@@ -982,7 +982,7 @@ void IDF3::GetOutline( std::list<IDF_SEGMENT*>& aLines,
                         printSeg( *bl );
 #endif
                         aOutline.push( *bl );
-                        aLines.erase( bl );
+                        bl = aLines.erase( bl );
                     }
 
                     continue;
@@ -1137,12 +1137,14 @@ void IDF_SEGMENT::CalcCenterAndRadius( void )
     double h = sqrt( dh2 );
 
     if( angle > 0.0 )
-        offAng += M_PI2;
+        offAng += M_PI_2;
     else
-        offAng -= M_PI2;
+        offAng -= M_PI_2;
 
-    if( ( angle > 180.0 ) || ( angle < -180.0 ) )
+    if( angle < -180.0 )
         offAng += M_PI;
+    else if( angle > 180 )
+        offAng -= M_PI;
 
     center.x = h * cos( offAng ) + xm;
     center.y = h * sin( offAng ) + ym;
@@ -1222,8 +1224,8 @@ void IDF_SEGMENT::SwapEnds( void )
     if( ( angle < MIN_ANG ) && ( angle > -MIN_ANG ) )
         return;         // nothing more to do
 
-        // change the direction of the arc
-        angle = -angle;
+    // change the direction of the arc
+    angle = -angle;
     // calculate the new offset angle
     offsetAngle = IDF3::CalcAngleDeg( center, startPoint );
 }
@@ -1258,8 +1260,12 @@ bool IDF_OUTLINE::IsCCW( void )
             if( ( a1 < -MIN_ANG || a1 > MIN_ANG )
                 && ( a2 < -MIN_ANG || a2 > MIN_ANG ) )
             {
-                // we have 2 arcs
-                if( abs( a1 ) >= abs( a2 ) )
+                // we have 2 arcs; the winding is determined by
+                // the longer cord. although the angles are in
+                // degrees, there is no need to convert to radians
+                // to determine the longer cord.
+                if( abs( a1 * outline.front()->radius ) >=
+                    abs( a2 * outline.back()->radius ) )
                 {
                     // winding depends on a1
                     if( a1 < 0.0 )
@@ -1299,7 +1305,7 @@ bool IDF_OUTLINE::IsCCW( void )
     }
 
     double winding = dir + ( outline.front()->startPoint.x - outline.back()->endPoint.x )
-    * ( outline.front()->startPoint.y + outline.back()->endPoint.y );
+                      * ( outline.front()->startPoint.y + outline.back()->endPoint.y );
 
     if( winding > 0.0 )
         return false;
@@ -1351,8 +1357,31 @@ bool IDF_OUTLINE::push( IDF_SEGMENT* item )
     }
 
     outline.push_back( item );
-    dir += ( outline.back()->endPoint.x - outline.back()->startPoint.x )
-    * ( outline.back()->endPoint.y + outline.back()->startPoint.y );
+
+    double ang = outline.back()->angle;
+    double oang = outline.back()->offsetAngle;
+    double radius = outline.back()->radius;
+
+    if( ang < -MIN_ANG || ang > MIN_ANG )
+    {
+        // arcs require special consideration since the winding depends on
+        // the arc length; the arc length is adequately represented by
+        // taking 2 cords from the endpoints to the midpoint of the arc.
+        oang = (oang + ang / 2.0) * M_PI / 180.0;
+        double midx = outline.back()->center.x + radius * cos( oang );
+        double midy = outline.back()->center.y + radius * sin( oang );
+
+        dir += ( outline.back()->endPoint.x - midx )
+        * ( outline.back()->endPoint.y + midy );
+
+        dir += ( midx - outline.back()->startPoint.x )
+        * ( midy + outline.back()->startPoint.y );
+    }
+    else
+    {
+        dir += ( outline.back()->endPoint.x - outline.back()->startPoint.x )
+        * ( outline.back()->endPoint.y + outline.back()->startPoint.y );
+    }
 
     return true;
 }

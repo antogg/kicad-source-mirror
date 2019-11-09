@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,21 +22,16 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file sch_component.cpp
- * @brief Implementation of the class SCH_COMPONENT.
- */
-
 #include <fctsys.h>
 #include <pgm_base.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <gr_basic.h>
-#include <trigo.h>
 #include <kicad_string.h>
 #include <richio.h>
-#include <wxEeschemaStruct.h>
-#include <plot_common.h>
+#include <sch_edit_frame.h>
+#include <plotter.h>
 #include <msgpanel.h>
+#include <bitmaps.h>
 
 #include <general.h>
 #include <class_library.h>
@@ -46,21 +41,27 @@
 #include <sch_component.h>
 #include <sch_sheet.h>
 #include <sch_sheet_path.h>
-//#include <sch_collectors.h>
-#include <class_netlist_object.h>
+#include <netlist_object.h>
+#include <lib_item.h>
+#include <symbol_lib_table.h>
 
 #include <dialogs/dialog_schematic_find.h>
 
 #include <wx/tokenzr.h>
+#include <iostream>
+#include <cctype>
 
-#define NULL_STRING "_NONAME_"
+#include <eeschema_id.h>    // for MAX_UNIT_COUNT_PER_PACKAGE definition
+
+#include <trace_helpers.h>
+
 
 /**
  * Function toUTFTildaText
  * convert a wxString to UTF8 and replace any control characters with a ~,
  * where a control character is one of the first ASCII values up to ' ' 32d.
  */
-static std::string toUTFTildaText( const wxString& txt )
+std::string toUTFTildaText( const wxString& txt )
 {
     std::string ret = TO_UTF8( txt );
 
@@ -74,8 +75,8 @@ static std::string toUTFTildaText( const wxString& txt )
 
 
 /**
- * Used when a LIB_PART is not found in library
- * to draw a dummy shape
+ * Used to draw a dummy shape when a LIB_PART is not found in library
+ *
  * This component is a 400 mils square with the text ??
  * DEF DUMMY U 0 40 Y Y 1 0 N
  * F0 "U" 0 -350 60 H V
@@ -96,12 +97,12 @@ static LIB_PART* dummy()
 
         LIB_RECTANGLE* square = new LIB_RECTANGLE( part );
 
-        square->Move( wxPoint( -200, 200 ) );
+        square->MoveTo( wxPoint( -200, 200 ));
         square->SetEndPosition( wxPoint( 200, -200 ) );
 
         LIB_TEXT* text = new LIB_TEXT( part );
 
-        text->SetSize( wxSize( 150, 150 ) );
+        text->SetTextSize( wxSize( 150, 150 ) );
         text->SetText( wxString( wxT( "??" ) ) );
 
         part->AddDrawItem( square );
@@ -116,67 +117,49 @@ SCH_COMPONENT::SCH_COMPONENT( const wxPoint& aPos, SCH_ITEM* aParent ) :
     SCH_ITEM( aParent, SCH_COMPONENT_T )
 {
     Init( aPos );
+    m_fieldsAutoplaced = AUTOPLACED_NO;
 }
 
 
-SCH_COMPONENT::SCH_COMPONENT( LIB_PART& aPart, SCH_SHEET_PATH* sheet, int unit,
-                              int convert, const wxPoint& pos, bool setNewItemFlag ) :
+SCH_COMPONENT::SCH_COMPONENT( LIB_PART& aPart, LIB_ID aLibId, SCH_SHEET_PATH* sheet,
+                              int unit, int convert, const wxPoint& pos ) :
     SCH_ITEM( NULL, SCH_COMPONENT_T )
 {
     Init( pos );
 
     m_unit      = unit;
     m_convert   = convert;
-    m_part_name = aPart.GetName();
+    m_lib_id    = aLibId;
     m_part      = aPart.SharedPtr();
+    m_fieldsAutoplaced = AUTOPLACED_NO;
 
     SetTimeStamp( GetNewTimeStamp() );
 
-    if( setNewItemFlag )
-        m_Flags = IS_NEW | IS_MOVED;
+    // Copy fields from the library component
+    UpdateFields( true, true );
 
-    // Import user defined fields from the library component:
-    LIB_FIELDS libFields;
+    // Update the pin locations
+    UpdatePins();
 
-    aPart.GetFields( libFields );
+    // Update the reference -- just the prefix for now.
+    if( sheet )
+        SetRef( sheet, aPart.GetReferenceField().GetText() + wxT( "?" ) );
+    else
+        m_prefix = aPart.GetReferenceField().GetText() + wxT( "?" );
+}
 
-    for( LIB_FIELDS::iterator it = libFields.begin();  it!=libFields.end();  ++it )
+SCH_COMPONENT::SCH_COMPONENT( LIB_PART& aPart, SCH_SHEET_PATH* aSheet,
+                              SCH_BASE_FRAME::COMPONENT_SELECTION& aSel, const wxPoint& pos ) :
+    SCH_COMPONENT( aPart, aSel.LibId, aSheet, aSel.Unit, aSel.Convert, pos )
+{
+    // Set any fields that were modified as part of the component selection
+    for( auto const& i : aSel.Fields )
     {
-        // Can no longer insert an empty name, since names are now keys.  The
-        // field index is not used beyond the first MANDATORY_FIELDS
-        if( it->GetName().IsEmpty() )
-            continue;
+        auto field = this->GetField( i.first );
 
-        // See if field by same name already exists.
-        SCH_FIELD* schField = FindField( it->GetName() );
-
-        if( !schField )
-        {
-            SCH_FIELD fld( wxPoint( 0, 0 ), GetFieldCount(), this, it->GetName() );
-            schField = AddField( fld );
-        }
-
-        schField->SetTextPosition( m_Pos + it->GetTextPosition() );
-
-        schField->ImportValues( *it );
-
-        schField->SetText( it->GetText() );
+        if( field )
+            field->SetText( i.second );
     }
-
-    wxString msg = aPart.GetReferenceField().GetText();
-
-    if( msg.IsEmpty() )
-        msg = wxT( "U" );
-
-    m_prefix = msg;
-
-    // update the reference -- just the prefix for now.
-    msg += wxT( "?" );
-    SetRef( sheet, msg );
-
-    // Use the schematic component name instead of the library value field
-    // name.
-    GetField( VALUE )->SetText( GetPartName() );
 }
 
 
@@ -187,7 +170,7 @@ SCH_COMPONENT::SCH_COMPONENT( const SCH_COMPONENT& aComponent ) :
     m_Pos       = aComponent.m_Pos;
     m_unit      = aComponent.m_unit;
     m_convert   = aComponent.m_convert;
-    m_part_name = aComponent.m_part_name;
+    m_lib_id    = aComponent.m_lib_id;
     m_part      = aComponent.m_part;
 
     SetTimeStamp( aComponent.m_TimeStamp );
@@ -198,18 +181,28 @@ SCH_COMPONENT::SCH_COMPONENT( const SCH_COMPONENT& aComponent ) :
     m_Fields = aComponent.m_Fields;
 
     // Re-parent the fields, which before this had aComponent as parent
-    for( int i = 0; i<GetFieldCount(); ++i )
+    for( SCH_FIELD& field : m_Fields )
+        field.SetParent( this );
+
+    m_pins = aComponent.m_pins;
+    m_pinMap.clear();
+
+    // Re-parent the pins and build the pinMap
+    for( unsigned i = 0; i < m_pins.size(); ++i )
     {
-        GetField( i )->SetParent( this );
+        m_pins[ i ].SetParent( this );
+        m_pinMap[ m_pins[ i ].GetLibPin() ] = i;
     }
+
+    m_fieldsAutoplaced = aComponent.m_fieldsAutoplaced;
 }
 
 
 void SCH_COMPONENT::Init( const wxPoint& pos )
 {
     m_Pos     = pos;
-    m_unit    = 0;  // In multi unit chip - which unit to draw.
-    m_convert = 0;  // De Morgan Handling
+    m_unit    = 1;  // In multi unit chip - which unit to draw.
+    m_convert = LIB_ITEM::LIB_CONVERT::BASE;  // De Morgan Handling
 
     // The rotation/mirror transformation matrix. pos normal
     m_transform = TRANSFORM();
@@ -230,7 +223,8 @@ void SCH_COMPONENT::Init( const wxPoint& pos )
         AddField( field );
     }
 
-    m_prefix = wxString( _( "U" ) );
+    m_prefix = wxString( wxT( "U" ) );
+    m_isInNetlist = true;
 }
 
 
@@ -240,11 +234,20 @@ EDA_ITEM* SCH_COMPONENT::Clone() const
 }
 
 
-void SCH_COMPONENT::SetPartName( const wxString& aName, PART_LIBS* aLibs )
+void SCH_COMPONENT::ViewGetLayers( int aLayers[], int& aCount ) const
 {
-    if( m_part_name != aName )
+    aCount      = 3;
+    aLayers[0]  = LAYER_DEVICE;
+    aLayers[1]  = LAYER_DEVICE_BACKGROUND;
+    aLayers[2]  = LAYER_SELECTION_SHADOWS;
+}
+
+
+void SCH_COMPONENT::SetLibId( const LIB_ID& aLibId, PART_LIBS* aLibs )
+{
+    if( m_lib_id != aLibId )
     {
-        m_part_name = aName;
+        m_lib_id = aLibId;
         SetModified();
 
         if( aLibs )
@@ -255,11 +258,67 @@ void SCH_COMPONENT::SetPartName( const wxString& aName, PART_LIBS* aLibs )
 }
 
 
+void SCH_COMPONENT::SetLibId( const LIB_ID& aLibId, SYMBOL_LIB_TABLE* aSymLibTable,
+                              PART_LIB* aCacheLib )
+{
+    if( m_lib_id == aLibId )
+        return;
+
+    m_lib_id = aLibId;
+    SetModified();
+
+    LIB_ALIAS* alias = nullptr;
+
+    if( aSymLibTable && aSymLibTable->HasLibrary( m_lib_id.GetLibNickname() ) )
+        alias = aSymLibTable->LoadSymbol( m_lib_id.GetLibNickname(), m_lib_id.GetLibItemName() );
+
+    if( !alias && aCacheLib )
+        alias = aCacheLib->FindAlias( m_lib_id.Format().wx_str() );
+
+    if( alias && alias->GetPart() )
+        m_part = alias->GetPart()->SharedPtr();
+    else
+        m_part.reset();
+}
+
+
+wxString SCH_COMPONENT::GetDescription() const
+{
+    if( PART_SPTR part = m_part.lock() )
+    {
+        LIB_ALIAS* alias = part->GetAlias( GetLibId().GetLibItemName() );
+
+        if( !alias )
+            return wxEmptyString;
+
+        return alias->GetDescription();
+    }
+
+    return wxEmptyString;
+}
+
+
+wxString SCH_COMPONENT::GetDatasheet() const
+{
+    if( PART_SPTR part = m_part.lock() )
+    {
+        LIB_ALIAS* alias = part->GetAlias( GetLibId().GetLibItemName() );
+
+        if( !alias )
+            return wxEmptyString;
+
+        return alias->GetDocFileName();
+    }
+
+    return wxEmptyString;
+}
+
+
 bool SCH_COMPONENT::Resolve( PART_LIBS* aLibs )
 {
     // I've never been happy that the actual individual PART_LIB is left up to
     // flimsy search path ordering.  None-the-less find a part based on that design:
-    if( LIB_PART* part = aLibs->FindLibPart( m_part_name ) )
+    if( LIB_PART* part = aLibs->FindLibPart( m_lib_id ) )
     {
         m_part = part->SharedPtr();
         return true;
@@ -269,16 +328,169 @@ bool SCH_COMPONENT::Resolve( PART_LIBS* aLibs )
 }
 
 
-void SCH_COMPONENT::ResolveAll(
-        const SCH_COLLECTOR& aComponents, PART_LIBS* aLibs )
+bool SCH_COMPONENT::Resolve( SYMBOL_LIB_TABLE& aLibTable, PART_LIB* aCacheLib )
+{
+    LIB_ALIAS* alias = nullptr;
+
+    try
+    {
+        // LIB_TABLE_BASE::LoadSymbol() throws an IO_ERROR if the the library nickname
+        // is not found in the table so check if the library still exists in the table
+        // before attempting to load the symbol.
+        if( m_lib_id.IsValid() && aLibTable.HasLibrary( m_lib_id.GetLibNickname() ) )
+            alias = aLibTable.LoadSymbol( m_lib_id );
+
+        // Fall back to cache library.  This is temporary until the new schematic file
+        // format is implemented.
+        if( !alias && aCacheLib )
+        {
+            wxString libId = m_lib_id.Format().wx_str();
+            libId.Replace( ":", "_" );
+            alias = aCacheLib->FindAlias( libId );
+            wxLogTrace( traceSymbolResolver,
+                        "Library symbol %s not found falling back to cache library.",
+                        m_lib_id.Format().wx_str() );
+        }
+
+        if( alias && alias->GetPart() )
+        {
+            m_part = alias->GetPart()->SharedPtr();
+            return true;
+        }
+    }
+    catch( const IO_ERROR& ioe )
+    {
+        wxLogTrace( traceSymbolResolver, "I/O error %s resolving library symbol %s", ioe.What(),
+                    m_lib_id.Format().wx_str() );
+    }
+
+    wxLogTrace( traceSymbolResolver, "Cannot resolve library symbol %s",
+                m_lib_id.Format().wx_str() );
+
+    m_part.reset();
+
+    return false;
+}
+
+
+// Helper sort function, used in SCH_COMPONENT::ResolveAll, to sort sch component by lib_id
+static bool sort_by_libid( const SCH_COMPONENT* ref, SCH_COMPONENT* cmp )
+{
+    if( ref->GetLibId() == cmp->GetLibId() )
+    {
+        if( ref->GetUnit() == cmp->GetUnit() )
+            return ref->GetConvert() < cmp->GetConvert();
+
+        return ref->GetUnit() < cmp->GetUnit();
+    }
+
+    return ref->GetLibId() < cmp->GetLibId();
+}
+
+
+void SCH_COMPONENT::ResolveAll( const EE_COLLECTOR& aComponents, SYMBOL_LIB_TABLE& aLibTable,
+                                PART_LIB* aCacheLib )
+{
+    std::vector<SCH_COMPONENT*> cmp_list;
+
+    for( int i = 0;  i < aComponents.GetCount();  ++i )
+    {
+        SCH_COMPONENT* cmp = dynamic_cast<SCH_COMPONENT*>( aComponents[i] );
+
+        wxCHECK2_MSG( cmp, continue, "Invalid SCH_COMPONENT pointer in list." );
+
+        cmp_list.push_back( cmp );
+    }
+
+    // sort it by lib part. Cmp will be grouped by same lib part.
+    std::sort( cmp_list.begin(), cmp_list.end(), sort_by_libid );
+
+    LIB_ID curr_libid;
+
+    for( unsigned ii = 0; ii < cmp_list.size (); ++ii )
+    {
+        SCH_COMPONENT* cmp = cmp_list[ii];
+        curr_libid = cmp->m_lib_id;
+        cmp->Resolve( aLibTable, aCacheLib );
+        cmp->UpdatePins();
+
+        // Propagate the m_part pointer to other members using the same lib_id
+        for( unsigned jj = ii+1; jj < cmp_list.size (); ++jj )
+        {
+            SCH_COMPONENT* next_cmp = cmp_list[jj];
+
+            if( curr_libid != next_cmp->m_lib_id )
+                break;
+
+            next_cmp->m_part = cmp->m_part;
+
+            next_cmp->UpdatePins();
+
+            ii = jj;
+        }
+    }
+}
+
+
+void SCH_COMPONENT::UpdatePins( const EE_COLLECTOR& aComponents )
 {
     for( int i = 0;  i < aComponents.GetCount();  ++i )
     {
-        SCH_COMPONENT* c = dynamic_cast<SCH_COMPONENT*>( aComponents[i] );
-        wxASSERT( c );
+        SCH_COMPONENT* cmp = dynamic_cast<SCH_COMPONENT*>( aComponents[i] );
+        wxASSERT( cmp );
 
-        c->Resolve( aLibs );
+        cmp->UpdatePins();
     }
+}
+
+
+void SCH_COMPONENT::UpdatePins( SCH_SHEET_PATH* aSheet )
+{
+    if( PART_SPTR part = m_part.lock() )
+    {
+        m_pinMap.clear();
+        unsigned i = 0;
+
+        for( LIB_PIN* libPin = part->GetNextPin(); libPin; libPin = part->GetNextPin( libPin ) )
+        {
+            wxASSERT( libPin->Type() == LIB_PIN_T );
+
+            if( libPin->GetUnit() && m_unit && ( m_unit != libPin->GetUnit() ) )
+                continue;
+
+            if( libPin->GetConvert() && m_convert && ( m_convert != libPin->GetConvert() ) )
+                continue;
+
+            if( m_pins.size() <= i || m_pins[ i ].GetLibPin() != libPin )
+            {
+                if( m_pins.size() > i )
+                    m_pins.erase( m_pins.begin() + i, m_pins.end() );
+
+                m_pins.emplace_back( SCH_PIN( libPin, this ) );
+            }
+
+            m_pinMap[ libPin ] = i;
+
+            if( aSheet )
+                m_pins[ i ].InitializeConnection( *aSheet );
+
+            ++i;
+        }
+    }
+    else
+    {
+        m_pins.clear();
+        m_pinMap.clear();
+    }
+}
+
+
+SCH_CONNECTION* SCH_COMPONENT::GetConnectionForPin( LIB_PIN* aPin, const SCH_SHEET_PATH& aSheet )
+{
+    if( m_pinMap.count( aPin ) )
+        return m_pins[ m_pinMap.at( aPin ) ].Connection( aSheet );
+
+    return nullptr;
 }
 
 
@@ -290,6 +502,7 @@ void SCH_COMPONENT::SetUnit( int aUnit )
         SetModified();
     }
 }
+
 
 void SCH_COMPONENT::UpdateUnit( int aUnit )
 {
@@ -328,62 +541,37 @@ int SCH_COMPONENT::GetUnitCount() const
 }
 
 
-void SCH_COMPONENT::Draw( EDA_DRAW_PANEL* panel, wxDC* DC, const wxPoint& offset,
-                          GR_DRAWMODE DrawMode, EDA_COLOR_T Color, bool DrawPinText )
+void SCH_COMPONENT::Print( wxDC* aDC, const wxPoint& aOffset )
 {
+    auto opts = PART_DRAW_OPTIONS::Default();
+    opts.transform = m_transform;
+    opts.draw_visible_fields = false;
+    opts.draw_hidden_fields = false;
+
     if( PART_SPTR part = m_part.lock() )
     {
-        part->Draw( panel, DC, m_Pos + offset, m_unit, m_convert, DrawMode, Color, m_transform, DrawPinText, false );
+        part->Print( aDC, m_Pos + aOffset, m_unit, m_convert, opts );
     }
     else    // Use dummy() part if the actual cannot be found.
     {
-        dummy()->Draw( panel, DC, m_Pos + offset, 0, 0, DrawMode, Color, m_transform, DrawPinText, false );
+        dummy()->Print( aDC, m_Pos + aOffset, 0, 0, opts );
     }
 
     SCH_FIELD* field = GetField( REFERENCE );
 
-    if( field->IsVisible() && !field->IsMoving() )
-    {
-        field->Draw( panel, DC, offset, DrawMode );
-    }
+    if( field->IsVisible() )
+        field->Print(aDC, aOffset );
 
     for( int ii = VALUE; ii < GetFieldCount(); ii++ )
     {
         field = GetField( ii );
-
-        if( field->IsMoving() )
-            continue;
-
-        field->Draw( panel, DC, offset, DrawMode );
+        field->Print( aDC, aOffset );
     }
-
-#if 0
-    // Draw the component bounding box
-    {
-        EDA_RECT boundingBox = GetBoundingBox();
-
-        GRRect( panel->GetClipBox(), DC, boundingBox, 0, BROWN );
-#if 1
-        if( GetField( REFERENCE )->IsVisible() )
-        {
-            boundingBox = GetField( REFERENCE )->GetBoundingBox();
-            GRRect( panel->GetClipBox(), DC, boundingBox, 0, BROWN );
-        }
-
-        if( GetField( VALUE )->IsVisible() )
-        {
-            boundingBox = GetField( VALUE )->GetBoundingBox();
-            GRRect( panel->GetClipBox(), DC, boundingBox, 0, BROWN );
-        }
-#endif
-    }
-#endif
 }
 
 
-void SCH_COMPONENT::AddHierarchicalReference( const wxString& aPath,
-                                              const wxString& aRef,
-                                              int             aMulti )
+void SCH_COMPONENT::AddHierarchicalReference( const wxString& aPath, const wxString& aRef,
+                                              int aMulti )
 {
     wxString          h_path, h_ref;
     wxStringTokenizer tokenizer;
@@ -415,7 +603,7 @@ wxString SCH_COMPONENT::GetPath( const SCH_SHEET_PATH* sheet ) const
 
     wxString str;
 
-    str.Printf( wxT( "%8.8lX" ), m_TimeStamp );
+    str.Printf( wxT( "%8.8lX" ), (long unsigned) m_TimeStamp );
     return sheet->Path() + str;
 }
 
@@ -423,30 +611,23 @@ wxString SCH_COMPONENT::GetPath( const SCH_SHEET_PATH* sheet ) const
 const wxString SCH_COMPONENT::GetRef( const SCH_SHEET_PATH* sheet )
 {
     wxString          path = GetPath( sheet );
-    wxString          h_path, h_ref;
+    wxString          h_path;
     wxStringTokenizer tokenizer;
     wxString          separators( wxT( " " ) );
 
-    for( unsigned ii = 0; ii < m_PathsAndReferences.GetCount(); ii++ )
+    for( const wxString& entry : m_PathsAndReferences )
     {
-        tokenizer.SetString( m_PathsAndReferences[ii], separators );
+        tokenizer.SetString( entry, separators );
         h_path = tokenizer.GetNextToken();
 
         if( h_path.Cmp( path ) == 0 )
-        {
-            h_ref = tokenizer.GetNextToken();
-
-            /* printf( "GetRef hpath: %s\n",
-             *       TO_UTF8( m_PathsAndReferences[ii] ) ); */
-            return h_ref;
-        }
+            return tokenizer.GetNextToken();
     }
 
-    // if it was not found in m_Paths array, then see if it is in
-    // m_Field[REFERENCE] -- if so, use this as a default for this path.
-    // this will happen if we load a version 1 schematic file.
-    // it will also mean that multiple instances of the same sheet by default
-    // all have the same component references, but perhaps this is best.
+    // If it was not found in m_Paths array, then see if it is in m_Field[REFERENCE] -- if so,
+    // use this as a default for this path.  This will happen if we load a version 1 schematic
+    // file.  It will also mean that multiple instances of the same sheet by default all have
+    // the same component references, but perhaps this is best.
     if( !GetField( REFERENCE )->GetText().IsEmpty() )
     {
         SetRef( sheet, GetField( REFERENCE )->GetText() );
@@ -457,26 +638,17 @@ const wxString SCH_COMPONENT::GetRef( const SCH_SHEET_PATH* sheet )
 }
 
 
-/* Function IsReferenceStringValid (static function)
- * Tests for an acceptable reference string
- * An acceptable reference string must support unannotation
- * i.e starts by letter
- * returns true if OK
- */
 bool SCH_COMPONENT::IsReferenceStringValid( const wxString& aReferenceString )
 {
     wxString text = aReferenceString;
     bool ok = true;
 
     // Try to unannotate this reference
-    while( !text.IsEmpty() && ( text.Last() == '?' || isdigit( text.Last() ) ) )
+    while( !text.IsEmpty() && ( text.Last() == '?' || wxIsdigit( text.Last() ) ) )
         text.RemoveLast();
 
     if( text.IsEmpty() )
         ok = false;
-
-    // Add here other constraints
-    // Currently:no other constraint
 
     return ok;
 }
@@ -505,7 +677,8 @@ void SCH_COMPONENT::SetRef( const SCH_SHEET_PATH* sheet, const wxString& ref )
             h_ref += wxT( " " );
             tokenizer.GetNextToken();               // Skip old reference
             h_ref += tokenizer.GetNextToken();      // Add part selection
-            // Ann the part selection
+
+            // Add the part selection
             m_PathsAndReferences[ii] = h_ref;
             notInArray = false;
         }
@@ -517,11 +690,10 @@ void SCH_COMPONENT::SetRef( const SCH_SHEET_PATH* sheet, const wxString& ref )
     SCH_FIELD* rf = GetField( REFERENCE );
 
     if( rf->GetText().IsEmpty()
-      || ( abs( rf->GetTextPosition().x - m_Pos.x ) +
-           abs( rf->GetTextPosition().y - m_Pos.y ) > 10000 ) )
+      || ( abs( rf->GetTextPos().x - m_Pos.x ) + abs( rf->GetTextPos().y - m_Pos.y ) > 10000 ) )
     {
         // move it to a reasonable position
-        rf->SetTextPosition( m_Pos + wxPoint( 50, 50 ) );
+        rf->SetTextPos( m_Pos + wxPoint( 50, 50 ) );
     }
 
     rf->SetText( ref );  // for drawing.
@@ -531,7 +703,7 @@ void SCH_COMPONENT::SetRef( const SCH_SHEET_PATH* sheet, const wxString& ref )
 
     if( IsReferenceStringValid( prefix ) )
     {
-        while( prefix.Last() == '?' || isdigit( prefix.Last() ) )
+        while( prefix.Last() == '?' || wxIsdigit( prefix.Last() ) )
             prefix.RemoveLast();
     }
     else
@@ -541,22 +713,45 @@ void SCH_COMPONENT::SetRef( const SCH_SHEET_PATH* sheet, const wxString& ref )
 
     if( m_prefix != prefix )
         m_prefix = prefix;
+
+    // Power components have references starting with # and are not included in netlists
+    m_isInNetlist = ! ref.StartsWith( wxT( "#" ) );
 }
 
 
-void SCH_COMPONENT::SetTimeStamp( time_t aNewTimeStamp )
+bool SCH_COMPONENT::IsAnnotated( const SCH_SHEET_PATH* aSheet )
+{
+    wxString          path = GetPath( aSheet );
+    wxString          h_path;
+    wxStringTokenizer tokenizer;
+    wxString          separators( wxT( " " ) );
+
+    for( const wxString& entry : m_PathsAndReferences )
+    {
+        tokenizer.SetString( entry, separators );
+        h_path = tokenizer.GetNextToken();
+
+        if( h_path.Cmp( path ) == 0 )
+        {
+            wxString ref = tokenizer.GetNextToken();
+            return ref.Last() != '?';
+        }
+    }
+
+    return false;
+}
+
+
+void SCH_COMPONENT::SetTimeStamp( timestamp_t aNewTimeStamp )
 {
     wxString string_timestamp, string_oldtimestamp;
 
-    string_timestamp.Printf( wxT( "%08lX" ), aNewTimeStamp );
-    string_oldtimestamp.Printf( wxT( "%08lX" ), m_TimeStamp );
+    string_timestamp.Printf( wxT( "%08lX" ), (long unsigned) aNewTimeStamp );
+    string_oldtimestamp.Printf( wxT( "%08lX" ), (long unsigned) m_TimeStamp );
     EDA_ITEM::SetTimeStamp( aNewTimeStamp );
 
-    for( unsigned ii = 0; ii < m_PathsAndReferences.GetCount(); ii++ )
-    {
-        m_PathsAndReferences[ii].Replace( string_oldtimestamp.GetData(),
-                                          string_timestamp.GetData() );
-    }
+    for( wxString& entry : m_PathsAndReferences )
+        entry.Replace( string_oldtimestamp.GetData(), string_timestamp.GetData() );
 }
 
 
@@ -567,9 +762,9 @@ int SCH_COMPONENT::GetUnitSelection( SCH_SHEET_PATH* aSheet )
     wxStringTokenizer tokenizer;
     wxString          separators( wxT( " " ) );
 
-    for( unsigned ii = 0; ii < m_PathsAndReferences.GetCount(); ii++ )
+    for( const wxString& entry : m_PathsAndReferences )
     {
-        tokenizer.SetString( m_PathsAndReferences[ii], separators );
+        tokenizer.SetString( entry, separators );
         h_path = tokenizer.GetNextToken();
 
         if( h_path.Cmp( path ) == 0 )
@@ -582,8 +777,8 @@ int SCH_COMPONENT::GetUnitSelection( SCH_SHEET_PATH* aSheet )
         }
     }
 
-    // if it was not found in m_Paths array, then use m_unit.
-    // this will happen if we load a version 1 schematic file.
+    // If it was not found in m_Paths array, then use m_unit.  This will happen if we load a
+    // version 1 schematic file.
     return m_unit;
 }
 
@@ -599,9 +794,9 @@ void SCH_COMPONENT::SetUnitSelection( SCH_SHEET_PATH* aSheet, int aUnitSelection
     wxString          separators( wxT( " " ) );
 
     //check to see if it is already there before inserting it
-    for( unsigned ii = 0; ii < m_PathsAndReferences.GetCount(); ii++ )
+    for( wxString& entry : m_PathsAndReferences )
     {
-        tokenizer.SetString( m_PathsAndReferences[ii], separators );
+        tokenizer.SetString( entry, separators );
         h_path = tokenizer.GetNextToken();
 
         if( h_path.Cmp( path ) == 0 )
@@ -613,7 +808,7 @@ void SCH_COMPONENT::SetUnitSelection( SCH_SHEET_PATH* aSheet, int aUnitSelection
             h_ref << aUnitSelection;                // Add part selection
 
             // Ann the part selection
-            m_PathsAndReferences[ii] = h_ref;
+            entry = h_ref;
             notInArray = false;
         }
     }
@@ -634,8 +829,29 @@ SCH_FIELD* SCH_COMPONENT::GetField( int aFieldNdx ) const
 
     wxASSERT( field );
 
-    // use cast to remove const-ness
-    return (SCH_FIELD*) field;
+    return const_cast<SCH_FIELD*>( field );
+}
+
+
+wxString SCH_COMPONENT::GetFieldText( const wxString& aFieldName, SCH_EDIT_FRAME* aFrame ) const
+{
+    for( const SCH_FIELD& field : m_Fields )
+    {
+        if( aFieldName == field.GetName() )
+            return field.GetText();
+    }
+
+    return wxEmptyString;
+}
+
+
+void SCH_COMPONENT::GetFields( std::vector<SCH_FIELD*>& aVector, bool aVisibleOnly )
+{
+    for( SCH_FIELD& field : m_Fields )
+    {
+        if( !aVisibleOnly || ( field.IsVisible() && !field.IsVoid() ) )
+            aVector.push_back( &field );
+    }
 }
 
 
@@ -648,15 +864,97 @@ SCH_FIELD* SCH_COMPONENT::AddField( const SCH_FIELD& aField )
 }
 
 
-SCH_FIELD* SCH_COMPONENT::FindField( const wxString& aFieldName )
+void SCH_COMPONENT::RemoveField( const wxString& aFieldName )
 {
-    for( unsigned i = 0;  i<m_Fields.size();  ++i )
+    for( unsigned i = MANDATORY_FIELDS; i < m_Fields.size(); ++i )
+    {
+        if( aFieldName == m_Fields[i].GetName( false ) )
+        {
+            m_Fields.erase( m_Fields.begin() + i );
+            return;
+        }
+    }
+}
+
+
+SCH_FIELD* SCH_COMPONENT::FindField( const wxString& aFieldName, bool aIncludeDefaultFields )
+{
+    unsigned start = aIncludeDefaultFields ? 0 : MANDATORY_FIELDS;
+
+    for( unsigned i = start; i < m_Fields.size(); ++i )
     {
         if( aFieldName == m_Fields[i].GetName( false ) )
             return &m_Fields[i];
     }
 
     return NULL;
+}
+
+
+void SCH_COMPONENT::UpdateFields( bool aResetStyle, bool aResetRef )
+{
+    if( PART_SPTR part = m_part.lock() )
+    {
+        wxString symbolName;
+        LIB_FIELDS fields;
+        part->GetFields( fields );
+
+        for( const LIB_FIELD& field : fields )
+        {
+            // Can no longer insert an empty name, since names are now keys.  The
+            // field index is not used beyond the first MANDATORY_FIELDS
+            if( field.GetName().IsEmpty() )
+                continue;
+
+            // See if field already exists (mandatory fields always exist).
+            // for mandatory fields, the name and field id are fixed, so we use the
+            // known and fixed id to get them (more reliable than names, which can be translated)
+            // for other fields (custom fields), locate the field by same name
+            // (field id has no known meaning for custom fields)
+            int idx = field.GetId();
+            SCH_FIELD* schField;
+
+            if( idx == REFERENCE && !aResetRef )
+                continue;
+
+            if( (unsigned) idx < MANDATORY_FIELDS )
+                schField = GetField( idx );
+            else
+                schField = FindField( field.GetName() );
+
+            if( !schField )
+            {
+                SCH_FIELD newField( wxPoint( 0, 0 ), GetFieldCount(), this, field.GetName() );
+                schField = AddField( newField );
+            }
+
+            if( aResetStyle )
+            {
+                schField->ImportValues( field );
+                schField->SetTextPos( m_Pos + field.GetTextPos() );
+            }
+
+            if( idx == VALUE )
+            {
+                schField->SetText( m_lib_id.GetLibItemName() ); // fetch alias-specific value
+                symbolName = m_lib_id.GetLibItemName();
+            }
+            else if( idx == DATASHEET )
+            {
+                schField->SetText( GetDatasheet() );            // fetch alias-specific value
+
+                // Some older libraries may be broken and the alias datasheet information
+                // in the document file for the root part may have been dropped.  This only
+                // happens for the root part.
+                if( schField->GetText().IsEmpty() && symbolName == part->GetName() )
+                    schField->SetText( part->GetField( DATASHEET )->GetText() );
+            }
+            else
+            {
+                schField->SetText( field.GetText() );
+            }
+        }
+    }
 }
 
 
@@ -670,6 +968,21 @@ LIB_PIN* SCH_COMPONENT::GetPin( const wxString& number )
 }
 
 
+void SCH_COMPONENT::GetPins( std::vector<LIB_PIN*>& aPinsList )
+{
+    if( m_part.expired() )
+    {
+        // no pins; nothing to get
+    }
+    else if( PART_SPTR part = m_part.lock() )
+    {
+        part->GetPins( aPinsList, m_unit, m_convert );
+    }
+    else
+        wxFAIL_MSG( "Could not obtain PART_SPTR lock" );
+}
+
+
 void SCH_COMPONENT::SwapData( SCH_ITEM* aItem )
 {
     wxCHECK_RET( (aItem != NULL) && (aItem->Type() == SCH_COMPONENT_T),
@@ -677,99 +990,85 @@ void SCH_COMPONENT::SwapData( SCH_ITEM* aItem )
 
     SCH_COMPONENT* component = (SCH_COMPONENT*) aItem;
 
-    EXCHG( m_part_name, component->m_part_name );
-    EXCHG( m_part, component->m_part );
-    EXCHG( m_Pos, component->m_Pos );
-    EXCHG( m_unit, component->m_unit );
-    EXCHG( m_convert, component->m_convert );
+    std::swap( m_lib_id, component->m_lib_id );
+    std::swap( m_part, component->m_part );
+    std::swap( m_Pos, component->m_Pos );
+    std::swap( m_unit, component->m_unit );
+    std::swap( m_convert, component->m_convert );
+    std::swap( m_pins, component->m_pins );
+
+    m_pinMap.clear();
+    component->m_pinMap.clear();
+
+    m_Fields.swap( component->m_Fields );    // std::vector's swap()
+
+    // Reparent items after copying data
+    // (after swap(), m_Parent member does not point to the right parent):
+    for( unsigned i = 0; i < m_pins.size(); ++i )
+    {
+        m_pins[ i ].SetParent( this );
+        m_pinMap[ m_pins[ i ].GetLibPin() ] = i;
+    }
+
+    for( unsigned i = 0; i < component->m_pins.size(); ++i )
+    {
+        component->m_pins[ i ].SetParent( component );
+        component->m_pinMap[ component->m_pins[ i ].GetLibPin() ] = i;
+    }
+
+    for( int ii = 0; ii < component->GetFieldCount();  ++ii )
+        component->GetField( ii )->SetParent( component );
+
+    for( int ii = 0; ii < GetFieldCount();  ++ii )
+        GetField( ii )->SetParent( this );
 
     TRANSFORM tmp = m_transform;
 
     m_transform = component->m_transform;
     component->m_transform = tmp;
 
-    m_Fields.swap( component->m_Fields );    // std::vector's swap()
-
-    // Reparent items after copying data
-    // (after swap(), m_Parent member does not point to the right parent):
-    for( int ii = 0; ii < component->GetFieldCount();  ++ii )
-    {
-        component->GetField( ii )->SetParent( component );
-    }
-
-    for( int ii = 0; ii < GetFieldCount();  ++ii )
-    {
-        GetField( ii )->SetParent( this );
-    }
-
-    EXCHG( m_PathsAndReferences, component->m_PathsAndReferences );
+    std::swap( m_PathsAndReferences, component->m_PathsAndReferences );
 }
 
 
 void SCH_COMPONENT::ClearAnnotation( SCH_SHEET_PATH* aSheetPath )
 {
-    bool           keepMulti = false;
     wxArrayString  reference_fields;
-
     static const wxChar separators[] = wxT( " " );
-
     PART_SPTR part = m_part.lock();
-
-    if( part && part->UnitsLocked() )
-        keepMulti = true;
 
     // Build a reference with no annotation,
     // i.e. a reference ended by only one '?'
     wxString defRef = m_prefix;
 
-    if( IsReferenceStringValid( defRef ) )
-    {
-        while( defRef.Last() == '?' )
-            defRef.RemoveLast();
-    }
-    else
+    if( !IsReferenceStringValid( defRef ) )
     {   // This is a malformed reference: reinit this reference
         m_prefix = defRef = wxT("U");        // Set to default ref prefix
     }
 
+    while( defRef.Last() == '?' )
+        defRef.RemoveLast();
+
     defRef.Append( wxT( "?" ) );
 
-    wxString multi = wxT( "1" );
+    wxString path;
 
-    // For components with units locked,
-    // we cannot remove all annotations: part selection must be kept
-    // For all components: if aSheetPath is not NULL,
-    // remove annotation only for the given path
-    if( keepMulti || aSheetPath )
+    if( aSheetPath )
+        path = GetPath( aSheetPath );
+
+    for( wxString& entry : m_PathsAndReferences )
     {
-        wxString NewHref;
-        wxString path;
+        // Break hierarchical reference in path, ref and multi selection:
+        reference_fields = wxStringTokenize( entry, separators );
 
-        if( aSheetPath )
-            path = GetPath( aSheetPath );
-
-        for( unsigned int ii = 0; ii < m_PathsAndReferences.GetCount(); ii++ )
+        // For all components: if aSheetPath is not NULL,
+        // remove annotation only for the given path
+        if( aSheetPath == NULL || reference_fields[0].Cmp( path ) == 0 )
         {
-            // Break hierarchical reference in path, ref and multi selection:
-            reference_fields = wxStringTokenize( m_PathsAndReferences[ii], separators );
-
-            if( aSheetPath == NULL || reference_fields[0].Cmp( path ) == 0 )
-            {
-                if( keepMulti )  // Get and keep part selection
-                    multi = reference_fields[2];
-
-                NewHref = reference_fields[0];
-                NewHref << wxT( " " ) << defRef << wxT( " " ) << multi;
-                m_PathsAndReferences[ii] = NewHref;
-            }
+            wxString newHref = reference_fields[0];
+            newHref << wxT( " " ) << defRef << wxT( " " ) << reference_fields[2];
+            entry = newHref;
         }
-    }
-    else
-    {
-        // Clear reference strings, but does not free memory because a new annotation
-        // will reuse it
-        m_PathsAndReferences.Empty();
-        m_unit = 1;
     }
 
     // These 2 changes do not work in complex hierarchy.
@@ -779,6 +1078,34 @@ void SCH_COMPONENT::ClearAnnotation( SCH_SHEET_PATH* aSheetPath )
     m_Fields[REFERENCE].SetText( defRef ); //for drawing.
 
     SetModified();
+}
+
+
+bool SCH_COMPONENT::AddSheetPathReferenceEntryIfMissing( const wxString& aSheetPathName )
+{
+    // a empty sheet path is illegal:
+    wxCHECK( !aSheetPathName.IsEmpty(), false );
+
+    wxString reference_path;
+
+    // The full component reference path is aSheetPathName + the component time stamp itself
+    // full_AR_path is the alternate reference path to search
+    wxString full_AR_path = aSheetPathName
+                                   + wxString::Format( "%8.8lX", (unsigned long) GetTimeStamp() );
+
+    for( unsigned int ii = 0; ii < m_PathsAndReferences.GetCount(); ii++ )
+    {
+        // Break hierarchical reference in path, ref and multi selection:
+        reference_path = m_PathsAndReferences[ii].BeforeFirst( ' ' );
+
+        // if aSheetPath is found, nothing to do:
+        if( reference_path.Cmp( full_AR_path ) == 0 )
+            return false;
+    }
+
+    // This entry does not exist: add it, with a (temporary?) reference (last ref used for display)
+    AddHierarchicalReference( full_AR_path, m_Fields[REFERENCE].GetText(), m_unit );
+    return true;
 }
 
 
@@ -911,29 +1238,27 @@ void SCH_COMPONENT::SetOrientation( int aOrientation )
 
 int SCH_COMPONENT::GetOrientation()
 {
-    int type_rotate = CMP_ORIENT_0;
-    TRANSFORM transform;
-    int ii;
-
-    #define ROTATE_VALUES_COUNT 12
-
-    // list of all possibilities, but only the first 8 are actually used
-    int rotate_value[ROTATE_VALUES_COUNT] =
+    int rotate_values[] =
     {
-        CMP_ORIENT_0,                  CMP_ORIENT_90,                  CMP_ORIENT_180,
+        CMP_ORIENT_0,
+        CMP_ORIENT_90,
+        CMP_ORIENT_180,
         CMP_ORIENT_270,
-        CMP_MIRROR_X + CMP_ORIENT_0,   CMP_MIRROR_X + CMP_ORIENT_90,
-        CMP_MIRROR_X + CMP_ORIENT_180, CMP_MIRROR_X + CMP_ORIENT_270,
-        CMP_MIRROR_Y + CMP_ORIENT_0,   CMP_MIRROR_Y + CMP_ORIENT_90,
-        CMP_MIRROR_Y + CMP_ORIENT_180, CMP_MIRROR_Y + CMP_ORIENT_270
+        CMP_MIRROR_X + CMP_ORIENT_0,
+        CMP_MIRROR_X + CMP_ORIENT_90,
+        CMP_MIRROR_X + CMP_ORIENT_270,
+        CMP_MIRROR_Y,
+        CMP_MIRROR_Y + CMP_ORIENT_0,
+        CMP_MIRROR_Y + CMP_ORIENT_90,
+        CMP_MIRROR_Y + CMP_ORIENT_180,
+        CMP_MIRROR_Y + CMP_ORIENT_270
     };
 
     // Try to find the current transform option:
-    transform = m_transform;
+    TRANSFORM transform = m_transform;
 
-    for( ii = 0; ii < ROTATE_VALUES_COUNT; ii++ )
+    for( int type_rotate : rotate_values )
     {
-        type_rotate = rotate_value[ii];
         SetOrientation( type_rotate );
 
         if( transform == m_transform )
@@ -948,12 +1273,6 @@ int SCH_COMPONENT::GetOrientation()
 }
 
 
-wxPoint SCH_COMPONENT::GetScreenCoord( const wxPoint& aPoint )
-{
-    return m_transform.TransformCoordinate( aPoint );
-}
-
-
 #if defined(DEBUG)
 
 void SCH_COMPONENT::Show( int nestLevel, std::ostream& os ) const
@@ -962,7 +1281,7 @@ void SCH_COMPONENT::Show( int nestLevel, std::ostream& os ) const
     NestedSpace( nestLevel, os ) << '<' << GetClass().Lower().mb_str()
                                  << " ref=\"" << TO_UTF8( GetField( 0 )->GetName() )
                                  << '"' << " chipName=\""
-                                 << TO_UTF8( GetPartName() ) << '"' << m_Pos
+                                 << GetLibId().Format() << '"' << m_Pos
                                  << " layer=\"" << m_Layer
                                  << '"' << ">\n";
 
@@ -984,441 +1303,6 @@ void SCH_COMPONENT::Show( int nestLevel, std::ostream& os ) const
 }
 
 #endif
-
-
-bool SCH_COMPONENT::Save( FILE* f ) const
-{
-    std::string     name1;
-    std::string     name2;
-    wxArrayString   reference_fields;
-
-    static wxString delimiters( wxT( " " ) );
-
-    // this is redundant with the AR entries below, but it makes the
-    // files backwards-compatible.
-    if( m_PathsAndReferences.GetCount() > 0 )
-    {
-        reference_fields = wxStringTokenize( m_PathsAndReferences[0], delimiters );
-
-        name1 = toUTFTildaText( reference_fields[1] );
-    }
-    else
-    {
-        if( GetField( REFERENCE )->GetText().IsEmpty() )
-            name1 = toUTFTildaText( m_prefix );
-        else
-            name1 = toUTFTildaText( GetField( REFERENCE )->GetText() );
-    }
-
-    wxString part_name = GetPartName();
-
-    if( part_name.size() )
-    {
-        name2 = toUTFTildaText( part_name );
-    }
-    else
-    {
-        name2 = NULL_STRING;
-    }
-
-    if( fprintf( f, "$Comp\n" ) == EOF )
-        return false;
-
-    if( fprintf( f, "L %s %s\n", name2.c_str(), name1.c_str() ) == EOF )
-        return false;
-
-    // Generate unit number, convert and time stamp
-    if( fprintf( f, "U %d %d %8.8lX\n", m_unit, m_convert, m_TimeStamp ) == EOF )
-        return false;
-
-    // Save the position
-    if( fprintf( f, "P %d %d\n", m_Pos.x, m_Pos.y ) == EOF )
-        return false;
-
-    /* If this is a complex hierarchy; save hierarchical references.
-     * but for simple hierarchies it is not necessary.
-     * the reference inf is already saved
-     * this is useful for old Eeschema version compatibility
-     */
-    if( m_PathsAndReferences.GetCount() > 1 )
-    {
-        for( unsigned int ii = 0; ii <  m_PathsAndReferences.GetCount(); ii++ )
-        {
-            /*format:
-             * AR Path="/140/2" Ref="C99"   Part="1"
-             * where 140 is the uid of the containing sheet
-             * and 2 is the timestamp of this component.
-             * (timestamps are actually 8 hex chars)
-             * Ref is the conventional component reference for this 'path'
-             * Part is the conventional component part selection for this 'path'
-             */
-            reference_fields = wxStringTokenize( m_PathsAndReferences[ii], delimiters );
-
-            if( fprintf( f, "AR Path=\"%s\" Ref=\"%s\"  Part=\"%s\" \n",
-                         TO_UTF8( reference_fields[0] ),
-                         TO_UTF8( reference_fields[1] ),
-                         TO_UTF8( reference_fields[2] ) ) == EOF )
-                return false;
-        }
-    }
-
-    // update the ugly field index, which I would like to see go away someday soon.
-    for( unsigned i = 0;  i<m_Fields.size();  ++i )
-    {
-        SCH_FIELD* fld = GetField( i );
-        fld->SetId( i );  // we don't need field Ids, please be gone.
-    }
-
-    // Fixed fields:
-    // Save mandatory fields even if they are blank,
-    // because the visibility, size and orientation are set from libary editor.
-    for( unsigned i = 0;  i<MANDATORY_FIELDS;  ++i )
-    {
-        SCH_FIELD* fld = GetField( i );
-        if( !fld->Save( f ) )
-            return false;
-    }
-
-    // User defined fields:
-    // The *policy* about which user defined fields are part of a symbol is now
-    // only in the dialog editors.  No policy should be enforced here, simply
-    // save all the user defined fields, they are present because a dialog editor
-    // thought they should be.  If you disagree, go fix the dialog editors.
-    for( unsigned i = MANDATORY_FIELDS;  i<m_Fields.size();  ++i )
-    {
-        SCH_FIELD* fld = GetField( i );
-
-        if( !fld->Save( f ) )
-            return false;
-    }
-
-    // Unit number, position, box ( old standard )
-    if( fprintf( f, "\t%-4d %-4d %-4d\n", m_unit, m_Pos.x, m_Pos.y ) == EOF )
-        return false;
-
-    if( fprintf( f, "\t%-4d %-4d %-4d %-4d\n",
-                 m_transform.x1, m_transform.y1, m_transform.x2, m_transform.y2 ) == EOF )
-        return false;
-
-    if( fprintf( f, "$EndComp\n" ) == EOF )
-        return false;
-
-    return true;
-}
-
-
-bool SCH_COMPONENT::Load( LINE_READER& aLine, wxString& aErrorMsg )
-{
-    int         ii;
-    char        name1[256], name2[256],
-                char1[256], char2[256], char3[256];
-    int         newfmt = 0;
-    char*       ptcar;
-    wxString    fieldName;
-    char*       line = aLine.Line();
-
-    m_convert = 1;
-
-    if( line[0] == '$' )
-    {
-        newfmt = 1;
-
-        if( !(line = aLine.ReadLine()) )
-            return true;
-    }
-
-    if( sscanf( &line[1], "%s %s", name1, name2 ) != 2 )
-    {
-        aErrorMsg.Printf( wxT( "Eeschema component description error at line %d, aborted" ),
-                          aLine.LineNumber() );
-        aErrorMsg << wxT( "\n" ) << FROM_UTF8( line );
-        return false;
-    }
-
-    if( strcmp( name1, NULL_STRING ) != 0 )
-    {
-        for( ii = 0; ii < (int) strlen( name1 ); ii++ )
-        {
-            if( name1[ii] == '~' )
-                name1[ii] = ' ';
-        }
-
-        SetPartName( FROM_UTF8( name1 ) );
-
-        if( !newfmt )
-            GetField( VALUE )->SetText( FROM_UTF8( name1 ) );
-    }
-    else
-    {
-        m_part_name.Empty();
-        GetField( VALUE )->Empty();
-        GetField( VALUE )->SetOrientation( TEXT_ORIENT_HORIZ );
-        GetField( VALUE )->SetVisible( false );
-    }
-
-    if( strcmp( name2, NULL_STRING ) != 0 )
-    {
-        bool isDigit = false;
-
-        for( ii = 0; ii < (int) strlen( name2 ); ii++ )
-        {
-            if( name2[ii] == '~' )
-                name2[ii] = ' ';
-
-            // get RefBase from this, too. store in name1.
-            if( name2[ii] >= '0' && name2[ii] <= '9' )
-            {
-                isDigit   = true;
-                name1[ii] = 0;  //null-terminate.
-            }
-
-            if( !isDigit )
-            {
-                name1[ii] = name2[ii];
-            }
-        }
-
-        name1[ii] = 0; //just in case
-        int  jj;
-
-        for( jj = 0; jj<ii && name1[jj] == ' '; jj++ )
-            ;
-
-        if( jj == ii )
-        {
-            // blank string.
-            m_prefix = wxT( "U" );
-        }
-        else
-        {
-            m_prefix = FROM_UTF8( &name1[jj] );
-
-            //printf("prefix: %s\n", TO_UTF8(component->m_prefix));
-        }
-
-        if( !newfmt )
-            GetField( REFERENCE )->SetText( FROM_UTF8( name2 ) );
-    }
-    else
-    {
-        GetField( REFERENCE )->SetVisible( false );
-    }
-
-    /* Parse component description
-     * These lines begin with:
-     * "P" = Position
-     * U = Num Unit and Conversion
-     * "Fn" = Fields (0 .. n = = number of field)
-     * "Ar" = Alternate reference in the case of multiple sheets referring to
-     *        one schematic file.
-     */
-    for( ; ; )
-    {
-        if( !(line = aLine.ReadLine()) )
-            return false;
-
-        if( line[0] == 'U' )
-        {
-            sscanf( line + 1, "%d %d %lX", &m_unit, &m_convert, &m_TimeStamp );
-        }
-        else if( line[0] == 'P' )
-        {
-            sscanf( line + 1, "%d %d", &m_Pos.x, &m_Pos.y );
-
-            // Set fields position to a default position (that is the
-            // component position.  For existing fields, the real position
-            // will be set later
-            for( int i = 0; i<GetFieldCount();  i++ )
-            {
-                if( GetField( i )->GetText().IsEmpty() )
-                    GetField( i )->SetTextPosition( m_Pos );
-            }
-        }
-        else if( line[0] == 'A' && line[1] == 'R' )
-        {
-            /* format:
-             * AR Path="/9086AF6E/67452AA0" Ref="C99" Part="1"
-             * where 9086AF6E is the unique timestamp of the containing sheet
-             * and 67452AA0 is the timestamp of this component.
-             * C99 is the reference given this path.
-             */
-            int ii;
-            ptcar = line + 2;
-
-            //copy the path.
-            ii     = ReadDelimitedText( name1, ptcar, 255 );
-            ptcar += ii + 1;
-            wxString path = FROM_UTF8( name1 );
-
-            // copy the reference
-            ii     = ReadDelimitedText( name1, ptcar, 255 );
-            ptcar += ii + 1;
-            wxString ref = FROM_UTF8( name1 );
-
-            // copy the multi, if exists
-            ii = ReadDelimitedText( name1, ptcar, 255 );
-
-            if( name1[0] == 0 )  // Nothing read, put a default value
-                sprintf( name1, "%d", m_unit );
-
-            int multi = atoi( name1 );
-
-            if( multi < 0 || multi > 26 )
-                multi = 1;
-
-            AddHierarchicalReference( path, ref, multi );
-            GetField( REFERENCE )->SetText( ref );
-        }
-        else if( line[0] == 'F' )
-        {
-            int  fieldNdx;
-
-            wxString fieldText;
-            EDA_TEXT_HJUSTIFY_T hjustify = GR_TEXT_HJUSTIFY_CENTER;
-            EDA_TEXT_VJUSTIFY_T vjustify = GR_TEXT_VJUSTIFY_CENTER;
-
-            ptcar = (char*) aLine;
-
-            while( *ptcar && (*ptcar != '"') )
-                ptcar++;
-
-            if( *ptcar != '"' )
-            {
-                aErrorMsg.Printf( wxT( "Eeschema file library field F at line %d, aborted" ),
-                                  aLine.LineNumber() );
-                return false;
-            }
-
-            ptcar += ReadDelimitedText( &fieldText, ptcar );
-
-            if( *ptcar == 0 )
-            {
-                aErrorMsg.Printf( wxT( "Component field F at line %d, aborted" ),
-                                  aLine.LineNumber() );
-                return false;
-            }
-
-            fieldNdx = atoi( line + 2 );
-
-            ReadDelimitedText( &fieldName, ptcar );
-
-            if( fieldName.IsEmpty() )
-                fieldName = TEMPLATE_FIELDNAME::GetDefaultFieldName( fieldNdx );
-
-            if( fieldNdx >= GetFieldCount() )
-            {
-                // The first MANDATOR_FIELDS _must_ be constructed within
-                // the SCH_COMPONENT constructor.  This assert is simply here
-                // to guard against a change in that constructor.
-                wxASSERT( GetFieldCount() >= MANDATORY_FIELDS );
-
-                // Ignore the _supplied_ fieldNdx.  It is not important anymore
-                // if within the user defined fields region (i.e. >= MANDATORY_FIELDS).
-                // We freely renumber the index to fit the next available field slot.
-
-                fieldNdx = GetFieldCount();  // new has this index after insertion
-
-                SCH_FIELD field( wxPoint( 0, 0 ),
-                                 -1,     // field id is not relavant for user defined fields
-                                 this, fieldName );
-
-                AddField( field );
-            }
-            else
-            {
-                GetField( fieldNdx )->SetName( fieldName );
-            }
-
-            GetField( fieldNdx )->SetText( fieldText );
-            memset( char3, 0, sizeof(char3) );
-            int x, y, w, attr;
-
-            if( ( ii = sscanf( ptcar, "%s %d %d %d %X %s %s", char1, &x, &y, &w, &attr,
-                               char2, char3 ) ) < 4 )
-            {
-                aErrorMsg.Printf( wxT( "Component Field error line %d, aborted" ),
-                                  aLine.LineNumber() );
-                continue;
-            }
-
-            GetField( fieldNdx )->SetTextPosition( wxPoint( x, y ) );
-            GetField( fieldNdx )->SetAttributes( attr );
-
-            if( (w == 0 ) || (ii == 4) )
-                w = GetDefaultTextSize();
-
-            GetField( fieldNdx )->SetSize( wxSize( w, w ) );
-            GetField( fieldNdx )->SetOrientation( TEXT_ORIENT_HORIZ );
-
-            if( char1[0] == 'V' )
-                GetField( fieldNdx )->SetOrientation( TEXT_ORIENT_VERT );
-
-            if( ii >= 7 )
-            {
-                if( *char2 == 'L' )
-                    hjustify = GR_TEXT_HJUSTIFY_LEFT;
-                else if( *char2 == 'R' )
-                    hjustify = GR_TEXT_HJUSTIFY_RIGHT;
-
-                if( char3[0] == 'B' )
-                    vjustify = GR_TEXT_VJUSTIFY_BOTTOM;
-                else if( char3[0] == 'T' )
-                    vjustify = GR_TEXT_VJUSTIFY_TOP;
-
-                GetField( fieldNdx )->SetItalic( char3[1] == 'I' );
-                GetField( fieldNdx )->SetBold( char3[2] == 'B' );
-                GetField( fieldNdx )->SetHorizJustify( hjustify );
-                GetField( fieldNdx )->SetVertJustify( vjustify );
-            }
-
-            if( fieldNdx == REFERENCE )
-                if( GetField( fieldNdx )->GetText()[0] == '#' )
-                    GetField( fieldNdx )->SetVisible( false );
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    if( sscanf( line, "%d %d %d", &m_unit, &m_Pos.x, &m_Pos.y ) != 3 )
-    {
-        aErrorMsg.Printf( wxT( "Component unit & pos error at line %d, aborted" ),
-                          aLine.LineNumber() );
-        return false;
-    }
-
-    if( !(line = aLine.ReadLine()) ||
-        sscanf( line, "%d %d %d %d",
-                &m_transform.x1,
-                &m_transform.y1,
-                &m_transform.x2,
-                &m_transform.y2 ) != 4 )
-    {
-        aErrorMsg.Printf( wxT( "Component orient error at line %d, aborted" ),
-                          aLine.LineNumber() );
-        return false;
-    }
-
-    if( newfmt )
-    {
-        if( !(line = aLine.ReadLine()) )
-            return false;
-
-        if( strnicmp( "$End", line, 4 ) != 0 )
-        {
-            aErrorMsg.Printf( wxT( "Component End expected at line %d, aborted" ),
-                              aLine.LineNumber() );
-            return false;
-        }
-    }
-
-    // ensure flags (mainly used in edit) are cleared.
-    // some changes have set the modified flag
-    m_Flags = 0;
-
-    return true;
-}
 
 
 EDA_RECT SCH_COMPONENT::GetBodyBoundingBox() const
@@ -1451,10 +1335,10 @@ EDA_RECT SCH_COMPONENT::GetBodyBoundingBox() const
 
     // H and W must be > 0:
     if( x2 < x1 )
-        EXCHG( x2, x1 );
+        std::swap( x2, x1 );
 
     if( y2 < y1 )
-        EXCHG( y2, y1 );
+        std::swap( y2, y1 );
 
     bBox.SetX( x1 );
     bBox.SetY( y1 );
@@ -1471,53 +1355,102 @@ const EDA_RECT SCH_COMPONENT::GetBoundingBox() const
     EDA_RECT bbox = GetBodyBoundingBox();
 
     for( size_t i = 0; i < m_Fields.size(); i++ )
-    {
         bbox.Merge( m_Fields[i].GetBoundingBox() );
-    }
 
     return bbox;
 }
 
 
-void SCH_COMPONENT::GetMsgPanelInfo( MSG_PANEL_ITEMS& aList )
+void SCH_COMPONENT::GetMsgPanelInfo( EDA_UNITS_T aUnits, MSG_PANEL_ITEMS& aList )
 {
+    wxString msg;
+
     // part and alias can differ if alias is not the root
     if( PART_SPTR part = m_part.lock() )
     {
-        LIB_ALIAS* alias = part->GetAlias( GetPartName() );
+        if( part.get() != dummy() )
+        {
+            LIB_ALIAS* alias = nullptr;
 
-        if( !alias )
-            return;
+            if( part->GetLib() && part->GetLib()->IsCache() )
+            {
+                wxString libId = GetLibId().Format();
+                libId.Replace( ":", "_" );
+                alias = part->GetAlias( libId );
+            }
+            else
+            {
+                alias = part->GetAlias( GetLibId().GetLibItemName() );
+            }
 
-        if( m_currentSheetPath )
-            aList.push_back( MSG_PANEL_ITEM( _( "Reference" ),
-                                             GetRef( m_currentSheetPath ),
+            if( !alias )
+                return;
+
+            if( g_CurrentSheet )
+                aList.push_back( MSG_PANEL_ITEM( _( "Reference" ), GetRef( g_CurrentSheet ),
+                                                 DARKCYAN ) );
+
+            msg = part->IsPower() ? _( "Power symbol" ) : _( "Value" );
+
+            aList.push_back( MSG_PANEL_ITEM( msg, GetField( VALUE )->GetShownText(), DARKCYAN ) );
+
+            // Display component reference in library and library
+            aList.push_back( MSG_PANEL_ITEM( _( "Name" ), GetLibId().GetLibItemName(), BROWN ) );
+
+            if( alias->GetName() != part->GetName() )
+                aList.push_back( MSG_PANEL_ITEM( _( "Alias of" ), part->GetName(), BROWN ) );
+
+            if( part->GetLib() && part->GetLib()->IsCache() )
+                aList.push_back( MSG_PANEL_ITEM( _( "Library" ),
+                                                 part->GetLib()->GetLogicalName(), RED ) );
+            else if( !m_lib_id.GetLibNickname().empty() )
+                aList.push_back( MSG_PANEL_ITEM( _( "Library" ), m_lib_id.GetLibNickname(),
+                                                 BROWN ) );
+            else
+                aList.push_back( MSG_PANEL_ITEM( _( "Library" ), _( "Undefined!!!" ), RED ) );
+
+            // Display the current associated footprint, if exists.
+            if( !GetField( FOOTPRINT )->IsVoid() )
+                msg = GetField( FOOTPRINT )->GetShownText();
+            else
+                msg = _( "<Unknown>" );
+
+            aList.push_back( MSG_PANEL_ITEM( _( "Footprint" ), msg, DARKRED ) );
+
+            // Display description of the component, and keywords found in lib
+            aList.push_back( MSG_PANEL_ITEM( _( "Description" ), alias->GetDescription(),
+                                             DARKCYAN ) );
+            aList.push_back( MSG_PANEL_ITEM( _( "Key words" ), alias->GetKeyWords(), DARKCYAN ) );
+        }
+    }
+    else
+    {
+        if( g_CurrentSheet )
+            aList.push_back( MSG_PANEL_ITEM( _( "Reference" ), GetRef( g_CurrentSheet ),
                                              DARKCYAN ) );
 
-        wxString msg = part->IsPower() ? _( "Power symbol" ) : _( "Value" );
+        aList.push_back( MSG_PANEL_ITEM( _( "Value" ), GetField( VALUE )->GetShownText(),
+                                         DARKCYAN ) );
+        aList.push_back( MSG_PANEL_ITEM( _( "Name" ), GetLibId().GetLibItemName(), BROWN ) );
 
-        aList.push_back( MSG_PANEL_ITEM( msg, GetField( VALUE )->GetShownText(), DARKCYAN ) );
+        wxString libNickname = GetLibId().GetLibNickname();
 
-        // Display component reference in library and library
-        aList.push_back( MSG_PANEL_ITEM( _( "Component" ), GetPartName(), BROWN ) );
-
-        if( alias->GetName() != part->GetName() )
-            aList.push_back( MSG_PANEL_ITEM( _( "Alias of" ), part->GetName(), BROWN ) );
-
-        aList.push_back( MSG_PANEL_ITEM( _( "Library" ), alias->GetLibraryName(), BROWN ) );
-
-        // Display the current associated footprint, if exists.
-        if( !GetField( FOOTPRINT )->IsVoid() )
-            msg = GetField( FOOTPRINT )->GetShownText();
+        if( libNickname.empty() )
+        {
+            aList.push_back( MSG_PANEL_ITEM( _( "Library" ), _( "No library defined!" ), RED ) );
+        }
         else
-            msg = _( "<Unknown>" );
-
-        aList.push_back( MSG_PANEL_ITEM( _( "Footprint" ), msg, DARKRED ) );
-
-        // Display description of the component, and keywords found in lib
-        aList.push_back( MSG_PANEL_ITEM( _( "Description" ), alias->GetDescription(), DARKCYAN ) );
-        aList.push_back( MSG_PANEL_ITEM( _( "Key words" ), alias->GetKeyWords(), DARKCYAN ) );
+        {
+            msg.Printf( _( "Symbol not found in %s!" ), libNickname );
+            aList.push_back( MSG_PANEL_ITEM( _( "Library" ), msg , RED ) );
+        }
     }
+}
+
+
+BITMAP_DEF SCH_COMPONENT::GetMenuImage() const
+{
+    return add_component_xpm;
 }
 
 
@@ -1526,17 +1459,15 @@ void SCH_COMPONENT::MirrorY( int aYaxis_position )
     int dx = m_Pos.x;
 
     SetOrientation( CMP_MIRROR_Y );
-    m_Pos.x -= aYaxis_position;
-    NEGATE( m_Pos.x );
-    m_Pos.x += aYaxis_position;
+    MIRROR( m_Pos.x, aYaxis_position );
     dx -= m_Pos.x;     // dx,0 is the move vector for this transform
 
     for( int ii = 0; ii < GetFieldCount(); ii++ )
     {
         // Move the fields to the new position because the component itself has moved.
-        wxPoint pos = GetField( ii )->GetTextPosition();
+        wxPoint pos = GetField( ii )->GetTextPos();
         pos.x -= dx;
-        GetField( ii )->SetTextPosition( pos );
+        GetField( ii )->SetTextPos( pos );
     }
 }
 
@@ -1546,17 +1477,15 @@ void SCH_COMPONENT::MirrorX( int aXaxis_position )
     int dy = m_Pos.y;
 
     SetOrientation( CMP_MIRROR_X );
-    m_Pos.y -= aXaxis_position;
-    NEGATE( m_Pos.y );
-    m_Pos.y += aXaxis_position;
+    MIRROR( m_Pos.y, aXaxis_position );
     dy -= m_Pos.y;     // dy,0 is the move vector for this transform
 
     for( int ii = 0; ii < GetFieldCount(); ii++ )
     {
         // Move the fields to the new position because the component itself has moved.
-        wxPoint pos = GetField( ii )->GetTextPosition();
+        wxPoint pos = GetField( ii )->GetTextPos();
         pos.y -= dy;
-        GetField( ii )->SetTextPosition( pos );
+        GetField( ii )->SetTextPos( pos );
     }
 }
 
@@ -1572,18 +1501,17 @@ void SCH_COMPONENT::Rotate( wxPoint aPosition )
     for( int ii = 0; ii < GetFieldCount(); ii++ )
     {
         // Move the fields to the new position because the component itself has moved.
-        wxPoint pos = GetField( ii )->GetTextPosition();
+        wxPoint pos = GetField( ii )->GetTextPos();
         pos.x -= prev.x - m_Pos.x;
         pos.y -= prev.y - m_Pos.y;
-        GetField( ii )->SetTextPosition( pos );
+        GetField( ii )->SetTextPos( pos );
     }
 }
 
 
-bool SCH_COMPONENT::Matches( wxFindReplaceData& aSearchData, void* aAuxData,
-                             wxPoint* aFindLocation )
+bool SCH_COMPONENT::Matches( wxFindReplaceData& aSearchData, void* aAuxData )
 {
-    wxLogTrace( traceFindItem, wxT( "  item " ) + GetSelectMenuText() );
+    wxLogTrace( traceFindItem, wxT( "  item " ) + GetSelectMenuText( MILLIMETRES ) );
 
     // Components are searchable via the child field and pin item text.
     return false;
@@ -1604,14 +1532,64 @@ void SCH_COMPONENT::GetEndPoints( std::vector <DANGLING_END_ITEM>& aItemList )
             if( pin->GetConvert() && m_convert && ( m_convert != pin->GetConvert() ) )
                 continue;
 
-            DANGLING_END_ITEM item( PIN_END, pin, GetPinPhysicalPosition( pin ) );
+            DANGLING_END_ITEM item( PIN_END, pin, GetPinPhysicalPosition( pin ), this );
             aItemList.push_back( item );
         }
     }
 }
 
 
-wxPoint SCH_COMPONENT::GetPinPhysicalPosition( LIB_PIN* Pin )
+bool SCH_COMPONENT::UpdateDanglingState( std::vector<DANGLING_END_ITEM>& aItemList )
+{
+    bool changed = false;
+
+    for( SCH_PIN& pin : m_pins )
+    {
+        bool previousState = pin.IsDangling();
+        pin.SetIsDangling( true );
+
+        wxPoint pos = m_transform.TransformCoordinate( pin.GetPosition() ) + m_Pos;
+
+        for( DANGLING_END_ITEM& each_item : aItemList )
+        {
+            // Some people like to stack pins on top of each other in a symbol to indicate
+            // internal connection. While technically connected, it is not particularly useful
+            // to display them that way, so skip any pins that are in the same symbol as this
+            // one.
+            if( each_item.GetParent() == this )
+                continue;
+
+            switch( each_item.GetType() )
+            {
+            case PIN_END:
+            case LABEL_END:
+            case SHEET_LABEL_END:
+            case WIRE_START_END:
+            case WIRE_END_END:
+            case NO_CONNECT_END:
+            case JUNCTION_END:
+
+                if( pos == each_item.GetPosition() )
+                    pin.SetIsDangling( false );
+
+                break;
+
+            default:
+                break;
+            }
+
+            if( !pin.IsDangling() )
+                break;
+        }
+
+        changed = ( changed || ( previousState != pin.IsDangling() ) );
+    }
+
+    return changed;
+}
+
+
+wxPoint SCH_COMPONENT::GetPinPhysicalPosition( const LIB_PIN* Pin ) const
 {
     wxCHECK_MSG( Pin != NULL && Pin->Type() == LIB_PIN_T, wxPoint( 0, 0 ),
                  wxT( "Cannot get physical position of pin." ) );
@@ -1620,52 +1598,17 @@ wxPoint SCH_COMPONENT::GetPinPhysicalPosition( LIB_PIN* Pin )
 }
 
 
-bool SCH_COMPONENT::IsSelectStateChanged( const wxRect& aRect )
-{
-    bool previousState = IsSelected();
-
-    EDA_RECT boundingBox = GetBoundingBox();
-
-    if( aRect.Intersects( boundingBox ) )
-        SetFlags( SELECTED );
-    else
-        ClearFlags( SELECTED );
-
-    return previousState != IsSelected();
-}
-
-
 void SCH_COMPONENT::GetConnectionPoints( std::vector< wxPoint >& aPoints ) const
 {
-    if( PART_SPTR part = m_part.lock() )
-    {
-        for( LIB_PIN* pin = part->GetNextPin(); pin; pin = part->GetNextPin( pin ) )
-        {
-            wxCHECK_RET( pin->Type() == LIB_PIN_T,
-                         wxT( "GetNextPin() did not return a pin object.  Bad programmer!" ) );
-
-            // Skip items not used for this part.
-            if( m_unit && pin->GetUnit() && ( pin->GetUnit() != m_unit ) )
-                continue;
-
-            if( m_convert && pin->GetConvert() && ( pin->GetConvert() != m_convert ) )
-                continue;
-
-            // Calculate the pin position relative to the component position and orientation.
-            aPoints.push_back( m_transform.TransformCoordinate( pin->GetPosition() ) + m_Pos );
-        }
-    }
-    else
-    {
-        wxCHECK_RET( 0,
-                 wxT( "Cannot add connection points to list.  Cannot find component <" ) +
-                 GetPartName() + wxT( "> in any of the loaded libraries." ) );
-    }
+    for( const SCH_PIN& pin : m_pins )
+        aPoints.push_back( m_transform.TransformCoordinate( pin.GetPosition() ) + m_Pos );
 }
 
 
 LIB_ITEM* SCH_COMPONENT::GetDrawItem( const wxPoint& aPosition, KICAD_T aType )
 {
+    UpdatePins();
+
     if( PART_SPTR part = m_part.lock() )
     {
         // Calculate the position relative to the component.
@@ -1678,17 +1621,15 @@ LIB_ITEM* SCH_COMPONENT::GetDrawItem( const wxPoint& aPosition, KICAD_T aType )
 }
 
 
-wxString SCH_COMPONENT::GetSelectMenuText() const
+wxString SCH_COMPONENT::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
-    wxString tmp;
-    tmp.Printf( _( "Component %s, %s" ),
-                GetChars( GetPartName() ),
-                GetChars( GetField( REFERENCE )->GetShownText() ) );
-    return tmp;
+    return wxString::Format( _( "Symbol %s, %s" ),
+                             GetLibId().GetLibItemName().wx_str(),
+                             GetField( REFERENCE )->GetShownText() );
 }
 
 
-SEARCH_RESULT SCH_COMPONENT::Visit( INSPECTOR* aInspector, const void* aTestData,
+SEARCH_RESULT SCH_COMPONENT::Visit( INSPECTOR aInspector, void* aTestData,
                                     const KICAD_T aFilterTypes[] )
 {
     KICAD_T     stype;
@@ -1696,56 +1637,53 @@ SEARCH_RESULT SCH_COMPONENT::Visit( INSPECTOR* aInspector, const void* aTestData
     for( const KICAD_T* p = aFilterTypes; (stype = *p) != EOT; ++p )
     {
         // If caller wants to inspect component type or and component children types.
-        if( stype == Type() )
+        if( stype == SCH_LOCATE_ANY_T || stype == Type() )
         {
-            if( SEARCH_QUIT == aInspector->Inspect( this, aTestData ) )
+            if( SEARCH_QUIT == aInspector( this, aTestData ) )
                 return SEARCH_QUIT;
         }
 
-        switch( stype )
+        if( stype == SCH_LOCATE_ANY_T || stype == SCH_FIELD_T )
         {
-        case SCH_FIELD_T:
             // Test the bounding boxes of fields if they are visible and not empty.
             for( int ii = 0; ii < GetFieldCount(); ii++ )
             {
-                if( SEARCH_QUIT == aInspector->Inspect( GetField( ii ), (void*) this ) )
+                if( SEARCH_QUIT == aInspector( GetField( ii ), (void*) this ) )
                     return SEARCH_QUIT;
             }
-            break;
+        }
 
-        case SCH_FIELD_LOCATE_REFERENCE_T:
-            if( SEARCH_QUIT == aInspector->Inspect( GetField( REFERENCE ), (void*) this ) )
+        if( stype == SCH_FIELD_LOCATE_REFERENCE_T )
+        {
+            if( SEARCH_QUIT == aInspector( GetField( REFERENCE ), (void*) this ) )
                 return SEARCH_QUIT;
-            break;
+        }
 
-        case SCH_FIELD_LOCATE_VALUE_T:
-            if( SEARCH_QUIT == aInspector->Inspect( GetField( VALUE ), (void*) this ) )
+        if( stype == SCH_FIELD_LOCATE_VALUE_T )
+        {
+            if( SEARCH_QUIT == aInspector( GetField( VALUE ), (void*) this ) )
                 return SEARCH_QUIT;
-            break;
+        }
 
-        case SCH_FIELD_LOCATE_FOOTPRINT_T:
-            if( SEARCH_QUIT == aInspector->Inspect( GetField( FOOTPRINT ), (void*) this ) )
+        if( stype == SCH_FIELD_LOCATE_FOOTPRINT_T )
+        {
+            if( SEARCH_QUIT == aInspector( GetField( FOOTPRINT ), (void*) this ) )
                 return SEARCH_QUIT;
-            break;
+        }
 
+        if( stype == SCH_FIELD_LOCATE_DATASHEET_T )
+        {
+            if( SEARCH_QUIT == aInspector( GetField( DATASHEET ), (void*) this ) )
+                return SEARCH_QUIT;
+        }
 
-        case LIB_PIN_T:
-            if( PART_SPTR part = m_part.lock() )
+        if( stype == SCH_LOCATE_ANY_T || stype == SCH_PIN_T )
+        {
+            for( SCH_PIN& pin : m_pins )
             {
-                LIB_PINS pins;
-
-                part->GetPins( pins, m_unit, m_convert );
-
-                for( size_t i = 0;  i < pins.size();  i++ )
-                {
-                    if( SEARCH_QUIT == aInspector->Inspect( pins[ i ], (void*) this ) )
-                        return SEARCH_QUIT;
-                }
+                if( SEARCH_QUIT == aInspector( &pin, (void*) this ) )
+                    return SEARCH_QUIT;
             }
-            break;
-
-        default:
-            break;
         }
     }
 
@@ -1776,14 +1714,14 @@ void SCH_COMPONENT::GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
             item->m_SheetPath = *aSheetPath;
             item->m_Type = NET_PIN;
             item->m_Link = (SCH_ITEM*) this;
-            item->m_ElectricalType = pin->GetType();
+            item->m_ElectricalPinType = pin->GetType();
             item->m_PinNum = pin->GetNumber();
             item->m_Label = pin->GetName();
             item->m_Start = item->m_End = pos;
 
             aNetListItems.push_back( item );
 
-            if( ( (int) pin->GetType() == (int) PIN_POWER_IN ) && !pin->IsVisible() )
+            if( pin->IsPowerConnection() )
             {
                 // There is an associated PIN_LABEL.
                 item = new NETLIST_OBJECT();
@@ -1845,7 +1783,7 @@ bool SCH_COMPONENT::operator!=( const SCH_COMPONENT& aComponent ) const
 }
 
 
-SCH_ITEM& SCH_COMPONENT::operator=( const SCH_ITEM& aItem )
+SCH_COMPONENT& SCH_COMPONENT::operator=( const SCH_ITEM& aItem )
 {
     wxCHECK_MSG( Type() == aItem.Type(), *this,
                  wxT( "Cannot assign object type " ) + aItem.GetClass() + wxT( " to type " ) +
@@ -1857,7 +1795,7 @@ SCH_ITEM& SCH_COMPONENT::operator=( const SCH_ITEM& aItem )
 
         SCH_COMPONENT* c = (SCH_COMPONENT*) &aItem;
 
-        m_part_name = c->m_part_name;
+        m_lib_id    = c->m_lib_id;
         m_part      = c->m_part;
         m_Pos       = c->m_Pos;
         m_unit      = c->m_unit;
@@ -1866,12 +1804,20 @@ SCH_ITEM& SCH_COMPONENT::operator=( const SCH_ITEM& aItem )
 
         m_PathsAndReferences = c->m_PathsAndReferences;
 
-        m_Fields = c->m_Fields;    // std::vector's assignment operator.
+        m_Fields    = c->m_Fields;    // std::vector's assignment operator
 
         // Reparent fields after assignment to new component.
-        for( int ii = 0; ii < GetFieldCount();  ++ii )
+        for( SCH_FIELD& field : m_Fields )
+            field.SetParent( this );
+
+        m_pins = c->m_pins;           // std::vector's assignment operator
+        m_pinMap.clear();
+
+        // Re-parent the pins and build the pinMap
+        for( unsigned i = 0; i < m_pins.size(); ++i )
         {
-            GetField( ii )->SetParent( this );
+            m_pins[ i ].SetParent( this );
+            m_pinMap[ m_pins[ i ].GetLibPin() ] = i;
         }
     }
 
@@ -1909,13 +1855,11 @@ bool SCH_COMPONENT::HitTest( const EDA_RECT& aRect, bool aContained, int aAccura
 
 bool SCH_COMPONENT::doIsConnected( const wxPoint& aPosition ) const
 {
-    std::vector< wxPoint > pts;
+    wxPoint new_pos = m_transform.InverseTransform().TransformCoordinate( aPosition - m_Pos );
 
-    GetConnectionPoints( pts );
-
-    for( size_t i = 0;  i < pts.size();  i++ )
+    for( const SCH_PIN& pin : m_pins )
     {
-        if( pts[i] == aPosition )
+        if( pin.GetPosition() == new_pos )
             return true;
     }
 
@@ -1925,8 +1869,7 @@ bool SCH_COMPONENT::doIsConnected( const wxPoint& aPosition ) const
 
 bool SCH_COMPONENT::IsInNetlist() const
 {
-    SCH_FIELD* rf = GetField( REFERENCE );
-    return ! rf->GetText().StartsWith( wxT( "#" ) );
+    return m_isInNetlist;
 }
 
 
@@ -1937,12 +1880,96 @@ void SCH_COMPONENT::Plot( PLOTTER* aPlotter )
     if( PART_SPTR part = m_part.lock() )
     {
         temp = GetTransform();
+        aPlotter->StartBlock( nullptr );
 
         part->Plot( aPlotter, GetUnit(), GetConvert(), m_Pos, temp );
 
-        for( size_t i = 0; i < m_Fields.size(); i++ )
+        for( SCH_FIELD field : m_Fields )
+            field.Plot( aPlotter );
+
+        aPlotter->EndBlock( nullptr );
+    }
+}
+
+
+bool SCH_COMPONENT::HasBrightenedPins()
+{
+    for( const SCH_PIN& pin : m_pins )
+    {
+        if( pin.IsBrightened() )
+            return true;
+    }
+
+    return false;
+}
+
+
+void SCH_COMPONENT::ClearBrightenedPins()
+{
+    for( SCH_PIN& pin : m_pins )
+        pin.ClearBrightened();
+}
+
+
+void SCH_COMPONENT::BrightenPin( LIB_PIN* aPin )
+{
+    if( m_pinMap.count( aPin ) )
+        m_pins[ m_pinMap.at( aPin ) ].SetBrightened();
+}
+
+
+void SCH_COMPONENT::ClearHighlightedPins()
+{
+    for( SCH_PIN& pin : m_pins )
+        pin.ClearHighlighted();
+}
+
+
+bool SCH_COMPONENT::HasHighlightedPins()
+{
+    for( const SCH_PIN& pin : m_pins )
+    {
+        if( pin.IsHighlighted() )
+            return true;
+    }
+
+    return false;
+}
+
+
+void SCH_COMPONENT::HighlightPin( LIB_PIN* aPin )
+{
+    if( m_pinMap.count( aPin ) )
+        m_pins[ m_pinMap.at( aPin ) ].SetHighlighted();
+}
+
+
+bool SCH_COMPONENT::ClearAllHighlightFlags()
+{
+    bool retVal = false;
+
+    if( IsHighlighted() )
+    {
+        ClearFlags( HIGHLIGHTED );
+        retVal = true;
+    }
+
+    // Clear the HIGHLIGHTED flag of pins
+    if( HasHighlightedPins() )
+    {
+        ClearHighlightedPins();
+        retVal = true;
+    }
+
+    // Clear the HIGHLIGHTED flag of other items, currently only fields
+    for( SCH_FIELD& each_field : m_Fields )
+    {
+        if( each_field.IsHighlighted() )
         {
-            m_Fields[i].Plot( aPlotter );
+            each_field.ClearFlags( HIGHLIGHTED );
+            retVal = true;
         }
     }
+
+    return retVal;
 }

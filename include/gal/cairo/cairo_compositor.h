@@ -2,6 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2013 CERN
+ * Copyright (C) 2019 KiCad Developers, see AUTHORS.txt for contributors.
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -32,8 +33,10 @@
 #define CAIRO_COMPOSITOR_H_
 
 #include <gal/compositor.h>
+#include <gal/gal_display_options.h>
 #include <cairo.h>
-#include <boost/smart_ptr/shared_array.hpp>
+
+#include <cstdint>
 #include <deque>
 
 namespace KIGFX
@@ -45,28 +48,50 @@ public:
     virtual ~CAIRO_COMPOSITOR();
 
     /// @copydoc COMPOSITOR::Initialize()
-    virtual void Initialize();
+    virtual void Initialize() override;
 
     /// @copydoc COMPOSITOR::Resize()
-    virtual void Resize( unsigned int aWidth, unsigned int aHeight );
+    virtual void Resize( unsigned int aWidth, unsigned int aHeight ) override;
 
     /// @copydoc COMPOSITOR::CreateBuffer()
-    virtual unsigned int CreateBuffer();
+    virtual unsigned int CreateBuffer() override;
 
     /// @copydoc COMPOSITOR::GetBuffer()
-    inline virtual unsigned int GetBuffer() const
+    inline virtual unsigned int GetBuffer() const override
     {
         return m_current + 1;
     }
 
     /// @copydoc COMPOSITOR::SetBuffer()
-    virtual void SetBuffer( unsigned int aBufferHandle );
+    virtual void SetBuffer( unsigned int aBufferHandle ) override;
+
+    /// @copydoc COMPOSITOR::Begin()
+    virtual void Begin() override;
 
     /// @copydoc COMPOSITOR::ClearBuffer()
-    virtual void ClearBuffer();
+    virtual void ClearBuffer( const COLOR4D& aColor ) override;
 
     /// @copydoc COMPOSITOR::DrawBuffer()
-    virtual void DrawBuffer( unsigned int aBufferHandle );
+    virtual void DrawBuffer( unsigned int aBufferHandle ) override;
+
+    /// @copydoc COMPOSITOR::Present()
+    virtual void Present() override;
+
+    void SetAntialiasingMode( CAIRO_ANTIALIASING_MODE aMode ); // clears all buffers
+    CAIRO_ANTIALIASING_MODE GetAntialiasingMode() const
+    {
+        switch( m_currentAntialiasingMode )
+        {
+        case CAIRO_ANTIALIAS_FAST:
+            return CAIRO_ANTIALIASING_MODE::FAST;
+        case CAIRO_ANTIALIAS_GOOD:
+            return CAIRO_ANTIALIASING_MODE::GOOD;
+        case CAIRO_ANTIALIAS_BEST:
+            return CAIRO_ANTIALIASING_MODE::BEST;
+        default:
+            return CAIRO_ANTIALIASING_MODE::NONE;
+        }
+    }
 
     /**
      * Function SetMainContext()
@@ -84,7 +109,7 @@ public:
     }
 
 protected:
-    typedef boost::shared_array<unsigned int> BitmapPtr;
+    typedef uint32_t* BitmapPtr;
     typedef struct
     {
         cairo_t*            context;        ///< Main texture handle
@@ -109,6 +134,8 @@ protected:
 
     unsigned int m_stride;              ///< Stride to use given the desired format and width
     unsigned int m_bufferSize;          ///< Amount of memory needed to store a buffer
+
+    cairo_antialias_t       m_currentAntialiasingMode;
 
     /**
      * Function clean()

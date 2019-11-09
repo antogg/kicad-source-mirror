@@ -1,14 +1,14 @@
-/*
+/**
  * @file component_references_lister.cpp
- * @brief Code for creating a flat list of components needed for annotation and BOM.
+ * @brief functions to create a component flat list and to annotate schematic.
  */
 
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2011 jean-pierre Charras <jean-pierre.charras@gipsa-lab.inpg.fr>
+ * Copyright (C) 1992-2018 jean-pierre Charras <jp.charras at wanadoo.fr>
  * Copyright (C) 1992-2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,16 +28,19 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <sch_reference_list.h>
 
 #include <wx/regex.h>
 #include <algorithm>
 #include <vector>
+#include <unordered_set>
 
 #include <fctsys.h>
-#include <kicad_string.h>
-#include <wxEeschemaStruct.h>
-#include <netlist.h>
+#include <refdes_utils.h>
+#include <reporter.h>
+
 #include <sch_component.h>
+#include <sch_edit_frame.h>
 
 
 //#define USE_OLD_ALGO
@@ -111,7 +114,7 @@ bool SCH_REFERENCE_LIST::sortByReferenceOnly( const SCH_REFERENCE& item1,
 {
     int             ii;
 
-    ii = RefDesStringCompare( item1.GetRef(), item2.GetRef() );
+    ii = UTIL::RefDesStringCompare( item1.GetRef(), item2.GetRef() );
 
     if( ii == 0 )
     {
@@ -193,19 +196,6 @@ void SCH_REFERENCE_LIST::RemoveSubComponentsFromList()
 }
 
 
-void SCH_REFERENCE_LIST::ResetHiddenReferences()
-{
-    for( unsigned ii = 0; ii < componentFlatList.size(); ii++ )
-    {
-        if( componentFlatList[ii].GetRefStr()[0] == '#' )
-        {
-            componentFlatList[ii].m_IsNew  = true;
-            componentFlatList[ii].m_NumRef = 0;
-        }
-    }
-}
-
-
 void SCH_REFERENCE_LIST::GetRefsInUse( int aIndex, std::vector< int >& aIdList, int aMinRefId )
 {
     aIdList.clear();
@@ -283,16 +273,29 @@ int SCH_REFERENCE_LIST::CreateFirstFreeRefId( std::vector<int>& aIdList, int aFi
 }
 
 
-void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId  )
+// A helper function to build a full reference string of a SCH_REFERENCE item
+wxString buildFullReference( const SCH_REFERENCE& aItem, int aUnitNumber = -1 )
+{
+    wxString fullref;
+    fullref = aItem.GetRef() + aItem.GetRefNumber();
+
+    if( aUnitNumber < 0 )
+        fullref << ".." << aItem.GetUnit();
+    else
+        fullref << ".." << aUnitNumber;
+
+    return fullref;
+}
+
+
+void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId, int aStartNumber,
+      SCH_MULTI_UNIT_REFERENCE_MAP aLockedUnitMap )
 {
     if ( componentFlatList.size() == 0 )
         return;
 
     int LastReferenceNumber = 0;
     int NumberOfUnits, Unit;
-
-    // Components with an invisible reference (power...) always are re-annotated.
-    ResetHiddenReferences();
 
     /* calculate index of the first component with the same reference prefix
      * than the current component.  All components having the same reference
@@ -311,11 +314,25 @@ void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId  )
 
     LastReferenceNumber = GetLastReference( first, minRefId );
 #else
-    int minRefId = 1;
+    int minRefId;
 
     // when using sheet number, ensure ref number >= sheet number* aSheetIntervalId
     if( aUseSheetNum )
         minRefId = componentFlatList[first].m_SheetNum * aSheetIntervalId + 1;
+    else
+        minRefId = aStartNumber + 1;
+
+    // For multi units components, when "keep order of multi unit" option is selected,
+    // store the list of already used full references.
+    // The algorithm try to allocate the new reference to components having the same
+    // old reference.
+    // This algo works fine as long as the previous annotation has no duplicates.
+    // But when a hierarchy is reannotated with this option, the previous anotation can
+    // have duplicate references, and obviously we must fix these duplicate.
+    // therefore do not try to allocate a full reference more than once when trying
+    // to keep this order of multi units.
+    // inUseRefs keep trace of previously allocated references
+    std::unordered_set<wxString> inUseRefs;
 
     // This is the list of all Id already in use for a given reference prefix.
     // Will be refilled for each new reference prefix.
@@ -324,11 +341,32 @@ void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId  )
 #endif
     for( unsigned ii = 0; ii < componentFlatList.size(); ii++ )
     {
-        if( componentFlatList[ii].m_Flag )
+        auto& ref_unit = componentFlatList[ii];
+
+        if( ref_unit.m_Flag )
             continue;
 
-        if(  ( componentFlatList[first].CompareRef( componentFlatList[ii] ) != 0 )
-          || ( aUseSheetNum && ( componentFlatList[first].m_SheetNum != componentFlatList[ii].m_SheetNum ) )  )
+        // Check whether this component is in aLockedUnitMap.
+        SCH_REFERENCE_LIST* lockedList = NULL;
+        for( SCH_MULTI_UNIT_REFERENCE_MAP::value_type& pair : aLockedUnitMap )
+        {
+            unsigned n_refs = pair.second.GetCount();
+
+            for( unsigned thisRefI = 0; thisRefI < n_refs; ++thisRefI )
+            {
+                SCH_REFERENCE &thisRef = pair.second[thisRefI];
+
+                if( thisRef.IsSameInstance( ref_unit ) )
+                {
+                    lockedList = &pair.second;
+                    break;
+                }
+            }
+            if( lockedList != NULL ) break;
+        }
+
+        if(  ( componentFlatList[first].CompareRef( ref_unit ) != 0 )
+          || ( aUseSheetNum && ( componentFlatList[first].m_SheetNum != ref_unit.m_SheetNum ) )  )
         {
             // New reference found: we need a new ref number for this reference
             first = ii;
@@ -337,98 +375,156 @@ void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId  )
 
             // when using sheet number, ensure ref number >= sheet number* aSheetIntervalId
             if( aUseSheetNum )
-                minRefId = componentFlatList[ii].m_SheetNum * aSheetIntervalId;
+                minRefId = ref_unit.m_SheetNum * aSheetIntervalId;
 
-            LastReferenceNumber = componentFlatList.GetLastReference( ii, minRefId );
+            LastReferenceNumber = GetLastReference( ii, minRefId );
+
 #else
-            minRefId = 1;
-
             // when using sheet number, ensure ref number >= sheet number* aSheetIntervalId
             if( aUseSheetNum )
-                minRefId = componentFlatList[ii].m_SheetNum * aSheetIntervalId + 1;
+                minRefId = ref_unit.m_SheetNum * aSheetIntervalId + 1;
+            else
+                minRefId = aStartNumber + 1;
 
             GetRefsInUse( first, idList, minRefId );
 #endif
         }
 
         // Annotation of one part per package components (trivial case).
-        if( componentFlatList[ii].GetLibComponent()->GetUnitCount() <= 1 )
+        if( ref_unit.GetLibPart()->GetUnitCount() <= 1 )
         {
-            if( componentFlatList[ii].m_IsNew )
+            if( ref_unit.m_IsNew )
             {
 #ifdef USE_OLD_ALGO
                 LastReferenceNumber++;
 #else
                 LastReferenceNumber = CreateFirstFreeRefId( idList, minRefId );
 #endif
-                componentFlatList[ii].m_NumRef = LastReferenceNumber;
+                ref_unit.m_NumRef = LastReferenceNumber;
             }
 
-            componentFlatList[ii].m_Unit  = 1;
-            componentFlatList[ii].m_Flag  = 1;
-            componentFlatList[ii].m_IsNew = false;
+            ref_unit.m_Unit  = 1;
+            ref_unit.m_Flag  = 1;
+            ref_unit.m_IsNew = false;
             continue;
         }
 
         // Annotation of multi-unit parts ( n units per part ) (complex case)
-        NumberOfUnits = componentFlatList[ii].GetLibComponent()->GetUnitCount();
+        NumberOfUnits = ref_unit.GetLibPart()->GetUnitCount();
 
-        if( componentFlatList[ii].m_IsNew )
+        if( ref_unit.m_IsNew )
         {
 #ifdef USE_OLD_ALGO
             LastReferenceNumber++;
 #else
             LastReferenceNumber = CreateFirstFreeRefId( idList, minRefId );
 #endif
-            componentFlatList[ii].m_NumRef = LastReferenceNumber;
+            ref_unit.m_NumRef = LastReferenceNumber;
 
-            if( !componentFlatList[ii].IsUnitsLocked() )
-                componentFlatList[ii].m_Unit = 1;
+            if( !ref_unit.IsUnitsLocked() )
+                ref_unit.m_Unit = 1;
 
-            componentFlatList[ii].m_Flag = 1;
+            ref_unit.m_Flag = 1;
         }
 
-        /* search for others units of this component.
-         * we search for others parts that have the same value and the same
-         * reference prefix (ref without ref number)
-         */
-        for( Unit = 1; Unit <= NumberOfUnits; Unit++ )
+        // If this component is in aLockedUnitMap, copy the annotation to all
+        // components that are not it
+        if( lockedList != NULL )
         {
-            if( componentFlatList[ii].m_Unit == Unit )
-                continue;
+            unsigned n_refs = lockedList->GetCount();
 
-            int found = FindUnit( ii, Unit );
-
-            if( found >= 0 )
-                continue; // this unit exists for this reference (unit already annotated)
-
-            // Search a component to annotate ( same prefix, same value, not annotated)
-            for( unsigned jj = ii + 1; jj < componentFlatList.size(); jj++ )
+            for( unsigned thisRefI = 0; thisRefI < n_refs; ++thisRefI )
             {
-                if( componentFlatList[jj].m_Flag )    // already tested
-                    continue;
+                SCH_REFERENCE &thisRef = (*lockedList)[thisRefI];
 
-                if( componentFlatList[ii].CompareRef( componentFlatList[jj] ) != 0 )
-                    continue;
-
-                if( componentFlatList[jj].CompareValue( componentFlatList[ii] ) != 0 )
-                    continue;
-
-                if( componentFlatList[jj].CompareLibName( componentFlatList[ii] ) != 0 )
-                    continue;
-
-                if( !componentFlatList[jj].m_IsNew )
-                    continue;
-
-                // Component without reference number found, annotate it if possible
-                if( !componentFlatList[jj].IsUnitsLocked()
-                    || ( componentFlatList[jj].m_Unit == Unit ) )
+                if( thisRef.IsSameInstance( ref_unit ) )
                 {
-                    componentFlatList[jj].m_NumRef = componentFlatList[ii].m_NumRef;
-                    componentFlatList[jj].m_Unit   = Unit;
-                    componentFlatList[jj].m_Flag   = 1;
-                    componentFlatList[jj].m_IsNew  = false;
-                    break;
+                    // This is the component we're currently annotating. Hold the unit!
+                    ref_unit.m_Unit = thisRef.m_Unit;
+                    // lock this new full reference
+                    inUseRefs.insert( buildFullReference( ref_unit ) );
+                }
+
+                if( thisRef.CompareValue( ref_unit ) != 0 )
+                    continue;
+
+                if( thisRef.CompareLibName( ref_unit ) != 0 )
+                    continue;
+
+                // Find the matching component
+                for( unsigned jj = ii + 1; jj < componentFlatList.size(); jj++ )
+                {
+                    if( ! thisRef.IsSameInstance( componentFlatList[jj] ) )
+                        continue;
+
+                    wxString ref_candidate = buildFullReference( ref_unit, thisRef.m_Unit );
+
+                    // propagate the new reference and unit selection to the "old" component,
+                    // if this new full reference is not already used (can happens when initial
+                    // multiunits components have duplicate references)
+                    if( inUseRefs.find( ref_candidate ) == inUseRefs.end() )
+                    {
+                        componentFlatList[jj].m_NumRef = ref_unit.m_NumRef;
+                        componentFlatList[jj].m_Unit = thisRef.m_Unit;
+                        componentFlatList[jj].m_IsNew = false;
+                        componentFlatList[jj].m_Flag = 1;
+                        // lock this new full reference
+                        inUseRefs.insert( ref_candidate );
+                        break;
+                    }
+                }
+            }
+        }
+        else
+        {
+            /* search for others units of this component.
+            * we search for others parts that have the same value and the same
+            * reference prefix (ref without ref number)
+            */
+            for( Unit = 1; Unit <= NumberOfUnits; Unit++ )
+            {
+                if( ref_unit.m_Unit == Unit )
+                    continue;
+
+                int found = FindUnit( ii, Unit );
+
+                if( found >= 0 )
+                    continue; // this unit exists for this reference (unit already annotated)
+
+                // Search a component to annotate ( same prefix, same value, not annotated)
+                for( unsigned jj = ii + 1; jj < componentFlatList.size(); jj++ )
+                {
+                    auto& cmp_unit = componentFlatList[jj];
+
+                    if( cmp_unit.m_Flag )    // already tested
+                        continue;
+
+                    if( cmp_unit.CompareRef( ref_unit ) != 0 )
+                        continue;
+
+                    if( cmp_unit.CompareValue( ref_unit ) != 0 )
+                        continue;
+
+                    if( cmp_unit.CompareLibName( ref_unit ) != 0 )
+                        continue;
+
+                    if( aUseSheetNum &&
+                            cmp_unit.GetSheetPath().Cmp( ref_unit.GetSheetPath() ) != 0 )
+                        continue;
+
+                    if( !cmp_unit.m_IsNew )
+                        continue;
+
+                    // Component without reference number found, annotate it if possible
+                    if( !cmp_unit.IsUnitsLocked()
+                        || ( cmp_unit.m_Unit == Unit ) )
+                    {
+                        cmp_unit.m_NumRef = ref_unit.m_NumRef;
+                        cmp_unit.m_Unit   = Unit;
+                        cmp_unit.m_Flag   = 1;
+                        cmp_unit.m_IsNew  = false;
+                        break;
+                    }
                 }
             }
         }
@@ -436,7 +532,7 @@ void SCH_REFERENCE_LIST::Annotate( bool aUseSheetNum, int aSheetIntervalId  )
 }
 
 
-int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
+int SCH_REFERENCE_LIST::CheckAnnotation( REPORTER& aReporter )
 {
     int            error = 0;
     wxString       tmp;
@@ -465,8 +561,8 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
               && ( componentFlatList[ii].m_Unit < 0x7FFFFFFF )  )
             {
                 msg.Printf( _( "Item not annotated: %s%s (unit %d)\n" ),
-                            GetChars( componentFlatList[ii].GetRef() ),
-                            GetChars( tmp ),
+                            componentFlatList[ii].GetRef(),
+                            tmp,
                             componentFlatList[ii].m_Unit );
             }
             else
@@ -476,9 +572,7 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
                             GetChars( tmp ) );
             }
 
-            if( aMessageList )
-                aMessageList->Add( msg + wxT( "\n" ) );
-
+            aReporter.Report( msg, REPORTER::RPT_WARNING );
             error++;
             break;
         }
@@ -486,7 +580,7 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
         // Error if unit number selected does not exist ( greater than the  number of
         // parts in the component ).  This can happen if a component has changed in a
         // library after a previous annotation.
-        if( std::max( componentFlatList[ii].GetLibComponent()->GetUnitCount(), 1 )
+        if( std::max( componentFlatList[ii].GetLibPart()->GetUnitCount(), 1 )
           < componentFlatList[ii].m_Unit )
         {
             if( componentFlatList[ii].m_NumRef >= 0 )
@@ -494,15 +588,13 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
             else
                 tmp = wxT( "?" );
 
-            msg.Printf( _( "Error item %s%s unit %d and no more than %d parts\n" ),
-                        GetChars( componentFlatList[ii].GetRef() ),
-                        GetChars( tmp ),
+            msg.Printf( _( "Error: symbol %s%s unit %d and symbol has only %d units defined\n" ),
+                        componentFlatList[ii].GetRef(),
+                        tmp,
                         componentFlatList[ii].m_Unit,
-                        componentFlatList[ii].GetLibComponent()->GetUnitCount() );
+                        componentFlatList[ii].GetLibPart()->GetUnitCount() );
 
-            if( aMessageList )
-                aMessageList->Add( msg );
-
+            aReporter.Report( msg, REPORTER::RPT_ERROR );
             error++;
             break;
         }
@@ -514,7 +606,7 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
     // count the duplicated elements (if all are annotated)
     int imax = componentFlatList.size() - 1;
 
-    for( int ii = 0; (ii < imax) && (error < 4); ii++ )
+    for( int ii = 0; ii < imax; ii++ )
     {
         msg.Empty();
         tmp.Empty();
@@ -535,28 +627,26 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
              && ( componentFlatList[ii].m_Unit < 0x7FFFFFFF ) )
             {
                 msg.Printf( _( "Multiple item %s%s (unit %d)\n" ),
-                            GetChars( componentFlatList[ii].GetRef() ),
-                            GetChars( tmp ),
+                            componentFlatList[ii].GetRef(),
+                            tmp,
                             componentFlatList[ii].m_Unit );
             }
             else
             {
                 msg.Printf( _( "Multiple item %s%s\n" ),
-                            GetChars( componentFlatList[ii].GetRef() ),
-                            GetChars( tmp ) );
+                            componentFlatList[ii].GetRef(),
+                            tmp );
             }
 
-            if( aMessageList )
-                aMessageList->Add( msg );
-
+            aReporter.Report( msg, REPORTER::RPT_ERROR );
             error++;
             continue;
         }
 
         /* Test error if units are different but number of parts per package
          * too high (ex U3 ( 1 part) and we find U3B this is an error) */
-        if(  componentFlatList[ii].GetLibComponent()->GetUnitCount()
-          != componentFlatList[ii + 1].GetLibComponent()->GetUnitCount()  )
+        if(  componentFlatList[ii].GetLibPart()->GetUnitCount()
+          != componentFlatList[ii + 1].GetLibPart()->GetUnitCount()  )
         {
             if( componentFlatList[ii].m_NumRef >= 0 )
                 tmp << componentFlatList[ii].m_NumRef;
@@ -578,9 +668,7 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
                             GetChars( tmp ) );
             }
 
-            if( aMessageList )
-                aMessageList->Add( msg );
-
+            aReporter.Report( msg, REPORTER::RPT_ERROR );
             error++;
         }
 
@@ -590,20 +678,16 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
         if( componentFlatList[ii].CompareValue( componentFlatList[next] ) != 0 )
         {
             msg.Printf( _( "Different values for %s%d%s (%s) and %s%d%s (%s)" ),
-                        GetChars( componentFlatList[ii].GetRef() ),
+                        componentFlatList[ii].GetRef(),
                         componentFlatList[ii].m_NumRef,
-                        GetChars( LIB_PART::SubReference(
-                                  componentFlatList[ii].m_Unit ) ),
-                        GetChars( componentFlatList[ii].m_Value->GetText() ),
-                        GetChars( componentFlatList[next].GetRef() ),
+                        LIB_PART::SubReference( componentFlatList[ii].m_Unit ),
+                        componentFlatList[ii].m_Value->GetText(),
+                        componentFlatList[next].GetRef(),
                         componentFlatList[next].m_NumRef,
-                        GetChars( LIB_PART::SubReference(
-                                  componentFlatList[next].m_Unit ) ),
-                        GetChars( componentFlatList[next].m_Value->GetText() ) );
+                        LIB_PART::SubReference( componentFlatList[next].m_Unit ),
+                        componentFlatList[next].m_Value->GetText() );
 
-            if( aMessageList )
-                aMessageList->Add( msg + wxT( "\n" ));
-
+            aReporter.Report( msg, REPORTER::RPT_ERROR );
             error++;
         }
     }
@@ -611,7 +695,7 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
     // count the duplicated time stamps
     SortByTimeStamp();
 
-    for( int ii = 0; ( ii < imax ) && ( error < 4 ); ii++ )
+    for( int ii = 0; ii < imax; ii++ )
     {
         if(  ( componentFlatList[ii].m_TimeStamp != componentFlatList[ii + 1].m_TimeStamp )
           || ( componentFlatList[ii].GetSheetPath() != componentFlatList[ii + 1].GetSheetPath() )  )
@@ -625,14 +709,13 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
                           componentFlatList[ii].m_TimeStamp );
 
         msg.Printf( _( "Duplicate time stamp (%s) for %s%d and %s%d" ),
-                    GetChars( full_path ),
-                    GetChars( componentFlatList[ii].GetRef() ), componentFlatList[ii].m_NumRef,
-                    GetChars( componentFlatList[ii + 1].GetRef() ),
+                    full_path,
+                    componentFlatList[ii].GetRef(),
+                    componentFlatList[ii].m_NumRef,
+                    componentFlatList[ii + 1].GetRef(),
                     componentFlatList[ii + 1].m_NumRef );
 
-        if( aMessageList )
-            aMessageList->Add( msg + wxT( "\n" ));
-
+        aReporter.Report( msg, REPORTER::RPT_WARNING );
         error++;
     }
 
@@ -640,13 +723,14 @@ int SCH_REFERENCE_LIST::CheckAnnotation( wxArrayString* aMessageList )
 }
 
 
-SCH_REFERENCE::SCH_REFERENCE( SCH_COMPONENT* aComponent, LIB_PART*      aLibComponent,
+SCH_REFERENCE::SCH_REFERENCE( SCH_COMPONENT* aComponent, LIB_PART* aLibPart,
                               SCH_SHEET_PATH& aSheetPath )
 {
-    wxASSERT( aComponent != NULL && aLibComponent != NULL );
+    wxASSERT( aComponent != NULL );
 
     m_RootCmp   = aComponent;
-    m_Entry     = aLibComponent;
+    m_Entry     = aLibPart;     // Warning: can be nullptr for orphan components
+                                // (i.e. with a symbol library not found)
     m_Unit      = aComponent->GetUnitSelection( &aSheetPath );
     m_SheetPath = aSheetPath;
     m_IsNew     = false;
@@ -658,7 +742,8 @@ SCH_REFERENCE::SCH_REFERENCE( SCH_COMPONENT* aComponent, LIB_PART*      aLibComp
     if( aComponent->GetRef( &aSheetPath ).IsEmpty() )
         aComponent->SetRef( &aSheetPath, wxT( "DefRef?" ) );
 
-    SetRef( aComponent->GetRef( &aSheetPath ) );
+    wxString ref = aComponent->GetRef( &aSheetPath );
+    SetRef( ref );
 
     m_NumRef = -1;
 
@@ -672,9 +757,11 @@ SCH_REFERENCE::SCH_REFERENCE( SCH_COMPONENT* aComponent, LIB_PART*      aLibComp
 void SCH_REFERENCE::Annotate()
 {
     if( m_NumRef < 0 )
-        m_Ref += wxChar( '?' );
+        m_Ref += '?';
     else
-        m_Ref = TO_UTF8( GetRef() << m_NumRef );
+    {
+        m_Ref = TO_UTF8( GetRef() << GetRefNumber() );
+    }
 
     m_RootCmp->SetRef( &m_SheetPath, FROM_UTF8( m_Ref.c_str() ) );
     m_RootCmp->SetUnit( m_Unit );
@@ -731,4 +818,50 @@ void SCH_REFERENCE::Split()
 
         SetRefStr( refText );
     }
+}
+
+
+wxString SCH_REFERENCE_LIST::Shorthand( std::vector<SCH_REFERENCE> aList )
+{
+    wxString retVal;
+    size_t   i = 0;
+
+    while( i < aList.size() )
+    {
+        wxString ref = aList[ i ].GetRef();
+        int numRef = aList[ i ].m_NumRef;
+
+        size_t range = 1;
+
+        while( i + range < aList.size()
+               && aList[ i + range ].GetRef() == ref
+               && aList[ i + range ].m_NumRef == int( numRef + range ) )
+        {
+            range++;
+        }
+
+        if( !retVal.IsEmpty() )
+            retVal << wxT( ", " );
+
+        if( range == 1 )
+        {
+            retVal << ref << aList[ i ].GetRefNumber();
+        }
+        else if( range == 2 )
+        {
+            retVal << ref << aList[ i ].GetRefNumber();
+            retVal << wxT( ", " );
+            retVal << ref << aList[ i + 1 ].GetRefNumber();
+        }
+        else
+        {
+            retVal << ref << aList[ i ].GetRefNumber();
+            retVal << wxT( "-" );
+            retVal << ref << aList[ i + ( range - 1 ) ].GetRefNumber();
+        }
+
+        i+= range;
+    }
+
+    return retVal;
 }

@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2009 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2017 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2009-2016 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,6 +30,8 @@
 
 #ifndef ID_H_
 #define ID_H_
+
+#include <wx/defs.h>
 
 /**
  * Common command IDs shared by more than one of the KiCad applications.
@@ -59,42 +61,41 @@
 // Define room for IDs, for each sub application
 #define ROOM_FOR_KICADMANAGER 50
 #define ROOM_FOR_3D_VIEWER 100
+#define ROOM_FOR_PANEL_PREV_MODEL 50
+
+
+/// IDs range for menuitems file history:
+/// The default range file history size is 9 (compatible with default wxWidget range).
+#define DEFAULT_FILE_HISTORY_SIZE 9
+#define MAX_FILE_HISTORY_SIZE 99
 
 enum main_id
 {
     ID_RUN_PCB                  = wxID_HIGHEST,
-    ID_RUN_PCB_MODULE_EDITOR,
-    ID_RUN_CVPCB,
-    ID_RUN_LIBRARY,     // pcbnew & eeschema each use this internally to load their respective lib editors
 
     ID_LOAD_PROJECT,
     ID_APPEND_PROJECT,
-    ID_NEW_PROJECT,
-    ID_NEW_PROJECT_FROM_TEMPLATE,
     ID_SAVE_PROJECT,
     ID_SAVE_PROJECT_AS,
     ID_LOAD_FILE,
-    ID_APPEND_FILE,
     ID_NEW_BOARD,
     ID_SAVE_BOARD,
     ID_SAVE_BOARD_AS,
     ID_AUTO_SAVE_TIMER,
 
-    ID_CONFIG_REQ,
-    ID_CONFIG_SAVE,
-    ID_CONFIG_READ,
+    // ID for menuitems used in our file history management,
+    // when we do not use wxFILE_ID (restricted to 9 items)
+    ID_FILE,
+    ID_FILE1,
+    ID_FILEMAX = ID_FILE + MAX_FILE_HISTORY_SIZE,
 
-    ID_PREFERENCES_HOTKEY_START,
-    ID_PREFERENCES_HOTKEY_SUBMENU,
-    ID_PREFERENCES_HOTKEY_EXPORT_CONFIG,
-    ID_PREFERENCES_HOTKEY_IMPORT_CONFIG,
-    ID_PREFERENCES_HOTKEY_SHOW_EDITOR,
+    ID_MENU_CANVAS_OPENGL,
+    ID_MENU_CANVAS_CAIRO,
+
     ID_PREFERENCES_HOTKEY_SHOW_CURRENT_LIST,
-    ID_PREFERENCES_HOTKEY_END,
-
-    ID_PREFRENCES_MACROS,
-    ID_PREFRENCES_MACROS_SAVE,
-    ID_PREFRENCES_MACROS_READ,
+    ID_PREFERENCES_CONFIGURE_PATHS,
+    ID_EDIT_SYMBOL_LIBRARY_TABLE,
+    ID_EDIT_FOOTPRINT_LIBRARY_TABLE,
 
     ID_GEN_PLOT,
     ID_GEN_PLOT_PS,
@@ -103,30 +104,22 @@ enum main_id
     ID_GEN_PLOT_SVG,
     ID_GEN_PLOT_DXF,
     ID_GEN_PLOT_PDF,
-    ID_GEN_COPY_SHEET_TO_CLIPBOARD,
-    ID_GEN_COPY_BLOCK_TO_CLIPBOARD,
 
     ID_GEN_EXPORT_FILE,
     ID_GEN_IMPORT_FILE,
 
-    ID_EXIT,
     ID_OPTIONS_SETUP,
 
-    // Find id menu
+    // id for toolbars
     ID_H_TOOLBAR,
     ID_V_TOOLBAR,
     ID_OPT_TOOLBAR,
     ID_AUX_TOOLBAR,
 
-    ID_HELP_COPY_VERSION_STRING,
-
-    ID_EDIT,
+    ID_EDIT_HOTKEY,
     ID_NO_TOOL_SELECTED,
+    ID_ZOOM_SELECTION,
     ID_SEL_BG_COLOR,
-
-    ID_COLORS_SETUP,
-
-    ID_REPEAT_BUTT,
 
     ID_LANGUAGE_CHOICE,
     ID_LANGUAGE_DEFAULT,
@@ -140,43 +133,25 @@ enum main_id
     ID_LANGUAGE_PORTUGUESE,
     ID_LANGUAGE_ITALIAN,
     ID_LANGUAGE_SLOVENIAN,
+    ID_LANGUAGE_SLOVAK,
     ID_LANGUAGE_HUNGARIAN,
     ID_LANGUAGE_POLISH,
     ID_LANGUAGE_CZECH,
     ID_LANGUAGE_KOREAN,
     ID_LANGUAGE_CATALAN,
     ID_LANGUAGE_CHINESE_SIMPLIFIED,
+    ID_LANGUAGE_CHINESE_TRADITIONAL,
     ID_LANGUAGE_DUTCH,
     ID_LANGUAGE_JAPANESE,
     ID_LANGUAGE_BULGARIAN,
+    ID_LANGUAGE_LITHUANIAN,
     ID_LANGUAGE_CHOICE_END,
 
-    ID_SET_REPEAT_OPTION,
+    ID_KICAD_SELECT_ICONS_OPTIONS,
+    ID_KICAD_SELECT_ICONS_IN_MENUS,
+    ID_KICAD_SELECT_ICON_OPTIONS_END,
 
     // Popup Menu (mouse Right button) (id consecutifs)
-
-    ID_POPUP_GENERAL_START_RANGE,   // first number
-    ID_POPUP_CANCEL_CURRENT_COMMAND,
-    ID_POPUP_CLOSE_CURRENT_TOOL,
-    ID_POPUP_MOVE_BLOCK,
-    ID_POPUP_DRAG_BLOCK,
-    ID_POPUP_COPY_BLOCK,
-    ID_POPUP_ROTATE_BLOCK,
-    ID_POPUP_DELETE_BLOCK,
-    ID_POPUP_FLIP_BLOCK,
-    ID_POPUP_PLACE_BLOCK,
-    ID_POPUP_ZOOM_BLOCK,
-    ID_POPUP_SELECT_ITEMS_BLOCK,
-    ID_POPUP_MIRROR_X_BLOCK,
-    ID_POPUP_MIRROR_Y_BLOCK,
-    ID_POPUP_MIRROR_UNUSED0,
-    ID_POPUP_MIRROR_UNUSED1,
-    ID_POPUP_MIRROR_UNUSED2,
-    ID_POPUP_MIRROR_UNUSED3,
-    ID_POPUP_OTHER_COMMANDS,
-    ID_POPUP_GENERAL_END_RANGE, // last number
-
-    ID_POPUP_ENTER_MENU,
 
     ID_ON_ZOOM_SELECT,
     ID_POPUP_ZOOM_START_RANGE,       // first zoom id
@@ -185,6 +160,11 @@ enum main_id
     ID_POPUP_ZOOM_OUT,
     ID_POPUP_ZOOM_SELECT,
     ID_POPUP_ZOOM_CENTER,
+    ID_POPUP_ZOOM_PAGE,
+    ID_POPUP_ZOOM_REDRAW,
+
+    ID_KEY_ZOOM_IN,
+    ID_KEY_ZOOM_OUT,
 
     /* Reserve IDs for popup menu zoom levels.  If you need more
      * levels of zoom, change ID_POPUP_ZOOM_LEVEL_END.  Note that more
@@ -199,10 +179,9 @@ enum main_id
     ID_POPUP_ZOOM_END_RANGE,         // last zoom id
 
     ID_ON_GRID_SELECT,
-    ID_POPUP_GRID_PLUS,
-    ID_POPUP_GRID_MOINS,
     ID_POPUP_GRID_SELECT,
-    ID_POPUP_GRID_LEVEL_1000,       // id for first predefined grid in inches (1000 * 0.0001 inch)
+    ID_POPUP_GRID_FIRST,
+    ID_POPUP_GRID_LEVEL_1000 = ID_POPUP_GRID_FIRST, // These must be in same order as menu
     ID_POPUP_GRID_LEVEL_500,
     ID_POPUP_GRID_LEVEL_250,
     ID_POPUP_GRID_LEVEL_200,
@@ -213,10 +192,10 @@ enum main_id
     ID_POPUP_GRID_LEVEL_10,
     ID_POPUP_GRID_LEVEL_5,
     ID_POPUP_GRID_LEVEL_2,
-    ID_POPUP_GRID_LEVEL_1,       // id for last predefined grid in inches ( 0.0001 inch)
+    ID_POPUP_GRID_LEVEL_1,
     ID_POPUP_GRID_LEVEL_5MM,
     ID_POPUP_GRID_LEVEL_2_5MM,
-    ID_POPUP_GRID_LEVEL_1MM,     // id for first predefined grid in mm (1mm)
+    ID_POPUP_GRID_LEVEL_1MM,
     ID_POPUP_GRID_LEVEL_0_5MM,
     ID_POPUP_GRID_LEVEL_0_25MM,
     ID_POPUP_GRID_LEVEL_0_2MM,
@@ -225,14 +204,26 @@ enum main_id
     ID_POPUP_GRID_LEVEL_0_0_25MM,
     ID_POPUP_GRID_LEVEL_0_0_1MM,
     ID_POPUP_GRID_USER,
+    ID_POPUP_GRID_SEPARATOR,
+    ID_POPUP_GRID_SETTINGS,
 
-    ID_SHEET_SET,
+    ID_GRID_SETTINGS,
+
     ID_COMPONENT_BUTT,
 
-    ID_ZOOM_IN,
+    ID_ZOOM_BEGIN,
+    ID_ZOOM_IN = ID_ZOOM_BEGIN,
     ID_ZOOM_OUT,
     ID_ZOOM_PAGE,
     ID_ZOOM_REDRAW,
+    ID_VIEWER_ZOOM_IN,
+    ID_VIEWER_ZOOM_OUT,
+    ID_VIEWER_ZOOM_PAGE,
+    ID_VIEWER_ZOOM_REDRAW,
+    // zoom commands for non center zooming
+    ID_OFFCENTER_ZOOM_IN,
+    ID_OFFCENTER_ZOOM_OUT,
+    ID_ZOOM_END,
 
     // Panning command event IDs.
     ID_PAN_UP,
@@ -240,31 +231,22 @@ enum main_id
     ID_PAN_LEFT,
     ID_PAN_RIGHT,
 
-    ID_GET_NETLIST,
-    ID_GET_TOOLS,
+    ID_MOUSE_CLICK,
+    ID_MOUSE_DOUBLECLICK,
+
     ID_FIND_ITEMS,
 
     ID_EDA_SOCKET_EVENT_SERV,
     ID_EDA_SOCKET_EVENT,
 
-    // Command IDs common to Pcbnew and CvPcb.
-    ID_PCB_DISPLAY_FOOTPRINT_DOC,
-
     // Common to all
-    ID_TB_OPTIONS_SELECT_UNIT_MM,
-    ID_TB_OPTIONS_SELECT_UNIT_INCH,
-    ID_TB_OPTIONS_SELECT_CURSOR,
-    ID_TB_OPTIONS_SHOW_POLAR_COORD,
-    ID_TB_OPTIONS_SHOW_GRID,
+    ID_HELP_GET_INVOLVED,
 
     // Common to Pcbnew and CvPcb
     ID_TB_OPTIONS_SHOW_MODULE_TEXT_SKETCH,
     ID_TB_OPTIONS_SHOW_MODULE_EDGE_SKETCH,
+    ID_TB_OPTIONS_SHOW_GRAPHIC_SKETCH,
     ID_TB_OPTIONS_SHOW_PADS_SKETCH,
-
-    // zoom commands for non center zooming
-    ID_OFFCENTER_ZOOM_IN,
-    ID_OFFCENTER_ZOOM_OUT,
 
     ID_DIALOG_ERC,      ///< eeschema ERC modeless dialog ID
 
@@ -275,7 +257,8 @@ enum main_id
     // mainly we experienced issues related to wxUpdateUIEvent calls when 2 (or more) wxFrames
     // share the same ID in menus, mainly in menubars/toolbars
     // The reason is the fact wxWidgets propagates the wxUpdateUIEvent to all parent windows
-    // to find wxUpdateUIEvent event functions matching the menuitem IDs found when activate a menu in the first frame.
+    // to find wxUpdateUIEvent event functions matching the menuitem IDs found when activate a
+    // menu in the first frame.
 
     // Reserve ROOM_FOR_KICADMANAGER IDs, for Kicad manager
     // Change it if this count is too small.
@@ -286,6 +269,13 @@ enum main_id
     // Change it if this count is too small.
     ID_KICAD_3D_VIEWER_START,
     ID_KICAD_3D_VIEWER_END = ID_KICAD_3D_VIEWER_START + ROOM_FOR_3D_VIEWER,
+
+    ID_KICAD_PANEL_PREV_MODEL_START,
+    ID_KICAD_PANEL_PREV_MODEL_END = ID_KICAD_PANEL_PREV_MODEL_START + ROOM_FOR_PANEL_PREV_MODEL,
+
+    // Reseve ID for popup menus, when we need to know a menu item is inside a popup menu
+    ID_POPUP_MENU_START,
+    ID_POPUP_MENU_END = ID_POPUP_MENU_START + 1000,
 
     ID_END_LIST
 };

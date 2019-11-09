@@ -1,9 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2012 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
+ * Copyright (C) 2018 Jean-Pierre Charras, jp.charras at wanadoo.fr
  * Copyright (C) 2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 1992-2012 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,11 +28,10 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
+#include <plotter.h>
 #include <confirm.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <pcbplot.h>
-#include <pcbstruct.h>
 #include <base_units.h>
 #include <reporter.h>
 #include <class_board.h>
@@ -42,9 +41,11 @@
 #include <wx/ffile.h>
 #include <dialog_plot.h>
 #include <macros.h>
+#include <build_version.h>
+#include <gbr_metadata.h>
 
 
-const wxString GetGerberExtension( LAYER_NUM aLayer )
+const wxString GetGerberProtelExtension( LAYER_NUM aLayer )
 {
     if( IsCopperLayer( aLayer ) )
     {
@@ -54,7 +55,7 @@ const wxString GetGerberExtension( LAYER_NUM aLayer )
             return wxT( "gbl" );
         else
         {
-            return wxT( "gbr" );
+            return wxString::Format( wxT( "g%d" ), aLayer+1 );
         }
     }
     else
@@ -73,94 +74,111 @@ const wxString GetGerberExtension( LAYER_NUM aLayer )
         case B_Mask:        return wxT( "gbs" );
         case F_Mask:        return wxT( "gts" );
 
+        case Edge_Cuts:     return wxT( "gm1" );
+
         case Dwgs_User:
         case Cmts_User:
         case Eco1_User:
         case Eco2_User:
-        case Edge_Cuts:
         default:            return wxT( "gbr" );
         }
     }
 }
 
 
-wxString GetGerberFileFunction( const BOARD *aBoard, LAYER_NUM aLayer )
+const wxString GetGerberFileFunctionAttribute( const BOARD *aBoard, LAYER_NUM aLayer )
 {
-    wxString attrib = wxEmptyString;
+    wxString attrib;
 
     switch( aLayer )
     {
     case F_Adhes:
-        attrib = wxString( wxT( "Glue,Top" ) );
+        attrib = "Glue,Top";
         break;
 
     case B_Adhes:
-        attrib = wxString( wxT( "Glue,Bot" ) );
+        attrib = "Glue,Bot";
         break;
 
     case F_SilkS:
-        attrib = wxString( wxT( "Legend,Top" ) );
+        attrib = "Legend,Top";
         break;
 
     case B_SilkS:
-        attrib = wxString( wxT( "Legend,Bot" ) );
+        attrib = "Legend,Bot";
         break;
 
     case F_Mask:
-        attrib = wxString( wxT( "Soldermask,Top" ) );
+        attrib = "Soldermask,Top";
         break;
 
     case B_Mask:
-        attrib = wxString( wxT( "Soldermask,Bot" ) );
+        attrib = "Soldermask,Bot";
         break;
 
     case F_Paste:
-        attrib = wxString( wxT( "Paste,Top" ) );
+        attrib = "Paste,Top";
         break;
 
     case B_Paste:
-        attrib = wxString( wxT( "Paste,Bot" ) );
+        attrib = "Paste,Bot";
         break;
 
     case Edge_Cuts:
         // Board outline.
         // Can be "Profile,NP" (Not Plated: usual) or "Profile,P"
         // This last is the exception (Plated)
-        attrib = wxString( wxT( "Profile,NP" ) );
+        attrib = "Profile,NP";
         break;
 
     case Dwgs_User:
-        attrib = wxString( wxT( "Drawing" ) );
+        attrib = "OtherDrawing,Comment";
         break;
 
     case Cmts_User:
-        attrib = wxString( wxT( "Other,Comment" ) );
+        attrib = "Other,Comment";
         break;
 
     case Eco1_User:
-        attrib = wxString( wxT( "Other,ECO1" ) );
+        attrib = "Other,ECO1";
         break;
 
     case Eco2_User:
-        attrib = wxString( wxT( "Other,ECO2" ) );
+        attrib = "Other,ECO2";
+        break;
+
+    case B_Fab:
+        // This is actually a assembly layer
+        attrib = "AssemblyDrawing,Bot";
+        break;
+
+    case F_Fab:
+        // This is actually a assembly layer
+        attrib = "AssemblyDrawing,Top";
         break;
 
     case B_Cu:
-        attrib = wxString::Format( wxT( "Copper,L%d,Bot" ), aBoard->GetCopperLayerCount() );
+        attrib.Printf( wxT( "Copper,L%d,Bot" ), aBoard->GetCopperLayerCount() );
         break;
 
     case F_Cu:
-        attrib = wxString::Format( wxT( "Copper,L1,Top" ) );
+        attrib = "Copper,L1,Top";
         break;
 
     default:
         if( IsCopperLayer( aLayer ) )
-        {
-            attrib = wxString::Format( wxT( "Copper,L%d,Inr" ), aLayer+1 );
-        }
+            attrib.Printf( wxT( "Copper,L%d,Inr" ), aLayer+1 );
+        else
+            attrib.Printf( wxT( "Other,User" ), aLayer+1 );
         break;
     }
 
+    // This code adds a optional parameter: the type of copper layers.
+    // Because it is not used by Pcbnew (it can be used only by external autorouters)
+    // user do not really set this parameter.
+    // Therefore do not add it.
+    // However, this code is left here, for perhaps a future usage.
+#if 0
     // Add the signal type of the layer, if relevant
     if( IsCopperLayer( aLayer ) )
     {
@@ -169,104 +187,226 @@ wxString GetGerberFileFunction( const BOARD *aBoard, LAYER_NUM aLayer )
         switch( type )
         {
         case LT_SIGNAL:
-            attrib += wxString( wxT( ",Signal" ) );
+            attrib += ",Signal";
             break;
         case LT_POWER:
-            attrib += wxString( wxT( ",Plane" ) );
+            attrib += ",Plane";
             break;
         case LT_MIXED:
-            attrib += wxString( wxT( ",Mixed" ) );
+            attrib += ",Mixed";
             break;
         default:
-            ;   // do nothing (but avoid a warning for unhandled LAYER_T values from GCC)
+            break;   // do nothing (but avoid a warning for unhandled LAYER_T values from GCC)
         }
     }
+#endif
 
-    return attrib;
+    wxString fileFct;
+    fileFct.Printf( "%%TF.FileFunction,%s*%%", GetChars( attrib ) );
+
+    return fileFct;
 }
 
 
-void BuildPlotFileName( wxFileName*     aFilename,
-                        const wxString& aOutputDir,
-                        const wxString& aSuffix,
-                        const wxString& aExtension )
+static const wxString GetGerberFilePolarityAttribute( LAYER_NUM aLayer )
 {
+    /* build the string %TF.FilePolarity,Positive*%
+     * or  %TF.FilePolarity,Negative*%
+     * an emply string for layers which do not use a polarity
+     *
+     * The value of the .FilePolarity specifies whether the image represents the
+     * presence or absence of material.
+     * This attribute can only be used when the file represents a pattern in a material layer,
+     * e.g. copper, solder mask, legend.
+     * Together with.FileFunction it defines the role of that image in
+     * the layer structure of the PCB.
+     * Note that the .FilePolarity attribute does not change the image -
+     * no attribute does.
+     * It changes the interpretation of the image.
+     * For example, in a copper layer in positive polarity a round flash generates a copper pad.
+     * In a copper layer in negative polarity it generates a clearance.
+     * Solder mask images usually represent solder mask openings and are then negative.
+     * This may be counter-intuitive.
+     */
+    int polarity = 0;
+
+    switch( aLayer )
+    {
+    case F_Adhes:
+    case B_Adhes:
+    case F_SilkS:
+    case B_SilkS:
+    case F_Paste:
+    case B_Paste:
+        polarity = 1;
+        break;
+
+    case F_Mask:
+    case B_Mask:
+        polarity = -1;
+        break;
+
+    default:
+        if( IsCopperLayer( aLayer ) )
+            polarity = 1;
+        break;
+    }
+
+    wxString filePolarity;
+
+    if( polarity == 1 )
+        filePolarity = "%TF.FilePolarity,Positive*%";
+    if( polarity == -1 )
+        filePolarity = "%TF.FilePolarity,Negative*%";
+
+    return filePolarity;
+}
+
+/* Add some X2 attributes to the file header, as defined in the
+ * Gerber file format specification J4 and "Revision 2015.06"
+ */
+
+// A helper function to convert a X2 attribute string to a X1 structured comment:
+static wxString& makeStringCompatX1( wxString& aText, bool aUseX1CompatibilityMode )
+{
+    if( aUseX1CompatibilityMode )
+    {
+        aText.Replace( "%", "" );
+        aText.Prepend( "G04 #@! " );
+    }
+
+    return aText;
+}
+
+
+void AddGerberX2Header( PLOTTER * aPlotter,
+            const BOARD *aBoard, bool aUseX1CompatibilityMode )
+{
+    wxString text;
+
+    // Creates the TF,.GenerationSoftware. Format is:
+    // %TF,.GenerationSoftware,<vendor>,<application name>[,<application version>]*%
+    text.Printf( wxT( "%%TF.GenerationSoftware,KiCad,Pcbnew,%s*%%" ), GetBuildVersion() );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+
+    // creates the TF.CreationDate attribute:
+    text = GbrMakeCreationDateAttributeString( aUseX1CompatibilityMode ?
+                                                    GBR_NC_STRING_FORMAT_X1 :
+                                                    GBR_NC_STRING_FORMAT_X2 );
+    aPlotter->AddLineToHeader( text );
+
+    // Creates the TF,.ProjectId. Format is (from Gerber file format doc):
+    // %TF.ProjectId,<project id>,<project GUID>,<revision id>*%
+    // <project id> is the name of the project, restricted to basic ASCII symbols only,
+    // Rem: <project id> accepts only ASCII 7 code (only basic ASCII codes are allowed in gerber files).
+    // and comma not accepted
+    // All illegal chars will be replaced by underscore
+    //
+    // <project GUID> is a string which is an unique id of a project.
+    // However Kicad does not handle such a project GUID, so it is built from the board name
+    wxFileName fn = aBoard->GetFileName();
+    wxString msg = fn.GetFullName();
+
+    // Build a <project GUID>, from the board name
+    wxString guid = GbrMakeProjectGUIDfromString( msg );
+
+    // build the <project id> string: this is the board short filename (without ext)
+    // and all non ASCII chars and comma are replaced by '_'
+    msg = fn.GetName();
+    msg.Replace( wxT( "," ), wxT( "_" ) );
+
+    // build the <rec> string. All non ASCII chars and comma are replaced by '_'
+    wxString rev = ((BOARD*)aBoard)->GetTitleBlock().GetRevision();
+    rev.Replace( wxT( "," ), wxT( "_" ) );
+
+    if( rev.IsEmpty() )
+        rev = wxT( "rev?" );
+
+    text.Printf( wxT( "%%TF.ProjectId,%s,%s,%s*%%" ), msg.ToAscii(), GetChars( guid ), rev.ToAscii() );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+
+    // Add the TF.SameCoordinates, that specify all gerber files uses the same
+    // origin and orientation, and the registration between files is OK.
+    // The parameter of TF.SameCoordinates is a string that is common
+    // to all files using the same registration and has no special meaning:
+    // this is just a key
+    // Because there is no mirroring/rotation in Kicad, only the plot offset origin
+    // can create incorrect registration.
+    // So we create a key from plot offset options.
+    // and therefore for a given board, all Gerber files having the same key have the same
+    // plot origin and use the same registration
+    //
+    // Currently the key is "Original" when using absolute Pcbnew coordinates,
+    // and te PY ans PY position od auxiliary axis, when using it.
+    // Please, if absolute Pcbnew coordinates, one day, are set by user, change the way
+    // the key is built to ensure file only using the *same* axis have the same key.
+    wxString registration_id = "Original";
+    wxPoint auxOrigin = aBoard->GetAuxOrigin();
+
+    if( aBoard->GetPlotOptions().GetUseAuxOrigin() && auxOrigin.x && auxOrigin.y )
+        registration_id.Printf( "PX%xPY%x", auxOrigin.x, auxOrigin.y );
+
+    text.Printf( "%%TF.SameCoordinates,%s*%%", registration_id.GetData() );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+}
+
+
+void AddGerberX2Attribute( PLOTTER * aPlotter,
+            const BOARD *aBoard, LAYER_NUM aLayer, bool aUseX1CompatibilityMode )
+{
+    AddGerberX2Header( aPlotter, aBoard, aUseX1CompatibilityMode );
+
+    wxString text;
+
+    // Add the TF.FileFunction
+    text = GetGerberFileFunctionAttribute( aBoard, aLayer );
+    aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+
+    // Add the TF.FilePolarity (for layers which support that)
+    text = GetGerberFilePolarityAttribute( aLayer );
+
+    if( !text.IsEmpty() )
+        aPlotter->AddLineToHeader( makeStringCompatX1( text, aUseX1CompatibilityMode ) );
+}
+
+
+void BuildPlotFileName( wxFileName* aFilename, const wxString& aOutputDir,
+                        const wxString& aSuffix, const wxString& aExtension )
+{
+    // aFilename contains the base filename only (without path and extension)
+    // when calling this function.
+    // It is expected to be a valid filename (this is usually the board filename)
     aFilename->SetPath( aOutputDir );
 
     // Set the file extension
     aFilename->SetExt( aExtension );
 
-    /* remove leading and trailing spaces if any from the suffix, if
-       something survives add it to the name;
-       also the suffix can contain some not allowed chars in filename (/ \ .),
-       so change them to underscore
-    */
+    // remove leading and trailing spaces if any from the suffix, if
+    // something survives add it to the name;
+    // also the suffix can contain some not allowed chars in filename (/ \ . : and some others),
+    // so change them to underscore
+    // Remember it can be called from a python script, so the illegal chars
+    // have to be filtered here.
     wxString suffix = aSuffix;
     suffix.Trim( true );
     suffix.Trim( false );
 
-    suffix.Replace( wxT("."), wxT("_") );
-    suffix.Replace( wxT("/"), wxT("_") );
-    suffix.Replace( wxT("\\"), wxT("_") );
+    wxString badchars = wxFileName::GetForbiddenChars(wxPATH_DOS);
+    badchars.Append( "%." );
+
+    for( unsigned ii = 0; ii < badchars.Len(); ii++ )
+        suffix.Replace( badchars[ii], wxT("_") );
 
     if( !suffix.IsEmpty() )
         aFilename->SetName( aFilename->GetName() + wxT( "-" ) + suffix );
 }
 
 
-bool EnsureOutputDirectory( wxFileName*     aOutputDir,
-                            const wxString& aBoardFilename,
-                            REPORTER*       aReporter )
-{
-    wxString msg;
-    wxString boardFilePath = wxFileName( aBoardFilename ).GetPath();
-
-    if( !aOutputDir->MakeAbsolute( boardFilePath ) )
-    {
-        if( aReporter )
-        {
-            msg.Printf( _( "*** Error: cannot make path '%s' absolute with respect to '%s'! ***" ),
-                        GetChars( aOutputDir->GetPath() ),
-                        GetChars( boardFilePath ) );
-            aReporter->Report( msg );
-        }
-
-        return false;
-    }
-
-    wxString outputPath( aOutputDir->GetPath() );
-
-    if( !wxFileName::DirExists( outputPath ) )
-    {
-        if( wxMkdir( outputPath ) )
-        {
-            if( aReporter )
-            {
-                msg.Printf( _( "Output directory '%s' created.\n" ), GetChars( outputPath ) );
-                aReporter->Report( msg );
-                return true;
-            }
-        }
-        else
-        {
-            if( aReporter )
-            {
-                msg.Printf( _( "*** Error: cannot create output directory '%s'! ***\n" ),
-                            GetChars( outputPath ) );
-                aReporter->Report( msg );
-            }
-
-            return false;
-        }
-    }
-
-    return true;
-}
-
-
 PLOT_CONTROLLER::PLOT_CONTROLLER( BOARD *aBoard )
-    : m_plotter( NULL ), m_board( aBoard )
 {
+    m_plotter = NULL;
+    m_board = aBoard;
+    m_plotLayer = UNDEFINED_LAYER;
 }
 
 
@@ -302,30 +442,42 @@ bool PLOT_CONTROLLER::OpenPlotfile( const wxString &aSuffix,
     /* Save the current format: sadly some plot routines depends on this
        but the main reason is that the StartPlot method uses it to
        dispatch the plotter creation */
-    m_plotOpts.SetFormat( aFormat );
+    GetPlotOptions().SetFormat( aFormat );
 
     // Ensure that the previous plot is closed
     ClosePlot();
 
     // Now compute the full filename for the output and start the plot
     // (after ensuring the output directory is OK)
-    wxString outputDirName = m_plotOpts.GetOutputDirectory() ;
+    wxString outputDirName = GetPlotOptions().GetOutputDirectory() ;
     wxFileName outputDir = wxFileName::DirName( outputDirName );
     wxString boardFilename = m_board->GetFileName();
 
-    if( EnsureOutputDirectory( &outputDir, boardFilename ) )
+    if( EnsureFileDirectoryExists( &outputDir, boardFilename ) )
     {
-        wxFileName fn( boardFilename );
-        BuildPlotFileName( &fn, outputDirName, aSuffix, GetDefaultPlotExtension( aFormat ) );
+        // outputDir contains now the full path of plot files
+        m_plotFile = boardFilename;
+        m_plotFile.SetPath( outputDir.GetPath() );
+        wxString fileExt = GetDefaultPlotExtension( aFormat );
 
-        m_plotter = StartPlotBoard( m_board, &m_plotOpts, UNDEFINED_LAYER, fn.GetFullPath(), aSheetDesc );
+        // Gerber format can use specific file ext, depending on layers
+        // (now not a good practice, because the official file ext is .gbr)
+        if( GetPlotOptions().GetFormat() == PLOT_FORMAT_GERBER &&
+            GetPlotOptions().GetUseGerberProtelExtensions() )
+            fileExt = GetGerberProtelExtension( GetLayer() );
+
+        // Build plot filenames from the board name and layer names:
+        BuildPlotFileName( &m_plotFile, outputDir.GetPath(), aSuffix, fileExt );
+
+        m_plotter = StartPlotBoard( m_board, &GetPlotOptions(), ToLAYER_ID( GetLayer() ),
+                                    m_plotFile.GetFullPath(), aSheetDesc );
     }
 
     return( m_plotter != NULL );
 }
 
 
-bool PLOT_CONTROLLER::PlotLayer( LAYER_NUM aLayer )
+bool PLOT_CONTROLLER::PlotLayer()
 {
     LOCALE_IO toggle;
 
@@ -334,7 +486,7 @@ bool PLOT_CONTROLLER::PlotLayer( LAYER_NUM aLayer )
         return false;
 
     // Fully delegated to the parent
-    PlotOneBoardLayer( m_board, m_plotter, ToLAYER_ID( aLayer ), m_plotOpts );
+    PlotOneBoardLayer( m_board, m_plotter, ToLAYER_ID( GetLayer() ), GetPlotOptions() );
 
     return true;
 }

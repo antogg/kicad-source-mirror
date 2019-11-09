@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -18,64 +19,46 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/foreach.hpp>
-
 #include "pns_itemset.h"
+#include "pns_line.h"
 
-PNS_ITEMSET::PNS_ITEMSET( PNS_ITEM* aInitialItem )
+namespace PNS {
+
+ITEM_SET::~ITEM_SET()
 {
-    if(aInitialItem)
-        m_items.push_back(aInitialItem);
 }
 
 
-PNS_ITEMSET::~PNS_ITEMSET()
+void ITEM_SET::Add( const LINE& aLine )
 {
-    Clear();
+    LINE* copy = aLine.Clone();
+    m_items.push_back( ENTRY( copy, true ) );
 }
 
 
-void PNS_ITEMSET::Clear()
+void ITEM_SET::Prepend( const LINE& aLine )
 {
-    BOOST_FOREACH(PNS_ITEM* item, m_ownedItems)
-    {
-        delete item;
-    }
-
-    m_items.clear();
-    m_ownedItems.clear();
+    LINE* copy = aLine.Clone();
+    m_items.insert( m_items.begin(), ENTRY( copy, true ) );
 }
 
 
-PNS_ITEMSET& PNS_ITEMSET::FilterLayers( int aStart, int aEnd )
+ITEM_SET& ITEM_SET::FilterLayers( int aStart, int aEnd, bool aInvert )
 {
-    ITEM_VECTOR newItems;
-    PNS_LAYERSET l;
+    ENTRIES newItems;
+    LAYER_RANGE l;
 
     if( aEnd < 0 )
-        l = PNS_LAYERSET( aStart );
+        l = LAYER_RANGE( aStart );
     else
-        l = PNS_LAYERSET( aStart, aEnd );
+        l = LAYER_RANGE( aStart, aEnd );
 
-    BOOST_FOREACH( PNS_ITEM* item, m_items )
-
-    if( item->Layers().Overlaps( l ) )
-        newItems.push_back( item );
-
-    m_items = newItems;
-
-    return *this;
-}
-
-
-PNS_ITEMSET& PNS_ITEMSET::FilterKinds( int aKindMask )
-{
-    ITEM_VECTOR newItems;
-
-    BOOST_FOREACH( PNS_ITEM* item, m_items )
+    for( const ENTRY& ent : m_items )
     {
-        if( item->OfKind ( aKindMask ) )
-            newItems.push_back( item );
+        if( ent.item->Layers().Overlaps( l ) ^ aInvert )
+        {
+            newItems.push_back( ent );
+        }
     }
 
     m_items = newItems;
@@ -84,17 +67,74 @@ PNS_ITEMSET& PNS_ITEMSET::FilterKinds( int aKindMask )
 }
 
 
-PNS_ITEMSET& PNS_ITEMSET::FilterNet( int aNet )
+ITEM_SET& ITEM_SET::FilterKinds( int aKindMask, bool aInvert )
 {
-    ITEM_VECTOR newItems;
+    ENTRIES newItems;
 
-    BOOST_FOREACH( PNS_ITEM* item, m_items )
+    for( const ENTRY& ent : m_items )
     {
-        if( item->Net() == aNet )
-            newItems.push_back( item );
+        if( ent.item->OfKind( aKindMask ) ^ aInvert )
+        {
+            newItems.push_back( ent );
+        }
     }
 
     m_items = newItems;
 
     return *this;
+}
+
+
+ITEM_SET& ITEM_SET::FilterMarker( int aMarker, bool aInvert )
+{
+    ENTRIES newItems;
+
+    for( const ENTRY& ent : m_items )
+    {
+        if( ent.item->Marker() & aMarker )
+        {
+            newItems.push_back( ent );
+        }
+    }
+
+    m_items = newItems;
+
+    return *this;
+}
+
+
+ITEM_SET& ITEM_SET::FilterNet( int aNet, bool aInvert )
+{
+    ENTRIES newItems;
+
+    for( const ENTRY& ent : m_items )
+    {
+        if( ( ent.item->Net() == aNet ) ^ aInvert )
+        {
+            newItems.push_back( ent );
+        }
+    }
+
+    m_items = newItems;
+
+    return *this;
+}
+
+
+ITEM_SET& ITEM_SET::ExcludeItem( const ITEM* aItem )
+{
+    ENTRIES newItems;
+
+    for( const ENTRY& ent : m_items )
+    {
+        if( ent.item != aItem )
+
+        newItems.push_back( ent );
+    }
+
+    m_items = newItems;
+
+    return *this;
+}
+
 }

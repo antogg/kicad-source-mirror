@@ -1,15 +1,8 @@
-/**
- * @file excellon_read_drill_file.cpp
- *  Functions to read drill files (EXCELLON format) created by Pcbnew
- *  These files use only a subset of EXCELLON commands.
- */
-
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2011 Jean-Pierre Charras <jean-pierre.charras@gipsa-lab.inpg.fr>
- * Copyright (C) 1992-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2016 Jean-Pierre Charras <jp.charras at wanadoo.fr>
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -62,60 +55,155 @@
   * Feed Rate and Spindle Speed are just skipped because they are not used in a viewer
   */
 
+/**
+ * @file excellon_read_drill_file.cpp
+ *  Functions to read drill files (EXCELLON format) created by Pcbnew
+ *  These files use only a subset of EXCELLON commands.
+ */
+
+
 #include <fctsys.h>
 #include <common.h>
 #include <confirm.h>
 
 #include <gerbview.h>
 #include <gerbview_frame.h>
-#include <trigo.h>
-#include <macros.h>
-#include <base_units.h>
-#include <class_gerber_draw_item.h>
-#include <class_GERBER.h>
-#include <class_excellon.h>
+#include <gerber_file_image.h>
+#include <gerber_file_image_list.h>
+#include <excellon_image.h>
 #include <kicad_string.h>
+#include <X2_gerber_attributes.h>
+#include <view/view.h>
 
 #include <cmath>
 
 #include <html_messagebox.h>
 
-// Default format for dimensions
+// Default format for dimensions: they are the default values, not the actual values
 // number of digits in mantissa:
-static int fmtMantissaMM = 3;
-static int fmtMantissaInch = 4;
+static const int fmtMantissaMM = 3;
+static const int fmtMantissaInch = 4;
 // number of digits, integer part:
-static int fmtIntegerMM = 3;
-static int fmtIntegerInch = 2;
+static const int fmtIntegerMM = 3;
+static const int fmtIntegerInch = 2;
+
+// A helper function to calculate the arc center of an arc
+// known by 2 end points, the radius, and the angle direction (CW or CCW)
+// Arc angles are <= 180 degrees in circular interpol.
+static wxPoint computeCenter(wxPoint aStart, wxPoint aEnd, int& aRadius, bool aRotCCW )
+{
+    wxPoint center;
+    VECTOR2D end;
+    end.x = double(aEnd.x - aStart.x);
+    end.y = double(aEnd.y - aStart.y);
+
+    // Be sure aRadius/2 > dist between aStart and aEnd
+    double min_radius = end.EuclideanNorm() * 2;
+
+    if( min_radius <= aRadius )
+    {
+        // Adjust the radius and the arc center for a 180 deg arc between end points
+        aRadius = KiROUND( min_radius );
+        center.x = ( aStart.x + aEnd.x + 1 ) / 2;
+        center.y = ( aStart.y + aEnd.y + 1 ) / 2;
+        return center;
+    }
+
+    /* to compute the centers position easily:
+     * rotate the segment (0,0 to end.x,end.y) to make it horizontal (end.y = 0).
+     * the X center position is end.x/2
+     * the Y center positions are on the vertical line starting at end.x/2, 0
+     * and solve aRadius^2 = X^2 + Y^2  (2 values)
+     */
+    double seg_angle = end.Angle(); //in radian
+    VECTOR2D h_segm = end.Rotate( - seg_angle );
+    double cX = h_segm.x/2;
+    double cY1 = sqrt( (double)aRadius*aRadius - cX*cX );
+    double cY2 = -cY1;
+    VECTOR2D center1( cX, cY1 );
+    center1 = center1.Rotate( seg_angle );
+    double arc_angle1 = (end - center1).Angle() - (VECTOR2D(0.0,0.0) - center1).Angle();
+    VECTOR2D center2( cX, cY2 );
+    center2 = center2.Rotate( seg_angle );
+    double arc_angle2 = (end - center2).Angle() - (VECTOR2D(0.0,0.0) - center2).Angle();
+
+    if( !aRotCCW )
+    {
+        if( arc_angle1 < 0.0 )
+            arc_angle1 += 2*M_PI;
+
+        if( arc_angle2 < 0.0 )
+            arc_angle2 += 2*M_PI;
+    }
+    else
+    {
+        if( arc_angle1 > 0.0 )
+            arc_angle1 -= 2*M_PI;
+
+        if( arc_angle2 > 0.0 )
+            arc_angle2 -= 2*M_PI;
+    }
+
+    // Arc angle must be <= 180.0 degrees.
+    // So choose the center that create a arc angle <= 180.0
+    if( std::abs( arc_angle1 ) <= M_PI )
+    {
+        center.x = KiROUND( center1.x );
+        center.y = KiROUND( center1.y );
+    }
+    else
+    {
+        center.x = KiROUND( center2.x );
+        center.y = KiROUND( center2.y );
+    }
+
+    return center+aStart;
+}
 
 extern int    ReadInt( char*& text, bool aSkipSeparator = true );
 extern double ReadDouble( char*& text, bool aSkipSeparator = true );
+
+// See rs274d.cpp:
 extern void fillFlashedGBRITEM(  GERBER_DRAW_ITEM* aGbrItem,
                                  APERTURE_T        aAperture,
                                  int               Dcode_index,
-                                 int         aLayer,
                                  const wxPoint&    aPos,
                                  wxSize            aSize,
                                  bool              aLayerNegative );
-void fillLineGBRITEM(  GERBER_DRAW_ITEM* aGbrItem,
+
+extern void fillLineGBRITEM(  GERBER_DRAW_ITEM* aGbrItem,
                               int               Dcode_index,
-                              int         aLayer,
                               const wxPoint&    aStart,
                               const wxPoint&    aEnd,
                               wxSize            aPenSize,
                               bool              aLayerNegative  );
 
+extern void fillArcGBRITEM(  GERBER_DRAW_ITEM* aGbrItem, int Dcode_index,
+                             const wxPoint& aStart, const wxPoint& aEnd,
+                             const wxPoint& aRelCenter, wxSize aPenSize,
+                             bool aClockwise, bool aMultiquadrant,
+                             bool aLayerNegative  );
+
+// Gerber X2 files have a file attribute which specify the type of image
+// (copper, solder paste ... and sides tpo, bottom or inner copper layers)
+// Excellon drill files do not have attributes, so, just to identify the image
+// In gerbview, we add this attribute, similat to a Gerber drill file
+static const char file_attribute[] = ".FileFunction,Other,Drill*";
+
 static EXCELLON_CMD excellonHeaderCmdList[] =
 {
     { "M0",     DRILL_M_END,                 -1 },  // End of Program - No Rewind
     { "M00",    DRILL_M_END,                 -1 },  // End of Program - No Rewind
-    { "M30",    DRILL_M_ENDREWIND,           -1 },  // End of Program Rewind
+    { "M15",    DRILL_M_TOOL_DOWN,            0 },  // tool down (starting a routed hole)
+    { "M16",    DRILL_M_TOOL_UP,              0 },  // tool up (ending a routed hole)
+    { "M17",    DRILL_M_TOOL_UP,              0 },  // tool up similar to M16 for a viewer
+    { "M30",    DRILL_M_ENDFILE,             -1 },  // End of File (last line of NC drill)
     { "M47",    DRILL_M_MESSAGE,             -1 },  // Operator Message
     { "M45",    DRILL_M_LONGMESSAGE,         -1 },  // Long Operator message (use more than one line)
     { "M48",    DRILL_M_HEADER,              0  },  // beginning of a header
     { "M95",    DRILL_M_ENDHEADER,           0  },  // End of the header
-    { "METRIC", DRILL_METRICHEADER,          1  },
-    { "INCH",   DRILL_IMPERIALHEADER,        1  },
+    { "METRIC", DRILL_METRIC_HEADER,          1  },
+    { "INCH",   DRILL_IMPERIAL_HEADER,        1  },
     { "M71",    DRILL_M_METRIC,              1  },
     { "M72",    DRILL_M_IMPERIAL,            1  },
     { "M25",    DRILL_M_BEGINPATTERN,        0  },  // Beginning of Pattern
@@ -144,14 +232,64 @@ static EXCELLON_CMD excellon_G_CmdList[] =
     { "G90", DRILL_G_ZEROSET,     0 },  // Absolute Mode
     { "G00", DRILL_G_ROUT,        1 },  // Route Mode
     { "G05", DRILL_G_DRILL,       0 },  // Drill Mode
-    { "G85", DRILL_G_SLOT,        0 },  // Drill Mode slot (oval holes)
-    { "G01", DRILL_G_LINEARMOVE,  0 },  // Linear (Straight Line) Mode
-    { "G02", DRILL_G_CWMOVE,      0 },  // Circular CW Mode
-    { "G03", DRILL_G_CCWMOVE,     0 },  // Circular CCW Mode
-    { "G93", DRILL_G_ZERO_SET,    1 },  // Zero Set (XnnYmm and coordintes origin)
+    { "G85", DRILL_G_SLOT,        0 },  // Canned Mode slot (oval holes)
+    { "G01", DRILL_G_LINEARMOVE,  1 },  // Linear (Straight Line) routing Mode
+    { "G02", DRILL_G_CWMOVE,      1 },  // Circular CW Mode
+    { "G03", DRILL_G_CCWMOVE,     1 },  // Circular CCW Mode
+    { "G93", DRILL_G_ZERO_SET,    1 },  // Zero Set (XnnYmm and coordinates origin)
     { "",    DRILL_G_UNKNOWN,     0 },  // last item in list
 };
 
+
+bool GERBVIEW_FRAME::Read_EXCELLON_File( const wxString& aFullFileName )
+{
+    wxString msg;
+    int layerId = GetActiveLayer();      // current layer used in GerbView
+    GERBER_FILE_IMAGE_LIST* images = GetGerberLayout()->GetImagesList();
+    auto gerber_layer = images->GetGbrImage( layerId );
+
+    // OIf the active layer contains old gerber or nc drill data, remove it
+    if( gerber_layer )
+        Erase_Current_DrawLayer( false );
+
+    EXCELLON_IMAGE* drill_layer = new EXCELLON_IMAGE( layerId );
+
+    // Read the Excellon drill file:
+    bool success = drill_layer->LoadFile( aFullFileName );
+
+    if( !success )
+    {
+        delete drill_layer;
+        msg.Printf( _( "File %s not found" ), aFullFileName );
+        DisplayError( this, msg );
+        return false;
+    }
+
+    layerId = images->AddGbrImage( drill_layer, layerId );
+
+    if( layerId < 0 )
+    {
+        delete drill_layer;
+        DisplayError( this, _( "No room to load file" ) );
+        return false;
+    }
+
+    // Display errors list
+    if( drill_layer->GetMessages().size() > 0 )
+    {
+        HTML_MESSAGE_BOX dlg( this, _( "Error reading EXCELLON drill file" ) );
+        dlg.ListSet( drill_layer->GetMessages() );
+        dlg.ShowModal();
+    }
+
+    if( GetCanvas() )
+    {
+        for( GERBER_DRAW_ITEM* item = drill_layer->GetItemsList(); item; item = item->Next() )
+            GetCanvas()->GetView()->Add( (KIGFX::VIEW_ITEM*) item );
+    }
+
+    return success;
+}
 
 /*
  * Read a EXCELLON file.
@@ -165,64 +303,26 @@ static EXCELLON_CMD excellon_G_CmdList[] =
  *   integer 2.4 format in imperial units,
  *   integer 3.2 or 3.3 format (metric units).
  */
-bool GERBVIEW_FRAME::Read_EXCELLON_File( const wxString& aFullFileName )
+
+bool EXCELLON_IMAGE::LoadFile( const wxString & aFullFileName )
 {
-    wxString msg;
-    int layer = getActiveLayer();      // current layer used in GerbView
-
-    if( g_GERBER_List[layer] == NULL )
-    {
-        g_GERBER_List[layer] = new EXCELLON_IMAGE( this, layer );
-    }
-
-    EXCELLON_IMAGE* drill_Layer = (EXCELLON_IMAGE*) g_GERBER_List[layer];
+    // Set the default parmeter values:
+    ResetDefaultValues();
     ClearMessageList();
 
-    /* Read the gerber file */
-    FILE * file = wxFopen( aFullFileName, wxT( "rt" ) );
-    if( file == NULL )
-    {
-        msg.Printf( _( "File %s not found" ), GetChars( aFullFileName ) );
-        DisplayError( this, msg, 10 );
+    m_Current_File = wxFopen( aFullFileName, "rt" );
+
+    if( m_Current_File == NULL )
         return false;
-    }
 
-    wxString path = wxPathOnly( aFullFileName );
-
-    if( path != wxEmptyString )
-        wxSetWorkingDirectory( path );
-
-    bool success = drill_Layer->Read_EXCELLON_File( file, aFullFileName );
-
-    // Display errors list
-    if( m_Messages.size() > 0 )
-    {
-        HTML_MESSAGE_BOX dlg( this, _( "Files not found" ) );
-        dlg.ListSet( m_Messages );
-        dlg.ShowModal();
-    }
-    return success;
-}
-
-bool EXCELLON_IMAGE::Read_EXCELLON_File( FILE * aFile,
-                                        const wxString & aFullFileName )
-{
-    /* Set the gerber scale: */
-    ResetDefaultValues();
-
+    wxString msg;
     m_FileName = aFullFileName;
-    m_Current_File = aFile;
 
-    SetLocaleTo_C_standard();
+    LOCALE_IO toggleIo;
 
     // FILE_LINE_READER will close the file.
-    if( m_Current_File == NULL )
-    {
-        wxMessageBox( wxT("NULL!"), m_FileName );
-        return false;
-    }
-
     FILE_LINE_READER excellonReader( m_Current_File, m_FileName );
+
     while( true )
     {
         if( excellonReader.ReadLine() == 0 )
@@ -231,22 +331,22 @@ bool EXCELLON_IMAGE::Read_EXCELLON_File( FILE * aFile,
         char* line = excellonReader.Line();
         char* text = StrPurge( line );
 
-        if( *text == ';' )       // comment: skip line
+        if( *text == ';' || *text == 0 )       // comment: skip line or empty malformed line
             continue;
 
         if( m_State == EXCELLON_IMAGE::READ_HEADER_STATE )
         {
-            Execute_HEADER_Command( text );
+            Execute_HEADER_And_M_Command( text );
         }
         else
         {
             switch( *text )
             {
             case 'M':
-                Execute_HEADER_Command( text );
+                Execute_HEADER_And_M_Command( text );
                 break;
 
-            case 'G': /* Line type Gxx : command */
+            case 'G':       // Line type Gxx : command
                 Execute_EXCELLON_G_Command( text );
                 break;
 
@@ -272,38 +372,41 @@ bool EXCELLON_IMAGE::Read_EXCELLON_File( FILE * aFile,
                 break;
 
             default:
-            {
-                wxString msg;
-                msg.Printf( wxT( "Unexpected symbol &lt;%c&gt;" ), *text );
-                if( GetParent() )
-                    GetParent()->ReportMessage( msg );
-            }
+                msg.Printf( "Unexpected symbol 0x%2.2X &lt;%c&gt;", *text, *text );
+                AddMessageToList( msg );
                 break;
             }   // End switch
         }
     }
-    SetLocaleTo_Default();
+
+    // Add our file attribute, to identify the drill file
+    X2_ATTRIBUTE dummy;
+    char* text = (char*)file_attribute;
+    int dummyline = 0;
+    dummy.ParseAttribCmd( NULL, NULL, 0, text, dummyline );
+    delete m_FileFunction;
+    m_FileFunction = new X2_ATTRIBUTE_FILEFUNCTION( dummy );
+
+    m_InUse = true;
+
     return true;
 }
 
 
-bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
+bool EXCELLON_IMAGE::Execute_HEADER_And_M_Command( char*& text )
 {
     EXCELLON_CMD* cmd = NULL;
-    int           iprm;
-    double        dprm;
-    D_CODE*       dcode;
     wxString      msg;
 
     // Search command in list
-    EXCELLON_CMD* candidate;
-
     for( unsigned ii = 0; ; ii++ )
     {
-        candidate = &excellonHeaderCmdList[ii];
+        EXCELLON_CMD* candidate = &excellonHeaderCmdList[ii];
         int len = candidate->m_Name.size();
+
         if( len == 0 )                                                  // End of list reached
             break;
+
         if( candidate->m_Name.compare( 0, len, text, len ) == 0 )       // found.
         {
             cmd   = candidate;
@@ -314,8 +417,8 @@ bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
 
     if( !cmd )
     {
-        msg.Printf( wxT( "Unknown Excellon command &lt;%s&gt;" ), text );
-        ReportMessage( msg );
+        msg.Printf( _( "Unknown Excellon command &lt;%s&gt;" ), text );
+        AddMessageToList( msg );
         while( *text )
             text++;
 
@@ -331,9 +434,11 @@ bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
         break;
 
     case DRILL_M_END:
-        break;
+    case DRILL_M_ENDFILE:
+        // if a route command is in progress, finish it
+        if( m_RouteModeOn )
+            FinishRouteCommand();
 
-    case DRILL_M_ENDREWIND:
         break;
 
     case DRILL_M_MESSAGE:
@@ -358,31 +463,18 @@ bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
         SelectUnits( true );
         break;
 
-    case DRILL_METRICHEADER:    // command like METRIC,TZ or METRIC,LZ
-        SelectUnits( true );
+    case DRILL_IMPERIAL_HEADER:  // command like INCH,TZ or INCH,LZ
+    case DRILL_METRIC_HEADER:    // command like METRIC,TZ or METRIC,LZ
+        SelectUnits( cmd->m_Code == DRILL_METRIC_HEADER ? true : false );
+
         if( *text != ',' )
         {
-            ReportMessage( _( "METRIC command has no parameter" ) );
-            break;
-        }
-        text++;     // skip separator
-        if( *text == 'T' )
+            // No TZ or LZ specified. Should be a decimal format
+            // but this is not always the case. Use default TZ setting as default
             m_NoTrailingZeros = false;
-        else
-            m_NoTrailingZeros = true;
-        break;
-
-    case DRILL_M_IMPERIAL:
-        SelectUnits( false );
-        break;
-
-    case DRILL_IMPERIALHEADER:  // command like INCH,TZ or INCH,LZ
-        SelectUnits( false );
-        if( *text != ',' )
-        {
-            ReportMessage( _( "INCH command has no parameter" ) );
             break;
         }
+
         text++;     // skip separator
         if( *text == 'T' )
             m_NoTrailingZeros = false;
@@ -408,17 +500,17 @@ bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
     case DRILL_INCREMENTALHEADER:
         if( *text != ',' )
         {
-            ReportMessage( _( "ICI command has no parameter" ) );
+            AddMessageToList( "ICI command has no parameter" );
             break;
         }
         text++;     // skip separator
         // Parameter should be ON or OFF
-        if( strnicmp( text, "OFF", 3 ) == 0 )
+        if( strncasecmp( text, "OFF", 3 ) == 0 )
             m_Relative = false;
-        else if( strnicmp( text, "ON", 2 ) == 0 )
+        else if( strncasecmp( text, "ON", 2 ) == 0 )
             m_Relative = true;
         else
-            ReportMessage( _( "ICI command has incorrect parameter" ) );
+            AddMessageToList( "ICI command has incorrect parameter" );
         break;
 
     case DRILL_TOOL_CHANGE_STOP:
@@ -440,41 +532,18 @@ bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
         break;
 
     case DRILL_TOOL_INFORMATION:
+        readToolInformation( text );
+        break;
 
-        // Read a tool definition like T1C0.02:
-        // or T1F00S00C0.02 or T1C0.02F00S00
-        // Read tool number:
-        iprm = ReadInt( text, false );
+    case DRILL_M_TOOL_DOWN:      // tool down (starting a routed hole or polyline)
+        // Only the last position is usefull:
+        if( m_RoutePositions.size() > 1 )
+            m_RoutePositions.erase( m_RoutePositions.begin(), m_RoutePositions.begin() + m_RoutePositions.size() - 1 );
 
-        // Skip Feed rate and Spindle speed, if any here
-        while( *text && ( *text == 'F' || *text == 'S' ) )
-        {
-            text++;
-            ReadInt( text, false );
-        }
+        break;
 
-        // Read tool shape
-        if( *text != 'C' )
-            ReportMessage( wxString:: Format(
-                           _( "Tool definition <%c> not supported" ), *text ) );
-        if( *text )
-            text++;
-
-        //read tool diameter:
-        dprm = ReadDouble( text, false );
-        m_Has_DCode = true;
-
-        // Initialize Dcode to handle this Tool
-        dcode = GetDCODE( iprm + FIRST_DCODE );     // Remember: dcodes are >= FIRST_DCODE
-        if( dcode == NULL )
-            break;
-        // conv_scale = scaling factor from inch to Internal Unit
-        double conv_scale = IU_PER_MILS * 1000;
-        if( m_GerbMetric )
-            conv_scale /= 25.4;
-
-        dcode->m_Size.x = dcode->m_Size.y = KiROUND( dprm * conv_scale );
-        dcode->m_Shape  = APT_CIRCLE;
+    case DRILL_M_TOOL_UP:        // tool up (ending a routed polyline)
+        FinishRouteCommand();
         break;
     }
 
@@ -485,49 +554,134 @@ bool EXCELLON_IMAGE::Execute_HEADER_Command( char*& text )
 }
 
 
+bool EXCELLON_IMAGE::readToolInformation( char*& aText )
+{
+    // Read a tool definition like T1C0.02 or T1F00S00C0.02 or T1C0.02F00S00
+    // and enter the TCODE param in list (using the D_CODE param management, which
+    // is similar to TCODE params.
+    if( *aText == 'T' )     // This is the beginning of the definition
+        aText++;
+
+    // Read tool number:
+    int iprm = ReadInt( aText, false );
+
+    // Skip Feed rate and Spindle speed, if any here
+    while( *aText && ( *aText == 'F' || *aText == 'S' ) )
+    {
+        aText++;
+        ReadInt( aText, false );
+    }
+
+    // Read tool shape
+    if( ! *aText )
+        AddMessageToList( wxString:: Format(
+                       _( "Tool definition shape not found" ) ) );
+    else if( *aText != 'C' )
+        AddMessageToList( wxString:: Format(
+                       _( "Tool definition '%c' not supported" ), *aText ) );
+    if( *aText )
+        aText++;
+
+    //read tool diameter:
+    double dprm = ReadDouble( aText, false );
+    m_Has_DCode = true;
+
+    // Initialize Dcode to handle this Tool
+    // Remember: dcodes are >= FIRST_DCODE
+    D_CODE* dcode = GetDCODEOrCreate( iprm + FIRST_DCODE );
+
+    if( dcode == NULL )
+        return false;
+
+    // conv_scale = scaling factor from inch to Internal Unit
+    double conv_scale = IU_PER_MILS * 1000;
+
+    if( m_GerbMetric )
+        conv_scale /= 25.4;
+
+    dcode->m_Size.x = dcode->m_Size.y = KiROUND( dprm * conv_scale );
+    dcode->m_Shape  = APT_CIRCLE;
+    dcode->m_Defined  = true;
+
+    return true;
+}
+
+
 bool EXCELLON_IMAGE::Execute_Drill_Command( char*& text )
 {
     D_CODE*  tool;
     GERBER_DRAW_ITEM * gbritem;
+
     while( true )
     {
         switch( *text )
         {
             case 'X':
-                ReadXYCoord( text );
-                break;
             case 'Y':
-                ReadXYCoord( text );
+                ReadXYCoord( text, true );
+
+                if( *text == 'I' || *text == 'J' )
+                    ReadIJCoord( text );
+
                 break;
+
             case 'G':  // G85 is found here for oval holes
                 m_PreviousPos = m_CurrentPos;
                 Execute_EXCELLON_G_Command( text );
                 break;
+
             case 0:     // E.O.L: execute command
-                tool = GetDCODE( m_Current_Tool, false );
+                if( m_RouteModeOn )
+                {
+                    // We are in routing mode, and this is an intermediate point.
+                    // So just store it
+                    int rmode = 0;  // linear routing.
+
+                    if( m_Iterpolation == GERB_INTERPOL_ARC_NEG )
+                        rmode = ROUTE_CW;
+                    else if( m_Iterpolation == GERB_INTERPOL_ARC_POS )
+                        rmode = ROUTE_CCW;
+
+                    if( m_LastArcDataType == ARC_INFO_TYPE_CENTER )
+                    {
+                        EXCELLON_ROUTE_COORD point( m_CurrentPos, m_IJPos, rmode );
+                        m_RoutePositions.push_back( point );
+                    }
+                    else
+                    {
+                        EXCELLON_ROUTE_COORD point( m_CurrentPos, m_ArcRadius, rmode );
+                        m_RoutePositions.push_back( point );
+                    }
+                    return true;
+                }
+
+                tool = GetDCODE( m_Current_Tool );
                 if( !tool )
                 {
                     wxString msg;
-                    msg.Printf( _( "Tool <%d> not defined" ), m_Current_Tool );
-                    ReportMessage( msg );
+                    msg.Printf( _( "Tool %d not defined" ), m_Current_Tool );
+                    AddMessageToList( msg );
                     return false;
                 }
-                gbritem = new GERBER_DRAW_ITEM( GetParent()->GetGerberLayout(), this );
-                GetParent()->GetGerberLayout()->m_Drawings.Append( gbritem );
-                if( m_SlotOn )  // Oval hole
+
+                gbritem = new GERBER_DRAW_ITEM( this );
+                m_Drawings.Append( gbritem );
+
+                if( m_SlotOn )  // Oblong hole
                 {
-                    fillLineGBRITEM( gbritem,
-                                    tool->m_Num_Dcode, GetParent()->getActiveLayer(),
+                    fillLineGBRITEM( gbritem, tool->m_Num_Dcode,
                                     m_PreviousPos, m_CurrentPos,
                                     tool->m_Size, false );
+                    // the hole is made: reset the slot on command (G85)
+                    // (it is needed for each oblong hole)
+                    m_SlotOn = false;
                 }
                 else
                 {
-                    fillFlashedGBRITEM( gbritem, tool->m_Shape,
-                                    tool->m_Num_Dcode, GetParent()->getActiveLayer(),
-                                    m_CurrentPos,
-                                    tool->m_Size, false );
+                    fillFlashedGBRITEM( gbritem, tool->m_Shape, tool->m_Num_Dcode,
+                                    m_CurrentPos, tool->m_Size, false );
                 }
+
                 StepAndRepeatItem( *gbritem );
                 m_PreviousPos = m_CurrentPos;
                 return true;
@@ -545,18 +699,35 @@ bool EXCELLON_IMAGE::Execute_Drill_Command( char*& text )
 
 bool EXCELLON_IMAGE::Select_Tool( char*& text )
 {
+    // Select the tool from the command line Tn, with n = 1 ... TOOLS_MAX_COUNT - 1
+    // Because some drill file have an embedded TCODE definition (like T1C.008F0S0)
+    // in tool selection command, if the tool is not defined in list,
+    // and the definition is embedded, it will be entered in list
+    char * startline = text;    // the tool id starts here.
     int tool_id = TCodeNumber( text );
 
+    // T0 is legal, but is not a selection tool. it is a special command
     if( tool_id >= 0 )
     {
-        tool_id += FIRST_DCODE;     // Remember: dcodes are >= FIRST_DCODE
-        if( tool_id > (TOOLS_MAX_COUNT - 1) )
-            tool_id = TOOLS_MAX_COUNT - 1;
-        m_Current_Tool = tool_id;
-        D_CODE* pt_Dcode = GetDCODE( tool_id , false );
-        if( pt_Dcode )
-            pt_Dcode->m_InUse = true;
+        int dcode_id = tool_id + FIRST_DCODE;     // Remember: dcodes are >= FIRST_DCODE
+
+        if( dcode_id > (TOOLS_MAX_COUNT - 1) )
+            dcode_id = TOOLS_MAX_COUNT - 1;
+
+        m_Current_Tool = dcode_id;
+        D_CODE* currDcode = GetDCODEOrCreate( dcode_id, true );
+
+        if( currDcode == NULL && tool_id > 0 )   // if the definition is embedded, enter it
+        {
+            text = startline;   // text starts at the beginning of the command
+            readToolInformation( text );
+            currDcode = GetDCODE( dcode_id );
+        }
+
+        if( currDcode )
+            currDcode->m_InUse = true;
     }
+
     while( *text )
         text++;
 
@@ -593,18 +764,33 @@ bool EXCELLON_IMAGE::Execute_EXCELLON_G_Command( char*& text )
     switch( id )
     {
     case DRILL_G_ZERO_SET:
-        ReadXYCoord( text );
+        ReadXYCoord( text, true );
         m_Offset = m_CurrentPos;
         break;
 
     case DRILL_G_ROUT:
         m_SlotOn = false;
-        m_PolygonFillMode = true;
+
+        if( m_RouteModeOn )
+            FinishRouteCommand();
+
+        m_RouteModeOn = true;
+        m_RoutePositions.clear();
+        m_LastArcDataType = ARC_INFO_TYPE_NONE;
+        ReadXYCoord( text, true );
+        // This is the first point (starting point) of routing
+        m_RoutePositions.push_back( EXCELLON_ROUTE_COORD( m_CurrentPos ) );
         break;
 
     case DRILL_G_DRILL:
         m_SlotOn = false;
-        m_PolygonFillMode = false;
+
+        if( m_RouteModeOn )
+            FinishRouteCommand();
+
+        m_RouteModeOn = false;
+        m_RoutePositions.clear();
+        m_LastArcDataType = ARC_INFO_TYPE_NONE;
         break;
 
     case DRILL_G_SLOT:
@@ -612,15 +798,36 @@ bool EXCELLON_IMAGE::Execute_EXCELLON_G_Command( char*& text )
         break;
 
     case DRILL_G_LINEARMOVE:
+        m_LastArcDataType = ARC_INFO_TYPE_NONE;
         m_Iterpolation = GERB_INTERPOL_LINEAR_1X;
+        ReadXYCoord( text, true );
+        m_RoutePositions.push_back( EXCELLON_ROUTE_COORD( m_CurrentPos ) );
         break;
 
     case DRILL_G_CWMOVE:
         m_Iterpolation = GERB_INTERPOL_ARC_NEG;
+        ReadXYCoord( text, true );
+
+        if( *text == 'I' || *text == 'J' )
+            ReadIJCoord( text );
+
+        if( m_LastArcDataType == ARC_INFO_TYPE_CENTER )
+            m_RoutePositions.push_back( EXCELLON_ROUTE_COORD( m_CurrentPos, m_IJPos, ROUTE_CW ) );
+        else
+            m_RoutePositions.push_back( EXCELLON_ROUTE_COORD( m_CurrentPos, m_ArcRadius, ROUTE_CW ) );
         break;
 
     case DRILL_G_CCWMOVE:
         m_Iterpolation = GERB_INTERPOL_ARC_POS;
+        ReadXYCoord( text, true );
+
+        if( *text == 'I' || *text == 'J' )
+            ReadIJCoord( text );
+
+        if( m_LastArcDataType == ARC_INFO_TYPE_CENTER )
+            m_RoutePositions.push_back( EXCELLON_ROUTE_COORD( m_CurrentPos, m_IJPos, ROUTE_CCW ) );
+        else
+            m_RoutePositions.push_back( EXCELLON_ROUTE_COORD( m_CurrentPos, m_ArcRadius, ROUTE_CCW ) );
         break;
 
     case DRILL_G_ABSOLUTE:
@@ -633,15 +840,12 @@ bool EXCELLON_IMAGE::Execute_EXCELLON_G_Command( char*& text )
 
     case DRILL_G_UNKNOWN:
     default:
-    {
-        wxString msg;
-        msg.Printf( _( "Unknown Excellon G Code: &lt;%s&gt;" ), GetChars(FROM_UTF8(gcmd)) );
-        ReportMessage( msg );
+        AddMessageToList( wxString::Format( _( "Unknown Excellon G Code: &lt;%s&gt;" ), FROM_UTF8(gcmd) ) );
         while( *text )
             text++;
         return false;
     }
-    }
+
     return success;
 }
 
@@ -655,8 +859,8 @@ void EXCELLON_IMAGE::SelectUnits( bool aMetric )
      *  Five digit 10 micron resolution (000.00)
      *  Six digit 10 micron resolution (0000.00)
      *  Six digit micron resolution (000.000)
-     */
-    /* Inches: Default fmt = 2.4 for X and Y axis: 6 digits with  0.0001 resolution
+     *
+     * Inches: Default fmt = 2.4 for X and Y axis: 6 digits with  0.0001 resolution
      * metric: Default fmt = 3.3 for X and Y axis: 6 digits, 1 micron resolution
      */
     if( aMetric )
@@ -673,4 +877,59 @@ void EXCELLON_IMAGE::SelectUnits( bool aMetric )
         m_FmtScale.x = m_FmtScale.y = fmtMantissaInch;
         m_FmtLen.x = m_FmtLen.y = fmtIntegerInch+fmtMantissaInch;
     }
+}
+
+
+void EXCELLON_IMAGE::FinishRouteCommand()
+{
+    // Ends a route command started by M15 ot G01, G02 or G03 command
+    // if a route command is not in progress, do nothing
+
+    if( !m_RouteModeOn )
+        return;
+
+    D_CODE* tool = GetDCODE( m_Current_Tool );
+
+    if( !tool )
+    {
+        AddMessageToList( wxString::Format( "Unknown tool code %d", m_Current_Tool ) );
+        return;
+    }
+
+    for( size_t ii = 1; ii < m_RoutePositions.size(); ii++ )
+    {
+        GERBER_DRAW_ITEM* gbritem = new GERBER_DRAW_ITEM( this );
+
+        if( m_RoutePositions[ii].m_rmode == 0 )     // linear routing
+        {
+        fillLineGBRITEM( gbritem, tool->m_Num_Dcode,
+                        m_RoutePositions[ii-1].GetPos(), m_RoutePositions[ii].GetPos(),
+                        tool->m_Size, false );
+        }
+        else    // circular (cw or ccw) routing
+        {
+        bool rot_ccw = m_RoutePositions[ii].m_rmode == ROUTE_CW;
+        int radius = m_RoutePositions[ii].m_radius; // Can be adjusted by computeCenter.
+        wxPoint center;
+
+        if( m_RoutePositions[ii].m_arc_type_info == ARC_INFO_TYPE_CENTER )
+            center = wxPoint( m_RoutePositions[ii].m_cx, m_RoutePositions[ii].m_cy );
+        else
+            center = computeCenter( m_RoutePositions[ii-1].GetPos(),
+                                    m_RoutePositions[ii].GetPos(), radius, rot_ccw );
+
+        fillArcGBRITEM( gbritem, tool->m_Num_Dcode,
+                         m_RoutePositions[ii-1].GetPos(), m_RoutePositions[ii].GetPos(),
+                         center - m_RoutePositions[ii-1].GetPos(),
+                         tool->m_Size, not rot_ccw , true,
+                         false );
+        }
+
+        m_Drawings.Append( gbritem );
+
+        StepAndRepeatItem( *gbritem );
+    }
+
+    m_RoutePositions.clear();
+    m_RouteModeOn = false;
 }

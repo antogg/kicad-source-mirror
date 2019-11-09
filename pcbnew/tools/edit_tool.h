@@ -1,8 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2015 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
+ * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,131 +27,171 @@
 #define __EDIT_TOOL_H
 
 #include <math/vector2d.h>
-#include <tool/tool_interactive.h>
-#include <view/view_group.h>
+#include <tools/pcb_tool_base.h>
+#include <tools/selection_tool.h>
+#include <status_popup.h>
 
+
+class BOARD_COMMIT;
 class BOARD_ITEM;
-class SELECTION_TOOL;
+class CONNECTIVITY_DATA;
+class STATUS_TEXT_POPUP;
 
-namespace KIGFX
-{
-class VIEW_GROUP;
+namespace KIGFX {
+    namespace PREVIEW {
+        class RULER_ITEM;
+    }
 }
+
+/**
+ * Function EditToolSelectionFilter
+ *
+ * A CLIENT_SELECTION_FILTER which promotes pad selections to their parent modules and
+ * optionally excludes locked items and/or transient items (such as markers).
+ */
+
+#define EXCLUDE_LOCKED      0x0001
+#define EXCLUDE_LOCKED_PADS 0x0002
+#define EXCLUDE_TRANSIENTS  0x0004
+
+void EditToolSelectionFilter( GENERAL_COLLECTOR& aCollector, int aFlags );
 
 /**
  * Class EDIT_TOOL
  *
- * The interactive edit tool. Allows to move, rotate, flip and change properties of items selected
+ * The interactive edit tool. Allows one to move, rotate, flip and change properties of items selected
  * using the pcbnew.InteractiveSelection tool.
  */
 
-class EDIT_TOOL : public TOOL_INTERACTIVE
+class EDIT_TOOL : public PCB_TOOL_BASE
 {
 public:
     EDIT_TOOL();
 
     /// @copydoc TOOL_INTERACTIVE::Reset()
-    void Reset( RESET_REASON aReason );
+    void Reset( RESET_REASON aReason ) override;
 
     /// @copydoc TOOL_INTERACTIVE::Init()
-    bool Init();
+    bool Init() override;
+
+    ///> Find an item and start moving.
+    int GetAndPlace( const TOOL_EVENT& aEvent );
 
     /**
-     * Function Main()
-     *
+     * Function Move()
      * Main loop in which events are handled.
-     * @param aEvent is the handled event.
      */
-    int Main( TOOL_EVENT& aEvent );
+    int Move( const TOOL_EVENT& aEvent );
 
     /**
-     * Function Edit()
-     *
+     * Function Drag()
+     * Invoke the PNS router to drag tracks.
+     */
+    int Drag( const TOOL_EVENT& aEvent );
+
+    /**
+     * Function Properties()
      * Displays properties window for the selected object.
      */
-    int Properties( TOOL_EVENT& aEvent );
+    int Properties( const TOOL_EVENT& aEvent );
 
     /**
      * Function Rotate()
-     *
      * Rotates currently selected items.
      */
-    int Rotate( TOOL_EVENT& aEvent );
+    int Rotate( const TOOL_EVENT& aEvent );
 
     /**
      * Function Flip()
-     *
      * Rotates currently selected items. The rotation point is the current cursor position.
      */
-    int Flip( TOOL_EVENT& aEvent );
+    int Flip( const TOOL_EVENT& aEvent );
+
+    /**
+     * Function Mirror
+     * Mirrors the current selection. The mirror axis passes through the current point.
+     */
+    int Mirror( const TOOL_EVENT& aEvent );
+
+    int ChangeTrackWidth( const TOOL_EVENT& aEvent );
 
     /**
      * Function Remove()
-     *
      * Deletes currently selected items. The rotation point is the current cursor position.
      */
-    int Remove( TOOL_EVENT& aEvent );
+    int Remove( const TOOL_EVENT& aEvent );
 
     /**
-     * Function EditModules()
-     *
-     * Toggles edit module mode. When enabled, one may select parts of modules individually
-     * (graphics, pads, etc.), so they can be modified.
-     * @param aEnabled decides if the mode should be enabled.
+     * Function Duplicate()
+     * Duplicates the current selection and starts a move action.
      */
-    void EditModules( bool aEnabled )
-    {
-        m_editModules = aEnabled;
-    }
+    int Duplicate( const TOOL_EVENT& aEvent );
 
-private:
-    ///> Selection tool used for obtaining selected items
-    SELECTION_TOOL* m_selectionTool;
+    /**
+     * Function MoveExact()
+     * Invokes a dialog box to allow moving of the item by an exact amount.
+     */
+    int MoveExact( const TOOL_EVENT& aEvent );
 
-    ///> Flag determining if anything is being dragged right now
-    bool m_dragging;
+    /**
+     * Function CreateArray()
+     * Creates an array of the selected items, invoking the array editor dialog to set the options.
+     */
+    int CreateArray( const TOOL_EVENT& aEvent );
 
-    ///> Offset from the dragged item's center (anchor)
-    wxPoint m_offset;
+    ///> Launches a tool to measure between points
+    int MeasureTool( const TOOL_EVENT& aEvent );
 
-    ///> Last cursor position (needed for getModificationPoint() to avoid changes
-    ///> of edit reference point).
-    VECTOR2I m_cursor;
+    /**
+     * Function FootprintFilter()
+     * A selection filter which prunes the selection to contain only items of type PCB_MODULE_T
+     */
+    static void FootprintFilter( const VECTOR2I&, GENERAL_COLLECTOR& aCollector );
 
-    /// Edit module mode flag
-    bool m_editModules;
-
-    ///> Removes and frees a single BOARD_ITEM.
-    void remove( BOARD_ITEM* aItem );
+    /**
+     * Function PadFilter()
+     * A selection filter which prunes the selection to contain only items of type PCB_PAD_T
+     */
+    static void PadFilter( const VECTOR2I&, GENERAL_COLLECTOR& aCollector );
 
     ///> Sets up handlers for various events.
-    void setTransitions();
+    void setTransitions() override;
 
-    ///> The required update flag for modified items
-    KIGFX::VIEW_ITEM::VIEW_UPDATE_FLAGS m_updateFlag;
+    /**
+     * Function copyToClipboard()
+     * Sends the current selection to the clipboard by formatting it as a fake pcb
+     * see AppendBoardFromClipboard for importing
+     */
+    int copyToClipboard( const TOOL_EVENT& aEvent );
 
-    ///> Enables higher order update flag
-    void enableUpdateFlag( KIGFX::VIEW_ITEM::VIEW_UPDATE_FLAGS aFlag )
-    {
-        if( m_updateFlag < aFlag )
-            m_updateFlag = aFlag;
-    }
+    /**
+     * Function cutToClipboard()
+     * Cuts the current selection to the clipboard by formatting it as a fake pcb
+     * see AppendBoardFromClipboard for importing
+     */
+    int cutToClipboard( const TOOL_EVENT& aEvent );
 
-    ///> Updates ratsnest for selected items.
-    ///> @param aRedraw says if selected items should be drawn using the simple mode (e.g. one line
-    ///> per item).
-    void updateRatsnest( bool aRedraw );
+    BOARD_COMMIT* GetCurrentCommit() const { return m_commit.get(); }
 
+private:
     ///> Returns the right modification point (e.g. for rotation), depending on the number of
     ///> selected items.
-    wxPoint getModificationPoint( const SELECTION& aSelection );
+    bool updateModificationPoint( PCBNEW_SELECTION& aSelection );
 
-    ///> If there are no items currently selected, it tries to choose the item that is under
-    ///> the cursor or displays a disambiguation menu if there are multpile items.
-    bool makeSelection( const SELECTION& aSelection );
+    int EditFpInFpEditor( const TOOL_EVENT& aEvent );
 
-    ///> Updates view with the changes in the list.
-    void processChanges( const PICKED_ITEMS_LIST* aList );
+    bool invokeInlineRouter( int aDragMode );
+    bool isInteractiveDragEnabled() const;
+
+    bool pickCopyReferencePoint( VECTOR2I& aReferencePoint );
+
+private:
+    SELECTION_TOOL* m_selectionTool;   // Selection tool used for obtaining selected items
+    bool            m_dragging;        // Indicates objects are being dragged right now
+    bool            m_lockedSelected;  // Determines if we prompt before removing locked objects
+    VECTOR2I        m_cursor;          // Last cursor position (needed for getModificationPoint()
+                                       // to avoid changes of edit reference point).
+    std::unique_ptr<BOARD_COMMIT> m_commit;
 };
 
 #endif

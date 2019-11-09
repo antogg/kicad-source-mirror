@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013  CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -29,31 +30,40 @@
 
 #include "pns_item.h"
 
-class PNS_SOLID : public PNS_ITEM
+namespace PNS {
+
+class SOLID : public ITEM
 {
 public:
-    PNS_SOLID() : PNS_ITEM( SOLID ), m_shape( NULL )
+    SOLID() : ITEM( SOLID_T ), m_shape( NULL )
     {
         m_movable = false;
+        m_padToDie = 0;
     }
 
-    ~PNS_SOLID()
+    ~SOLID()
     {
         delete m_shape;
     }
 
-    PNS_SOLID( const PNS_SOLID& aSolid ) :
-        PNS_ITEM ( aSolid )
+    SOLID( const SOLID& aSolid ) :
+        ITEM( aSolid )
     {
         m_shape = aSolid.m_shape->Clone();
         m_pos = aSolid.m_pos;
+        m_padToDie = aSolid.m_padToDie;
     }
-    
-    PNS_ITEM* Clone() const;
 
-    const SHAPE* Shape() const { return m_shape; }
+    static inline bool ClassOf( const ITEM* aItem )
+    {
+        return aItem && SOLID_T == aItem->Kind();
+    }
 
-    const SHAPE_LINE_CHAIN Hull( int aClearance = 0, int aWalkaroundThickness = 0 ) const;
+    ITEM* Clone() const override;
+
+    const SHAPE* Shape() const override { return m_shape; }
+
+    const SHAPE_LINE_CHAIN Hull( int aClearance = 0, int aWalkaroundThickness = 0 ) const override;
 
     void SetShape( SHAPE* shape )
     {
@@ -73,19 +83,43 @@ public:
         m_pos = aCenter;
     }
 
-    virtual VECTOR2I Anchor( int aN ) const
+    int GetPadToDie() const
+    {
+        return m_padToDie;
+    }
+
+    void SetPadToDie( int aLen )
+    {
+        m_padToDie = aLen;
+    }
+
+    virtual VECTOR2I Anchor( int aN ) const override
     {
         return m_pos;
     }
 
-    virtual int AnchorCount() const 
+    virtual int AnchorCount() const override
     {
         return 1;
+    }
+
+    VECTOR2I Offset() const
+    {
+        return m_offset;
+    }
+
+    void SetOffset( const VECTOR2I& aOffset )
+    {
+        m_offset = aOffset;
     }
 
 private:
     VECTOR2I    m_pos;
     SHAPE*      m_shape;
+    VECTOR2I    m_offset;
+    int         m_padToDie;
 };
+
+}
 
 #endif

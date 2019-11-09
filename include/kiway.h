@@ -1,10 +1,8 @@
-#ifndef KIWAY_H_
-#define KIWAY_H_
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2016 KiCad Developers, see CHANGELOG.TXT for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,6 +22,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#ifndef KIWAY_H_
+#define KIWAY_H_
 
 /*
 
@@ -56,7 +56,7 @@ CMake target must be defined to build either. Whether that is a separate build
 or not is not the important thing. Simply having a single CMake target has
 advantages. (Each builder person will have his/her own intentions relative to
 use of python or not.) Once a DSO is python capable, it can be driven by any
-number of python program tops, including demo-ing (automaton) and testing
+number of python program tops, including demo-ing (automation) and testing
 separately.</li>
 
 
@@ -103,6 +103,7 @@ as such!  As such, it is OK to use UTF8 characters:
 #include <project.h>
 #include <frame_type.h>
 #include <mail_type.h>
+#include <ki_exception.h>
 
 
 #define VTBL_ENTRY          virtual
@@ -114,14 +115,17 @@ as such!  As such, it is OK to use UTF8 characters:
 // be mangled.
 #define KIFACE_INSTANCE_NAME_AND_VERSION   "KIFACE_1"
 
-#if defined(__linux__)
+#ifndef SWIG
+#if defined(__linux__) || defined(__FreeBSD__)
  #define LIB_ENV_VAR    wxT( "LD_LIBRARY_PATH" )
 #elif defined(__WXMAC__)
  #define LIB_ENV_VAR    wxT( "DYLD_LIBRARY_PATH" )
-#elif defined(__MINGW32__)
+#elif defined(_WIN32)
  #define LIB_ENV_VAR    wxT( "PATH" )
+#else
+ #error Platform support missing
 #endif
-
+#endif  // SWIG
 
 class wxConfigBase;
 class wxWindow;
@@ -129,6 +133,7 @@ class wxConfigBase;
 class PGM_BASE;
 class KIWAY;
 class KIWAY_PLAYER;
+class wxTopLevelWindow;
 
 
 /**
@@ -148,6 +153,8 @@ struct KIFACE
     // The order of functions establishes the vtable sequence, do not change the
     // order of functions in this listing unless you recompile all clients of
     // this interface.
+
+    virtual ~KIFACE() throw() {}
 
 #define KFCTL_STANDALONE        (1<<0)  ///< Am running as a standalone Top.
 #define KFCTL_CPP_PROJECT_SUITE (1<<1)  ///< Am running under C++ project mgr, possibly with others
@@ -198,7 +205,7 @@ struct KIFACE
      * @param aCtlBits consists of bit flags from the set of KFCTL_* \#defines above.
      *
      * @return wxWindow* - and if not NULL, should be cast into the known type using
-     *  and old school cast.  dynamic_cast is problemenatic since it needs typeinfo probably
+     *  and old school cast.  dynamic_cast is problematic since it needs typeinfo probably
      *  not contained in the caller's link image.
      */
     VTBL_ENTRY  wxWindow* CreateWindow( wxWindow* aParent, int aClassId,
@@ -228,7 +235,7 @@ struct KIFACE
  * having to link to the top process module which houses the KIWAY(s).  More importantly
  * it makes it possible to send custom wxEvents between DSOs and from the top
  * process module down into the DSOs.  The latter capability is thought useful
- * for driving the lower DSOs from a python test rig or for demo (automaton) purposes.
+ * for driving the lower DSOs from a python test rig or for demo (automation) purposes.
  * <p>
  * Most all calls are via virtual functions, which means C++ vtables
  * are used to hold function pointers and eliminate the need to link to specific
@@ -250,7 +257,7 @@ struct KIFACE
  */
 class KIWAY : public wxEvtHandler
 {
-    friend class PGM_SINGLE_TOP;        // can use set_kiface()
+    friend struct PGM_SINGLE_TOP;        // can use set_kiface()
 
 public:
     /// Known KIFACE implementations
@@ -267,6 +274,8 @@ public:
         KIWAY_FACE_COUNT
     };
 
+    ~KIWAY() throw () {}
+
     /**
      * Function KifaceType
      * is a simple mapping function which returns the FACE_T which is known to
@@ -275,7 +284,6 @@ public:
      * @return KIWAY::FACE_T - a valid value or FACE_T(-1) if given a bad aFrameType.
      */
     static FACE_T KifaceType( FRAME_T aFrameType );
-
 
     // If you change the vtable, recompile all of KiCad.
 
@@ -296,11 +304,17 @@ public:
      * @param aFrameType is from enum #FRAME_T.
      * @param doCreate when true asks that the player be created if it is not
      *   already created, false means do not create and maybe return NULL.
+     * @param aParent is a parent for modal KIWAY_PLAYER frames, otherwise NULL
+     *  used only when doCreate = true and by KIWAY_PLAYER frames created in modal form
+     * because the are using the wxFLOAT_ON_PARENT style
      *
      * @return KIWAY_PLAYER* - a valid opened KIWAY_PLAYER or NULL if there
      *  is something wrong or doCreate was false and the player has yet to be created.
+     *
+     * @throw IO_ERROR if the *.kiface file could not be found, filled with text saying what.
      */
-    VTBL_ENTRY KIWAY_PLAYER* Player( FRAME_T aFrameType, bool doCreate = true );
+    VTBL_ENTRY KIWAY_PLAYER* Player( FRAME_T aFrameType, bool doCreate = true,
+                                     wxTopLevelWindow* aParent = NULL );
 
     /**
      * Function PlayerClose
@@ -330,7 +344,7 @@ public:
      * aCommand in there.
      */
     VTBL_ENTRY void ExpressMail( FRAME_T aDestination, MAIL_T aCommand,
-            const std::string& aPayload, wxWindow* aSource = NULL );
+                                 std::string& aPayload, wxWindow* aSource = NULL );
 
     /**
      * Function Prj
@@ -346,6 +360,13 @@ public:
      */
     VTBL_ENTRY void SetLanguage( int aLanguage );
 
+    /**
+     * Function CommonSettingsChanged
+     * Calls CommonSettingsChanged() on all KIWAY_PLAYERs.
+     * Used after changing suite-wide options such as panning, autosave interval, etc.
+     */
+    VTBL_ENTRY void CommonSettingsChanged( bool aEnvVarsChanged );
+
     KIWAY( PGM_BASE* aProgram, int aCtlBits, wxFrame* aTop = NULL );
 
     /**
@@ -358,21 +379,25 @@ public:
      */
     void SetTop( wxFrame* aTop );
 
+    void OnKiCadExit();
+
     void OnKiwayEnd();
 
-    bool ProcessEvent( wxEvent& aEvent );   // overload virtual
+    bool ProcessEvent( wxEvent& aEvent ) override;
 
 private:
 
-    /// Get the full path & name of the DSO holding the requested FACE_T.
-    static const wxString dso_full_path( FACE_T aFaceId );
+    /// Get the [path &] name of the DSO holding the requested FACE_T.
+    const wxString dso_search_path( FACE_T aFaceId );
 
+#if 0
     /// hooked into m_top in SetTop(), marks child frame as closed.
     void player_destroy_handler( wxWindowDestroyEvent& event );
+#endif
 
     bool set_kiface( FACE_T aFaceType, KIFACE* aKiface )
     {
-        if( unsigned( aFaceType ) < unsigned( KIWAY_FACE_COUNT ) )
+        if( (unsigned) aFaceType < (unsigned) KIWAY_FACE_COUNT )
         {
             m_kiface[aFaceType] = aKiface;
             return true;
@@ -380,33 +405,37 @@ private:
         return false;
     }
 
+    /**
+     * @return the reference of the KIWAY_PLAYER having the type aFrameType
+     * if exists, or NULL if this KIWAY_PLAYER was not yet created, or was closed
+     */
+    KIWAY_PLAYER* GetPlayerFrame( FRAME_T aFrameType );
+
     static KIFACE*  m_kiface[KIWAY_FACE_COUNT];
     static int      m_kiface_version[KIWAY_FACE_COUNT];
 
     PGM_BASE*       m_program;
     int             m_ctl;
-    wxFrame*        m_top;
 
-    KIWAY_PLAYER*   m_player[KIWAY_PLAYER_COUNT];     // from frame_type.h
+    wxFrame*        m_top;      // Usually m_top is the Project manager
+
+    // a string array ( size KIWAY_PLAYER_COUNT ) to Store the frame name
+    // of PLAYER frames which were run.
+    // A non empty name means only a PLAYER was run at least one time.
+    // It can be closed. Call :
+    // wxWindow::FindWindowByName( m_playerFrameName[aFrameType] )
+    // to know if still exists (or GetPlayerFrame( FRAME_T aFrameType )
+    wxArrayString  m_playerFrameName;
 
     PROJECT         m_project;      // do not assume this is here, use Prj().
 };
 
 
-/*
-/// Given aProject, return its KIWAY*
-inline KIWAY* PrjToKiway( PROJECT* aProject )
-{
-    // It's ugly, but isolated.  The compiler should simply do what's
-    // it's told to do here and shut up.
-    KIWAY*      p = 0;
-    ptrdiff_t   offset = (char*) &p->m_project - (char*) p;
-
-    return (KIWAY*) ((char*)aProject - offset);
-}
-*/
-
-extern KIWAY Kiway;     // provided by single_top.cpp and kicad.cpp
+#ifndef SWIG
+// provided by single_top.cpp and kicad.cpp;
+extern KIWAY Kiway;
+// whereas python launchers: single_top.py and project manager instantiate as a python object
+#endif
 
 
 /**
@@ -424,8 +453,18 @@ extern KIWAY Kiway;     // provided by single_top.cpp and kicad.cpp
  */
 typedef     KIFACE*  KIFACE_GETTER_FUNC( int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 
-/// No name mangling.  Each KIFACE (DSO/DLL) will implement this once.
-extern "C" KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
 
+#ifndef SWIG
+
+/// No name mangling.  Each KIFACE (DSO/DLL) will implement this once.
+extern "C" {
+#if defined(BUILD_KIWAY_DLL)
+ MY_API( KIFACE* ) KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
+#else
+ KIFACE* KIFACE_GETTER(  int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram );
+#endif
+}
+
+#endif  // SWIG
 
 #endif  // KIWAY_H_

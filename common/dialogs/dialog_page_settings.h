@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
- * Copyright (C) 1992-2013 Kicad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2018 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,9 +24,10 @@
 #ifndef _DIALOG_PAGES_SETTINGS_H_
 #define _DIALOG_PAGES_SETTINGS_H_
 
+#include <widgets/unit_binder.h>
 #include <dialog_page_settings_base.h>
 
-#define MAX_PAGE_EXAMPLE_SIZE 200
+class WS_DATA_MODEL;
 
 /*!
  * DIALOG_PAGES_SETTINGS class declaration
@@ -37,17 +38,23 @@ class DIALOG_PAGES_SETTINGS: public DIALOG_PAGES_SETTINGS_BASE
 private:
     EDA_DRAW_FRAME* m_parent;
     BASE_SCREEN*    m_screen;
+    wxString        m_projectPath;      // the curr project path
     wxArrayString   m_pageFmt;          /// list of page sizes (not translated)
     bool            m_initialized;
     bool            m_localPrjConfigChanged;    /// the page layuout filename was changed
     wxBitmap*       m_page_bitmap;      /// Temporary bitmap for the page layout example.
     wxSize          m_layout_size;      /// Logical page layout size.
+    wxSize          m_maxPageSizeMils;  /// The max page size allowed by the caller frame
     PAGE_INFO       m_pageInfo;         /// Temporary page info.
     bool            m_customFmt;        /// true if the page selection is custom
     TITLE_BLOCK     m_tb;               /// Temporary title block (basic inscriptions).
+    WS_DATA_MODEL*  m_pagelayout;       // the alternate and temporary page layout shown by the dialog
+                                        // when the initial one is replaced by a new one
+    UNIT_BINDER     m_customSizeX;
+    UNIT_BINDER     m_customSizeY;
 
 public:
-    DIALOG_PAGES_SETTINGS( EDA_DRAW_FRAME* parent );
+    DIALOG_PAGES_SETTINGS( EDA_DRAW_FRAME* parent, wxSize aMaxUserSizeMils );
     ~DIALOG_PAGES_SETTINGS();
 
     const wxString GetWksFileName()
@@ -69,33 +76,35 @@ public:
 private:
     void initDialog();  // Initialisation of member variables
 
-    // event handler for wxID_OK
-    void OnOkClick( wxCommandEvent& event );
-
-    // event handler for wxID_CANCEL
-    void OnCancelClick( wxCommandEvent& event );
+    // event handler for button OK
+    void OnOkClick( wxCommandEvent& event ) override;
 
     // event handlers for page size choice
-    void OnPaperSizeChoice( wxCommandEvent& event );
-    void OnUserPageSizeXTextUpdated( wxCommandEvent& event );
-    void OnUserPageSizeYTextUpdated( wxCommandEvent& event );
-    void OnPageOrientationChoice( wxCommandEvent& event );
+    void OnPaperSizeChoice( wxCommandEvent& event ) override;
+    void OnUserPageSizeXTextUpdated( wxCommandEvent& event ) override;
+    void OnUserPageSizeYTextUpdated( wxCommandEvent& event ) override;
+    void OnPageOrientationChoice( wxCommandEvent& event ) override;
 
     // event handler for texts in title block
-    void OnRevisionTextUpdated( wxCommandEvent& event );
-    void OnDateTextUpdated( wxCommandEvent& event );
-    void OnTitleTextUpdated( wxCommandEvent& event );
-    void OnCompanyTextUpdated( wxCommandEvent& event );
-    void OnComment1TextUpdated( wxCommandEvent& event );
-    void OnComment2TextUpdated( wxCommandEvent& event );
-    void OnComment3TextUpdated( wxCommandEvent& event );
-    void OnComment4TextUpdated( wxCommandEvent& event );
+    void OnRevisionTextUpdated( wxCommandEvent& event ) override;
+    void OnDateTextUpdated( wxCommandEvent& event ) override;
+    void OnTitleTextUpdated( wxCommandEvent& event ) override;
+    void OnCompanyTextUpdated( wxCommandEvent& event ) override;
+    void OnComment1TextUpdated( wxCommandEvent& event ) override;
+    void OnComment2TextUpdated( wxCommandEvent& event ) override;
+    void OnComment3TextUpdated( wxCommandEvent& event ) override;
+    void OnComment4TextUpdated( wxCommandEvent& event ) override;
+    void OnComment5TextUpdated( wxCommandEvent& event ) override;
+    void OnComment6TextUpdated( wxCommandEvent& event ) override;
+    void OnComment7TextUpdated( wxCommandEvent& event ) override;
+    void OnComment8TextUpdated( wxCommandEvent& event ) override;
+    void OnComment9TextUpdated( wxCommandEvent& event ) override;
 
     // Handle button click for setting the date from the picker
-    void OnDateApplyClick( wxCommandEvent& event );
+    void OnDateApplyClick( wxCommandEvent& event ) override;
 
     // .kicad_wks file description selection
-	void OnWksFileSelection( wxCommandEvent& event );
+    void OnWksFileSelection( wxCommandEvent& event ) override;
 
     // Save in the current title block the new page settings
     // return true if changes are made, or false if not

@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2013 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2016-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -163,33 +163,38 @@ class GITHUB_PLUGIN : public PCB_IO
 {
 public:
     //-----<PLUGIN API>----------------------------------------------------------
-    const wxString PluginName() const;
+    const wxString PluginName() const override;
 
-    const wxString GetFileExtension() const;
+    const wxString GetFileExtension() const override;
 
-    wxArrayString FootprintEnumerate( const wxString& aLibraryPath,
-            const PROPERTIES* aProperties = NULL );
+    void FootprintEnumerate( wxArrayString& aFootprintNames, const wxString& aLibPath,
+                             bool aBestEfforts, const PROPERTIES* aProperties = NULL ) override;
 
-    MODULE* FootprintLoad( const wxString& aLibraryPath,
-            const wxString& aFootprintName, const PROPERTIES* aProperties );
+    void PrefetchLib( const wxString& aLibraryPath,
+                      const PROPERTIES* aProperties = NULL ) override;
+
+    MODULE* FootprintLoad( const wxString& aLibraryPath, const wxString& aFootprintName,
+                           const PROPERTIES* aProperties ) override;
 
     void FootprintSave( const wxString& aLibraryPath, const MODULE* aFootprint,
-            const PROPERTIES* aProperties = NULL );
+                        const PROPERTIES* aProperties = NULL ) override;
 
     void FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName,
-            const PROPERTIES* aProperties = NULL );
+                          const PROPERTIES* aProperties = NULL ) override;
 
-    bool IsFootprintLibWritable( const wxString& aLibraryPath );
+    bool IsFootprintLibWritable( const wxString& aLibraryPath ) override;
 
-    void FootprintLibOptions( PROPERTIES* aListToAppendTo ) const;
+    long long GetLibraryTimestamp( const wxString& aLibraryPath ) const override;
+
+    void FootprintLibOptions( PROPERTIES* aListToAppendTo ) const override;
 
     // Since I derive from PCB_IO, I have to implement this, else I'd inherit his, which is bad since
     // my lib_path is not his.  Note: it is impossible to create a Github library, but can the C.O.W. portion.
-    void FootprintLibCreate( const wxString& aLibraryPath, const PROPERTIES* aProperties );
+    void FootprintLibCreate( const wxString& aLibraryPath, const PROPERTIES* aProperties ) override;
 
     // Since I derive from PCB_IO, I have to implement this, else I'd inherit his, which is bad since
     // my lib_path is not his.  Note: it is impossible to delete a Github library, but can the C.O.W portion.
-    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties );
+    bool FootprintLibDelete( const wxString& aLibraryPath, const PROPERTIES* aProperties ) override;
 
     //-----</PLUGIN API>---------------------------------------------------------
 
@@ -200,7 +205,7 @@ protected:
 
     void init( const PROPERTIES* aProperties );
 
-    void cacheLib( const wxString& aLibraryPath, const PROPERTIES* aProperties ) throw( IO_ERROR );
+    void cacheLib( const wxString& aLibraryPath, const PROPERTIES* aProperties );
 
     /**
      * Function repoURL_zipURL
@@ -213,11 +218,12 @@ protected:
     static bool repoURL_zipURL( const wxString& aRepoURL, std::string* aZipURL );
 
     /**
-     * Function remote_get_zip
+     * Function remoteGetZip
      * fetches a zip file image from a github repo synchronously.  The byte image
-     * is received into the m_input_stream.
+     * is received into the m_input_stream. If the image has already been stored,
+     * do nothing.
      */
-    void remote_get_zip( const wxString& aRepoURL ) throw( IO_ERROR );
+    void remoteGetZip( const wxString& aRepoURL );
 
     wxString    m_lib_path;     ///< from aLibraryPath, something like https://github.com/liftoff-sr/pretty_footprints
     std::string m_zip_image;    ///< byte image of the zip file in its entirety.

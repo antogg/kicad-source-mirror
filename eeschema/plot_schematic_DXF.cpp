@@ -5,7 +5,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 1992-2010 Lorenzo Marcantonio
- * Copyright (C) 1992-2010 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,21 +26,20 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
-#include <class_sch_screen.h>
-#include <wxEeschemaStruct.h>
+#include <plotter.h>
+#include <sch_edit_frame.h>
 #include <sch_sheet_path.h>
-#include <dialog_plot_schematic.h>
 #include <project.h>
+
+#include <dialog_plot_schematic.h>
+#include <wx_html_report_panel.h>
 
 
 void DIALOG_PLOT_SCHEMATIC::CreateDXFFile( bool aPlotAll, bool aPlotFrameRef )
 {
-    SCH_EDIT_FRAME* schframe  = (SCH_EDIT_FRAME*) m_parent;
+    SCH_EDIT_FRAME* schframe  = m_parent;
     SCH_SCREEN*     screen    = schframe->GetScreen();
-    SCH_SHEET_PATH* sheetpath;
     SCH_SHEET_PATH  oldsheetpath = schframe->GetCurrentSheet();
-    wxString        plotFileName;
 
     /* When printing all pages, the printed page is not the current page.
      *  In complex hierarchies, we must setup references and others parameters
@@ -48,53 +47,54 @@ void DIALOG_PLOT_SCHEMATIC::CreateDXFFile( bool aPlotAll, bool aPlotFrameRef )
      *  because in complex hierarchies a SCH_SCREEN (a schematic drawings)
      *  is shared between many sheets
      */
-    SCH_SHEET_LIST SheetList( NULL );
+    SCH_SHEET_LIST sheetList;
 
-    sheetpath = SheetList.GetFirst();
-    SCH_SHEET_PATH list;
+    if( aPlotAll )
+        sheetList.BuildSheetList( g_RootSheet );
+    else
+        sheetList.push_back( schframe->GetCurrentSheet() );
 
-    while( true )
+    REPORTER& reporter = m_MessagesBox->Reporter();
+
+    for( unsigned i = 0; i < sheetList.size();  i++ )
     {
-        if( aPlotAll )
-        {
-            if( sheetpath == NULL )
-                break;
-
-            list.Clear();
-
-            if( list.BuildSheetPathInfoFromSheetPathValue( sheetpath->Path() ) )
-            {
-                schframe->SetCurrentSheet( list );
-                schframe->GetCurrentSheet().UpdateAllScreenReferences();
-                schframe->SetSheetNumberAndCount();
-                screen = schframe->GetCurrentSheet().LastScreen();
-            }
-            else  // Should not happen
-            {
-                return;
-            }
-
-            sheetpath = SheetList.GetNext();
-        }
+        schframe->SetCurrentSheet( sheetList[i] );
+        schframe->GetCurrentSheet().UpdateAllScreenReferences();
+        schframe->SetSheetNumberAndCount();
+        screen = schframe->GetCurrentSheet().LastScreen();
 
         wxPoint plot_offset;
-        plotFileName = schframe->GetUniqueFilenameForCurrentSheet() + wxT(".")
-                       + DXF_PLOTTER::GetDefaultFileExtension();
-
-        plotFileName = Prj().AbsolutePath( plotFileName );
-
         wxString msg;
 
-        if( PlotOneSheetDXF( plotFileName, screen, plot_offset, 1.0, aPlotFrameRef ) )
-            msg.Printf( _( "Plot: <%s> OK\n" ), GetChars( plotFileName ) );
-        else    // Error
-            msg.Printf( _( "Unable to create <%s>\n" ), GetChars( plotFileName ) );
+        try
+        {
+            wxString fname = schframe->GetUniqueFilenameForCurrentSheet();
+            wxString ext = DXF_PLOTTER::GetDefaultFileExtension();
+            wxFileName plotFileName = createPlotFileName( m_outputDirectoryName, fname,
+                                                          ext, &reporter );
 
-        m_MessagesBox->AppendText( msg );
-
-
-        if( !aPlotAll )
-            break;
+            if( PlotOneSheetDXF( plotFileName.GetFullPath(), screen, plot_offset, 1.0,
+                                 aPlotFrameRef ) )
+            {
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
+                reporter.Report( msg, REPORTER::RPT_ACTION );
+            }
+            else    // Error
+            {
+                msg.Printf( _( "Unable to create file \"%s\".\n" ),
+                            GetChars( plotFileName.GetFullPath() ) );
+                reporter.Report( msg, REPORTER::RPT_ERROR );
+            }
+        }
+        catch( IO_ERROR& e )
+        {
+            msg.Printf( wxT( "DXF Plotter exception: %s"), GetChars( e.What() ) );
+            reporter.Report( msg, REPORTER::RPT_ERROR );
+            schframe->SetCurrentSheet( oldsheetpath );
+            schframe->GetCurrentSheet().UpdateAllScreenReferences();
+            schframe->SetSheetNumberAndCount();
+            return;
+        }
     }
 
     schframe->SetCurrentSheet( oldsheetpath );
@@ -114,7 +114,8 @@ bool DIALOG_PLOT_SCHEMATIC::PlotOneSheetDXF( const wxString&    aFileName,
     const PAGE_INFO&   pageInfo = aScreen->GetPageSettings();
     plotter->SetPageSettings( pageInfo );
     plotter->SetColorMode( getModeColor() );
-    plotter->SetViewport( aPlotOffset, IU_PER_DECIMILS, aScale, false );
+    // Currently, plot units are in decimil
+    plotter->SetViewport( aPlotOffset, IU_PER_MILS/10, aScale, false );
 
     // Init :
     plotter->SetCreator( wxT( "Eeschema-DXF" ) );
@@ -135,7 +136,8 @@ bool DIALOG_PLOT_SCHEMATIC::PlotOneSheetDXF( const wxString&    aFileName,
                        m_parent->GetPageSettings(),
                        aScreen->m_ScreenNumber, aScreen->m_NumberOfScreens,
                        m_parent->GetScreenDesc(),
-                       aScreen->GetFileName() );
+                       aScreen->GetFileName(),
+                       GetLayerColor( ( SCH_LAYER_ID )LAYER_WORKSHEET ) );
     }
 
     aScreen->Plot( plotter );

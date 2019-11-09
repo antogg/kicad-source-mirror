@@ -31,11 +31,12 @@
 
 class TOOL_MANAGER;
 class PCB_BASE_FRAME;
+class ACTIONS;
 
 namespace KIGFX
 {
 class VIEW;
-};
+}
 
 /**
  * Class TOOL_DISPATCHER
@@ -54,9 +55,10 @@ public:
      * Constructor
      *
      * @param aToolMgr: tool manager instance the events will be sent to
-     * @param aEditFrame: the frame wx events come from
+     * @param aActions: ACTIONS subclass instance for ACTIONS::TranslateLegacyId()
      */
-    TOOL_DISPATCHER( TOOL_MANAGER* aToolMgr );
+    TOOL_DISPATCHER( TOOL_MANAGER* aToolMgr, ACTIONS *aActions );
+
     virtual ~TOOL_DISPATCHER();
 
     /**
@@ -93,12 +95,11 @@ private:
     ///> and a beginning of drag event (expressed in screen pixels).
     static const int DragDistanceThreshold = 8;
 
-    ///> Handles mouse related events (click, motion, dragging)
+    ///> Handles mouse related events (click, motion, dragging).
     bool handleMouseButton( wxEvent& aEvent, int aIndex, bool aMotion );
 
     ///> Saves the state of key modifiers (Alt, Ctrl and so on).
-    template <class EventType>
-    static int decodeModifiers( const EventType* aState )
+    static int decodeModifiers( const wxKeyboardState* aState )
     {
         int mods = 0;
 
@@ -128,6 +129,9 @@ private:
 
     ///> Instance of tool manager that cooperates with the dispatcher.
     TOOL_MANAGER* m_toolMgr;
+
+    ///> Instance of an actions list that handles legacy action translation
+    ACTIONS* m_actions;
 };
 
 #endif

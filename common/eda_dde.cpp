@@ -1,10 +1,34 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2014 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 /**
  * @file eda_dde.cpp
  */
 
 #include <fctsys.h>
 #include <eda_dde.h>
-#include <draw_frame.h>
+#include <eda_draw_frame.h>
 #include <id.h>
 #include <common.h>
 #include <macros.h>
@@ -15,8 +39,6 @@ static const wxString HOSTNAME( wxT( "localhost" ) );
 #define IPC_BUF_SIZE 4096
 static char client_ipc_buffer[IPC_BUF_SIZE];
 
-static wxSocketServer* server;
-
 
 /**********************************/
 /* Routines related to the server */
@@ -24,7 +46,7 @@ static wxSocketServer* server;
 
 /* Function to initialize a server socket
  */
-wxSocketServer* CreateServer( wxWindow* window, int service, bool local )
+void EDA_DRAW_FRAME::CreateServer( int service, bool local )
 {
     wxIPV4address addr;
 
@@ -35,16 +57,12 @@ wxSocketServer* CreateServer( wxWindow* window, int service, bool local )
     if( local )
         addr.Hostname( HOSTNAME );
 
-    server = new wxSocketServer( addr );
+    delete m_socketServer;
+    m_socketServer = new wxSocketServer( addr );
 
-    if( server )
-    {
-        server->SetNotify( wxSOCKET_CONNECTION_FLAG );
-        server->SetEventHandler( *window, ID_EDA_SOCKET_EVENT_SERV );
-        server->Notify( true );
-    }
-
-    return server;
+    m_socketServer->SetNotify( wxSOCKET_CONNECTION_FLAG );
+    m_socketServer->SetEventHandler( *this, ID_EDA_SOCKET_EVENT_SERV );
+    m_socketServer->Notify( true );
 }
 
 
@@ -84,17 +102,19 @@ void EDA_DRAW_FRAME::OnSockRequest( wxSocketEvent& evt )
  */
 void EDA_DRAW_FRAME::OnSockRequestServer( wxSocketEvent& evt )
 {
-    wxSocketBase*   sock2;
+    wxSocketBase*   socket;
     wxSocketServer* server = (wxSocketServer*) evt.GetSocket();
 
-    sock2 = server->Accept();
+    socket = server->Accept();
 
-    if( sock2 == NULL )
+    if( socket == NULL )
         return;
 
-    sock2->Notify( true );
-    sock2->SetEventHandler( *this, ID_EDA_SOCKET_EVENT );
-    sock2->SetNotify( wxSOCKET_INPUT_FLAG | wxSOCKET_LOST_FLAG );
+    m_sockets.push_back( socket );
+
+    socket->Notify( true );
+    socket->SetEventHandler( *this, ID_EDA_SOCKET_EVENT );
+    socket->SetNotify( wxSOCKET_INPUT_FLAG | wxSOCKET_LOST_FLAG );
 }
 
 

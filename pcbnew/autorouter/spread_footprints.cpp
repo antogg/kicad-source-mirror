@@ -1,11 +1,11 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
+ * Copyright (C) 2019 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
  * Copyright (C) 2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
  * Copyright (C) 2013 Wayne Stambaugh <stambaughw@verizon.net>
  *
- * Copyright (C) 1992-2013 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -35,23 +35,24 @@
  */
 
 #include <algorithm>
-
 #include <fctsys.h>
 #include <convert_to_biu.h>
-#include <class_drawpanel.h>
 #include <confirm.h>
 #include <pcbnew.h>
-#include <wxPcbStruct.h>
+#include <pcb_edit_frame.h>
 #include <class_board.h>
 #include <class_module.h>
-
 #include <rect_placement/rect_placement.h>
 
 struct TSubRect : public CRectPlacement::TRect
 {
     int n;      // Original index of this subrect, before sorting
 
-    TSubRect() { }
+    TSubRect() : TRect(),
+        n( 0 )
+    {
+    }
+
     TSubRect( int _w, int _h, int _n ) :
         TRect( 0, 0, _w, _h ), n( _n ) { }
 };
@@ -61,6 +62,8 @@ typedef std::vector<TSubRect> CSubRectArray;
 // Use 0.01 mm units to calculate placement, to avoid long calculation time
 const int scale = (int)(0.01 * IU_PER_MM);
 
+const int PADDING = (int)(1 * IU_PER_MM);
+
 // Populates a list of rectangles, from a list of modules
 void fillRectList( CSubRectArray& vecSubRects, std::vector <MODULE*>& aModuleList )
 {
@@ -68,8 +71,9 @@ void fillRectList( CSubRectArray& vecSubRects, std::vector <MODULE*>& aModuleLis
 
     for( unsigned ii = 0; ii < aModuleList.size(); ii++ )
     {
-        EDA_RECT fpBox = aModuleList[ii]->GetBoundingBox();
-        TSubRect fpRect( fpBox.GetWidth()/scale, fpBox.GetHeight()/scale, ii );
+        EDA_RECT fpBox = aModuleList[ii]->GetFootprintRect();
+        TSubRect fpRect( ( fpBox.GetWidth() + PADDING ) / scale,
+                         ( fpBox.GetHeight() + PADDING ) / scale, ii );
         vecSubRects.push_back( fpRect );
     }
 }
@@ -91,8 +95,8 @@ void fillRectList( CSubRectArray& vecSubRects, std::vector <EDA_RECT>& aRectList
 
 // Spread a list of rectangles inside a placement area
 void spreadRectangles( CRectPlacement& aPlacementArea,
-                      CSubRectArray& vecSubRects,
-                      int areaSizeX, int areaSizeY )
+                       CSubRectArray& vecSubRects,
+                       int areaSizeX, int areaSizeY )
 {
     areaSizeX/= scale;
     areaSizeY/= scale;
@@ -131,8 +135,9 @@ void spreadRectangles( CRectPlacement& aPlacementArea,
 
 
 void moveFootprintsInArea( CRectPlacement& aPlacementArea,
-                           std::vector <MODULE*>& aModuleList, EDA_RECT& aFreeArea,
-                           bool aFindAreaOnly  )
+                           std::vector <MODULE*>& aModuleList,
+                           EDA_RECT& aFreeArea,
+                           bool aFindAreaOnly )
 {
     CSubRectArray   vecSubRects;
 
@@ -151,7 +156,7 @@ void moveFootprintsInArea( CRectPlacement& aPlacementArea,
 
         MODULE * module = aModuleList[vecSubRects[it].n];
 
-        EDA_RECT fpBBox = module->GetBoundingBox();
+        EDA_RECT fpBBox = module->GetFootprintRect();
         wxPoint mod_pos = pos + ( module->GetPosition() - fpBBox.GetOrigin() )
                           + aFreeArea.GetOrigin();
 
@@ -159,91 +164,44 @@ void moveFootprintsInArea( CRectPlacement& aPlacementArea,
     }
 }
 
-static bool sortModulesbySheetPath( MODULE* ref, MODULE* compare );
+static bool sortFootprintsbySheetPath( MODULE* ref, MODULE* compare );
 
-/* Function to move components in a rectangular area format 4 / 3,
- * starting from the mouse cursor
- * The components with the FIXED status set are not moved
+
+/**
+ * Footprints (after loaded by reading a netlist for instance) are moved
+ * to be in a small free area (outside the current board) without overlapping.
+ * @param aBoard is the board to edit.
+ * @param aFootprints: a list of footprints to be spread out.
+ * @param aSpreadAreaPosition the position of the upper left corner of the
+ *        area allowed to spread footprints
  */
-void PCB_EDIT_FRAME::SpreadFootprints( bool aFootprintsOutsideBoardOnly )
+void SpreadFootprints( std::vector<MODULE*>* aFootprints,
+                       wxPoint aSpreadAreaPosition )
 {
-    EDA_RECT bbox = GetBoard()->ComputeBoundingBox( true );
-    bool     edgesExist = ( bbox.GetWidth() || bbox.GetHeight() );
-
-    // no edges exist
-    if( aFootprintsOutsideBoardOnly && !edgesExist )
-    {
-        DisplayError( this,
-                      _( "Could not automatically place modules. No board outlines detected." ) );
-        return;
-    }
-
-    // if aFootprintsOutsideBoardOnly is true, and if board outline exists,
-    // wue have to filter footprints to move:
-    bool outsideBrdFilter = aFootprintsOutsideBoardOnly && edgesExist;
-
     // Build candidate list
     // calculate also the area needed by these footprints
-    MODULE* module = GetBoard()->m_Modules;
-    std::vector <MODULE*> moduleList;
+    std::vector <MODULE*> footprintList;
 
-    for( ; module != NULL; module = module->Next() )
+    for( MODULE* footprint : *aFootprints )
     {
-        module->CalculateBoundingBox();
-
-        if( outsideBrdFilter )
-        {
-            if( bbox.Contains( module->GetPosition() ) )
-                continue;
-        }
-
-        if( module->IsLocked() )
+        if( footprint->IsLocked() )
             continue;
 
-        moduleList.push_back(module);
+        footprint->CalculateBoundingBox();
+        footprintList.push_back( footprint );
     }
 
-    if( moduleList.size() == 0 )    // Nothing to do
+    if( footprintList.empty() )
         return;
 
     // sort footprints by sheet path. we group them later by sheet
-    sort( moduleList.begin(), moduleList.end(), sortModulesbySheetPath );
-
-    // Undo command: init undo list
-    PICKED_ITEMS_LIST  undoList;
-    undoList.m_Status = UR_CHANGED;
-    ITEM_PICKER        picker( NULL, UR_CHANGED );
-
-    for( unsigned ii = 0; ii < moduleList.size(); ii++ )
-    {
-        module = moduleList[ii];
-
-        // Undo: add copy of module to undo list
-        picker.SetItem( module );
-        picker.SetLink( module->Clone() );
-        undoList.PushItem( picker );
-    }
+    sort( footprintList.begin(), footprintList.end(), sortFootprintsbySheetPath );
 
     // Extract and place footprints by sheet
-    std::vector <MODULE*> moduleListBySheet;
+    std::vector <MODULE*> footprintListBySheet;
     std::vector <EDA_RECT> placementSheetAreas;
     double subsurface;
     double placementsurface = 0.0;
-
-    wxPoint placementAreaPosition = GetCrossHairPosition();
-
-    // We do not want to move footprints inside an existing board.
-    // move the placement area position outside the board bounding box
-    // to the left of the board
-    if( edgesExist )
-    {
-        if( placementAreaPosition.x < bbox.GetEnd().x &&
-            placementAreaPosition.y < bbox.GetEnd().y )
-        {
-            placementAreaPosition.x = bbox.GetEnd().x;
-            placementAreaPosition.y = bbox.GetOrigin().y;
-        }
-    }
 
     // The placement uses 2 passes:
     // the first pass creates the rectangular areas to place footprints
@@ -252,21 +210,21 @@ void PCB_EDIT_FRAME::SpreadFootprints( bool aFootprintsOutsideBoardOnly )
     for( int pass = 0; pass < 2; pass++ )
     {
         int subareaIdx = 0;
-        moduleListBySheet.clear();
+        footprintListBySheet.clear();
         subsurface = 0.0;
 
-        for( unsigned ii = 0; ii < moduleList.size(); ii++ )
+        for( unsigned ii = 0; ii < footprintList.size(); ii++ )
         {
-            module = moduleList[ii];
+            MODULE* footprint = footprintList[ii];
             bool islastItem = false;
 
-            if( ii == moduleList.size() - 1 ||
-                ( moduleList[ii]->GetPath().BeforeLast( '/' ) !=
-                  moduleList[ii+1]->GetPath().BeforeLast( '/' ) ) )
+            if( ii == footprintList.size() - 1 ||
+                ( footprintList[ii]->GetPath().BeforeLast( '/' ) !=
+                  footprintList[ii+1]->GetPath().BeforeLast( '/' ) ) )
                 islastItem = true;
 
-            moduleListBySheet.push_back( module );
-            subsurface += module->GetArea();
+            footprintListBySheet.push_back( footprint );
+            subsurface += footprint->GetArea( PADDING );
 
             if( islastItem )
             {
@@ -283,12 +241,12 @@ void PCB_EDIT_FRAME::SpreadFootprints( bool aFootprintsOutsideBoardOnly )
                 if( pass == 1 )
                 {
                     wxPoint areapos = placementSheetAreas[subareaIdx].GetOrigin()
-                                      + placementAreaPosition;
+                                      + aSpreadAreaPosition;
                     freeArea.SetOrigin( areapos );
                 }
 
                 bool findAreaOnly = pass == 0;
-                moveFootprintsInArea( placementArea, moduleListBySheet,
+                moveFootprintsInArea( placementArea, footprintListBySheet,
                                       freeArea, findAreaOnly );
 
                 if( pass == 0 )
@@ -308,7 +266,7 @@ void PCB_EDIT_FRAME::SpreadFootprints( bool aFootprintsOutsideBoardOnly )
 
                 // Prepare buffers for next sheet
                 subsurface  = 0.0;
-                moduleListBySheet.clear();
+                footprintListBySheet.clear();
                 subareaIdx++;
             }
         }
@@ -336,12 +294,6 @@ void PCB_EDIT_FRAME::SpreadFootprints( bool aFootprintsOutsideBoardOnly )
             }
         }
     }   // End pass
-
-    // Undo: commit list
-    SaveCopyInUndoList( undoList, UR_CHANGED );
-    OnModify();
-
-    m_canvas->Refresh();
 }
 
 
@@ -349,7 +301,7 @@ void PCB_EDIT_FRAME::SpreadFootprints( bool aFootprintsOutsideBoardOnly )
 // Footprints are sorted by their sheet path.
 // (the full sheet path restricted to the time stamp of the sheet itself,
 // without the time stamp of the footprint ).
-static bool sortModulesbySheetPath( MODULE* ref, MODULE* compare )
+static bool sortFootprintsbySheetPath( MODULE* ref, MODULE* compare )
 {
     if( ref->GetPath().Length() == compare->GetPath().Length() )
         return ref->GetPath().BeforeLast( '/' ).Cmp( compare->GetPath().BeforeLast( '/' ) ) < 0;

@@ -26,9 +26,10 @@
  * @file s_expr_loader.cpp
  */
 
+#include <s_expr_loader.h>
+
 #include <dsnlexer.h>
 #include <macros.h>
-#include <wx/xml/xml.h>
 #include <xnode.h>
 
 namespace PCAD2KICAD {
@@ -36,7 +37,7 @@ namespace PCAD2KICAD {
 static KEYWORD empty_keywords[1] = {};
 static const char ACCEL_ASCII_KEYWORD[] = "ACCEL_ASCII";
 
-void LoadInputFile( wxString aFileName, wxXmlDocument* aXmlDoc )
+void LoadInputFile( const wxString& aFileName, wxXmlDocument* aXmlDoc )
 {
     char      line[sizeof( ACCEL_ASCII_KEYWORD )];
     int       tok;
@@ -51,7 +52,8 @@ void LoadInputFile( wxString aFileName, wxXmlDocument* aXmlDoc )
 
     // check file format
     if( !fgets( line, sizeof( line ), fp )
-        || strcmp( line, ACCEL_ASCII_KEYWORD ) )
+        // first line starts with "ACCEL_ASCII" with optional stuff on same line after that.
+        || memcmp( line, ACCEL_ASCII_KEYWORD, sizeof(ACCEL_ASCII_KEYWORD)-1 ) )
         THROW_IO_ERROR( "Unknown file type" );
 
     // rewind the file

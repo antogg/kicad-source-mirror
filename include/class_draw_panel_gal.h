@@ -1,8 +1,9 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2018 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,20 +23,19 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file class_draw_panel_gal.h:
- * @brief EDA_DRAW_PANEL_GAL class definition.
- */
-
 #ifndef  PANELGAL_WXSTRUCT_H
 #define  PANELGAL_WXSTRUCT_H
 
 #include <wx/window.h>
 #include <wx/timer.h>
-#include <layers_id_colors_and_visibility.h>
+#include <math/box2.h>
 #include <math/vector2d.h>
+#include <msgpanel.h>
+#include <memory>
+#include <common.h>
 
 class BOARD;
+class EDA_DRAW_FRAME;
 class TOOL_DISPATCHER;
 
 namespace KIGFX
@@ -45,57 +45,54 @@ class VIEW;
 class WX_VIEW_CONTROLS;
 class VIEW_CONTROLS;
 class PAINTER;
-};
+class GAL_DISPLAY_OPTIONS;
+}
 
 
-class EDA_DRAW_PANEL_GAL : public wxWindow
+class EDA_DRAW_PANEL_GAL : public wxScrolledCanvas
 {
 public:
-    enum GalType {
-        GAL_TYPE_NONE,      ///< Not used
-        GAL_TYPE_OPENGL,    ///< OpenGL implementation
-        GAL_TYPE_CAIRO,     ///< Cairo implementation
+    enum GAL_TYPE {
+        GAL_TYPE_UNKNOWN = -1,  ///< not specified: a GAL engine must be set by the client
+        GAL_TYPE_NONE = 0,      ///< GAL not used (the legacy wxDC engine is used)
+        GAL_TYPE_OPENGL,        ///< OpenGL implementation
+        GAL_TYPE_CAIRO,         ///< Cairo implementation
+        GAL_TYPE_LAST           ///< Sentinel, do not use as a parameter
     };
 
     EDA_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWindowId, const wxPoint& aPosition,
-                        const wxSize& aSize, GalType aGalType = GAL_TYPE_OPENGL );
+                        const wxSize& aSize, KIGFX::GAL_DISPLAY_OPTIONS& aOptions,
+                        GAL_TYPE aGalType = GAL_TYPE_OPENGL );
     ~EDA_DRAW_PANEL_GAL();
+
+    virtual void SetFocus() override;
 
     /**
      * Function SwitchBackend
      * Switches method of rendering graphics.
      * @param aGalType is a type of rendering engine that you want to use.
      */
-    void SwitchBackend( GalType aGalType );
+    virtual bool SwitchBackend( GAL_TYPE aGalType );
 
     /**
      * Function GetBackend
      * Returns the type of backend currently used by GAL canvas.
      */
-    inline GalType GetBackend() const
-    {
-        return m_backend;
-    }
+    inline GAL_TYPE GetBackend() const { return m_backend; }
 
     /**
      * Function GetGAL()
      * Returns a pointer to the GAL instance used in the panel.
      * @return The instance of GAL.
      */
-    KIGFX::GAL* GetGAL() const
-    {
-        return m_gal;
-    }
+    KIGFX::GAL* GetGAL() const { return m_gal; }
 
     /**
      * Function GetView()
      * Returns a pointer to the VIEW instance used in the panel.
      * @return The instance of VIEW.
      */
-    KIGFX::VIEW* GetView() const
-    {
-        return m_view;
-    }
+    virtual KIGFX::VIEW* GetView() const { return m_view; }
 
     /**
      * Function GetViewControls()
@@ -108,7 +105,13 @@ public:
     }
 
     /// @copydoc wxWindow::Refresh()
-    void Refresh( bool aEraseBackground = true, const wxRect* aRect = NULL );
+    virtual void Refresh( bool aEraseBackground = true, const wxRect* aRect = NULL ) override;
+
+    /**
+     * Function ForceRefresh()
+     * Forces a redraw.
+     */
+    void ForceRefresh();
 
     /**
      * Function SetEventDispatcher()
@@ -136,37 +139,92 @@ public:
      * Function SetHighContrastLayer
      * Takes care of display settings for the given layer to be displayed in high contrast mode.
      */
-    virtual void SetHighContrastLayer( LAYER_ID aLayer );
+    virtual void SetHighContrastLayer( int aLayer );
 
     /**
      * Function SetTopLayer
      * Moves the selected layer to the top, so it is displayed above all others.
      */
-    virtual void SetTopLayer( LAYER_ID aLayer );
+    virtual void SetTopLayer( int aLayer );
+
+    virtual void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector<MSG_PANEL_ITEM>& aList )
+    {
+        wxASSERT( false );
+    }
+
+    /**
+     * Function GetLegacyZoom()
+     * Returns current view scale converted to zoom value used by the legacy canvas.
+     */
+    double GetLegacyZoom() const;
+
+    /**
+     * Function GetParentEDAFrame()
+     * Returns parent EDA_DRAW_FRAME, if available or NULL otherwise.
+     */
+    EDA_DRAW_FRAME* GetParentEDAFrame() const { return m_edaFrame; }
+
+    /**
+     * Function OnShow()
+     * Called when the window is shown for the first time.
+     */
+    virtual void OnShow() {}
+
+    /**
+     * Set whether focus is taken on certain events (mouseover, keys, etc). This should
+     * be true (and is by default) for any primary canvas, but can be false to make
+     * well-behaved preview panes and the like.
+     */
+    void SetStealsFocus( bool aStealsFocus ) { m_stealsFocus = aStealsFocus; }
+
+    /**
+     * Function SetCurrentCursor
+     * Set the current cursor shape for this panel
+     */
+    void SetCurrentCursor( wxStockCursor aStockCursorID );
+    void SetCurrentCursor( const wxCursor& aCursor );
+
+    /**
+     * Returns the bounding box of the view that should be used if model is not valid
+     * For example, the worksheet bounding box for an empty PCB
+     *
+     * @return the default bounding box for the panel
+     */
+    virtual BOX2I GetDefaultViewBBox() const { return BOX2I(); }
+
+    /**
+     * Used to forward events to the canvas from popups, etc.
+     */
+    void OnEvent( wxEvent& aEvent );
 
 protected:
-    void onPaint( wxPaintEvent& WXUNUSED( aEvent ) );
+    virtual void onPaint( wxPaintEvent& WXUNUSED( aEvent ) );
     void onSize( wxSizeEvent& aEvent );
-    void onEvent( wxEvent& aEvent );
     void onEnter( wxEvent& aEvent );
+    void onLostFocus( wxFocusEvent& aEvent );
     void onRefreshTimer( wxTimerEvent& aEvent );
+    void onShowTimer( wxTimerEvent& aEvent );
+    void onSetCursor( wxSetCursorEvent& event );
 
     static const int MinRefreshPeriod = 17;             ///< 60 FPS.
 
-    /// Pointer to the parent window
-    wxWindow*               m_parent;
+    wxCursor                 m_currentCursor;    /// Current mouse cursor shape id.
 
-    /// Last timestamp when the panel was refreshed
-    wxLongLong               m_lastRefresh;
+    wxWindow*                m_parent;           /// Pointer to the parent window
+    EDA_DRAW_FRAME*          m_edaFrame;         /// Parent EDA_DRAW_FRAME (if available)
 
-    /// Is there a redraw event requested?
-    bool                     m_pendingRefresh;
+    wxLongLong               m_lastRefresh;      /// Last timestamp when the panel was refreshed
+    bool                     m_pendingRefresh;   /// Is there a redraw event requested?
+    wxTimer                  m_refreshTimer;     /// Timer to prevent too-frequent refreshing
 
     /// True if GAL is currently redrawing the view
     bool                     m_drawing;
 
-    /// Timer responsible for preventing too frequent refresh
-    wxTimer                  m_refreshTimer;
+    /// Flag that determines if VIEW may use GAL for redrawing the screen.
+    bool                     m_drawingEnabled;
+
+    /// Timer used to execute OnShow() when the window finally appears on the screen.
+    wxTimer                  m_onShowTimer;
 
     /// Interface for drawing objects on a 2D-surface
     KIGFX::GAL*              m_gal;
@@ -175,16 +233,25 @@ protected:
     KIGFX::VIEW*             m_view;
 
     /// Contains information about how to draw items using GAL
-    KIGFX::PAINTER*          m_painter;
+    std::unique_ptr<KIGFX::PAINTER> m_painter;
 
     /// Control for VIEW (moving, zooming, etc.)
     KIGFX::WX_VIEW_CONTROLS* m_viewControls;
 
     /// Currently used GAL
-    GalType                  m_backend;
+    GAL_TYPE                 m_backend;
+    KIGFX::GAL_DISPLAY_OPTIONS& m_options;
 
     /// Processes and forwards events to tools
     TOOL_DISPATCHER*         m_eventDispatcher;
+
+    /// Flag to indicate that focus should be regained on the next mouse event. It is a workaround
+    /// for cases when the panel loses keyboard focus, so it does not react to hotkeys anymore.
+    bool                     m_lostFocus;
+
+    /// Flag to indicate whether the panel should take focus at certain times (when moused over,
+    /// and on various mouse/key events)
+    bool                     m_stealsFocus;
 };
 
 #endif

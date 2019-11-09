@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 1992-2013 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,26 +31,39 @@
 #ifndef MODULE_H_
 #define MODULE_H_
 
+#include <deque>
 
-#include <dlist.h>
-#include <layers_id_colors_and_visibility.h>       // ALL_LAYERS definition.
+#include <board_item_container.h>
 #include <class_board_item.h>
-#include <fpid.h>
+#include <collectors.h>
+#include <convert_to_biu.h>
+#include <layers_id_colors_and_visibility.h> // ALL_LAYERS definition.
+#include <lib_id.h>
+#include <list>
 
-#include <class_text_mod.h>
-#include <PolyLine.h>
 #include "zones.h"
+#include <class_text_mod.h>
+#include <class_zone.h>
 
-#include <boost/function.hpp>
+#include <core/iterators.h>
+
+#include <functional>
 
 class LINE_READER;
 class EDA_3D_CANVAS;
-class S3D_MASTER;
-class EDA_DRAW_PANEL;
 class D_PAD;
 class BOARD;
 class MSG_PANEL_ITEM;
 
+namespace KIGFX {
+class VIEW;
+}
+
+enum INCLUDE_NPTH_T
+{
+    DO_NOT_INCLUDE_NPTH = false,
+    INCLUDE_NPTH = true
+};
 
 /**
  * Enum MODULE_ATTR_T
@@ -67,8 +80,36 @@ enum MODULE_ATTR_T
                         ///<  board (Like edge card connectors, mounting hole...)
 };
 
+class MODULE_3D_SETTINGS
+{
+    public:
+        MODULE_3D_SETTINGS() :
+            // Initialize with sensible values
+            m_Scale { 1, 1, 1 },
+            m_Rotation { 0, 0, 0 },
+            m_Offset { 0, 0, 0 },
+            m_Preview( true )
+        {
+        }
 
-class MODULE : public BOARD_ITEM
+        struct VECTOR3D
+        {
+            double x, y, z;
+        };
+
+        VECTOR3D m_Scale;       ///< 3D model scaling factor (dimensionless)
+        VECTOR3D m_Rotation;    ///< 3D model rotation (degrees)
+        VECTOR3D m_Offset;      ///< 3D model offset (mm)
+        wxString m_Filename;    ///< The 3D shape filename in 3D library
+        bool     m_Preview;     ///< Include module in 3D preview
+};
+
+DECL_DEQ_FOR_SWIG( PADS, D_PAD* )
+DECL_DEQ_FOR_SWIG( DRAWINGS, BOARD_ITEM* )
+DECL_VEC_FOR_SWIG( MODULE_ZONE_CONTAINERS, MODULE_ZONE_CONTAINER* )
+DECL_DEQ_FOR_SWIG( MODULES, MODULE* )
+
+class MODULE : public BOARD_ITEM_CONTAINER
 {
 public:
     MODULE( BOARD* parent );
@@ -77,45 +118,27 @@ public:
 
     ~MODULE();
 
+    MODULE& operator=( const MODULE& aOther );
+
     static inline bool ClassOf( const EDA_ITEM* aItem )
     {
-        return PCB_MODULE_T == aItem->Type();
+        return aItem && PCB_MODULE_T == aItem->Type();
     }
 
-    MODULE* Next() const { return static_cast<MODULE*>( Pnext ); }
-    MODULE* Back() const { return static_cast<MODULE*>( Pback ); }
+    ///> @copydoc BOARD_ITEM_CONTAINER::Add()
+    void Add( BOARD_ITEM* aItem, ADD_MODE aMode = ADD_INSERT ) override;
 
-    void Copy( MODULE* Module );        // Copy structure
-
-    /*
-     * Function Add
-     * adds the given item to this MODULE and takes ownership of its memory.
-     * @param aBoardItem The item to add to this board.
-     * @param doAppend If true, then append, else insert.
-     */
-    void Add( BOARD_ITEM* aBoardItem, bool doAppend = true );
+    ///> @copydoc BOARD_ITEM_CONTAINER::Remove()
+    void Remove( BOARD_ITEM* aItem ) override;
 
     /**
-     * Function Delete
-     * removes the given single item from this MODULE and deletes its memory.
-     * @param aBoardItem The item to remove from this module and delete
+     * Function ClearAllNets
+     * Clear (i.e. force the ORPHANED dummy net info) the net info which
+     * depends on a given board for all pads of the footprint.
+     * This is needed when a footprint is copied between the fp editor and
+     * the board editor for instance, because net info become fully broken
      */
-    void Delete( BOARD_ITEM* aBoardItem )
-    {
-        // developers should run DEBUG versions and fix such calls with NULL
-        wxASSERT( aBoardItem );
-
-        if( aBoardItem )
-            delete Remove( aBoardItem );
-    }
-
-    /**
-     * Function Remove
-     * removes \a aBoardItem from this MODULE and returns it to caller without deleting it.
-     * @param aBoardItem The item to remove from this module.
-     * @return BOARD_ITEM* \a aBoardItem which was passed in.
-     */
-    BOARD_ITEM* Remove( BOARD_ITEM* aBoardItem );
+    void ClearAllNets();
 
     /**
      * Function CalculateBoundingBox
@@ -130,26 +153,74 @@ public:
      */
     EDA_RECT GetFootprintRect() const;
 
+    /**
+     * Returns the bounding box containing pads when the footprint
+     * is on the front side, orientation 0, position 0,0.
+     * mainly used in Gerber place file to draw a fp outline when the coutyard
+     * is missing or broken
+     * @return EDA_RECT - The rectangle containing the pads for the normalized footprint.
+     */
+    EDA_RECT GetFpPadsLocalBbox() const;
+
+    /**
+     * Returns a bounding polygon for the shapes and pads in the module
+     * This operation is slower but more accurate than calculating a bounding box
+     */
+    SHAPE_POLY_SET GetBoundingPoly() const;
+
     // Virtual function
-    const EDA_RECT GetBoundingBox() const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    DLIST<D_PAD>& Pads()                        { return m_Pads; }
-    const DLIST<D_PAD>& Pads() const            { return m_Pads; }
+    const EDA_RECT GetBoundingBox( bool aIncludeInvisibleText ) const;
 
-    DLIST<BOARD_ITEM>& GraphicalItems()         { return m_Drawings; }
-    const DLIST<BOARD_ITEM>& GraphicalItems() const { return m_Drawings; }
+    PADS& Pads()
+    {
+         return m_pads;
+    }
 
-    DLIST<S3D_MASTER>& Models()                 { return m_3D_Drawings; }
-    const DLIST<S3D_MASTER>& Models() const     { return m_3D_Drawings; }
+    const PADS& Pads() const
+    {
+         return m_pads;
+    }
 
-    void SetPosition( const wxPoint& aPos );                        // was overload
-    const wxPoint& GetPosition() const          { return m_Pos; }   // was overload
+    DRAWINGS& GraphicalItems()
+    {
+        return m_drawings;
+    }
+
+    const MODULE_ZONE_CONTAINERS& Zones() const
+    {
+        return m_fp_zones;
+    }
+
+    const DRAWINGS& GraphicalItems() const
+    {
+        return m_drawings;
+    }
+
+    /**
+     * @return true if the given module has any non smd pins, such as through hole
+     * and therefore cannot be placed automatically.
+     * Used in Pick and Place files writers
+     */
+    bool HasNonSMDPins() const;
+
+    std::list<MODULE_3D_SETTINGS>& Models()             { return m_3D_Drawings; }
+    const std::list<MODULE_3D_SETTINGS>& Models() const { return m_3D_Drawings; }
+
+    void SetPosition( const wxPoint& aPos ) override;
+
+    const wxPoint GetPosition() const override { return m_Pos; }
 
     void SetOrientation( double newangle );
-    double GetOrientation() const { return m_Orient; }
 
-    const FPID& GetFPID() const { return m_fpid; }
-    void SetFPID( const FPID& aFPID ) { m_fpid = aFPID; }
+    void SetOrientationDegrees( double aOrientation ) { SetOrientation( aOrientation * 10.0 ); }
+    double GetOrientation() const { return m_Orient; }
+    double GetOrientationDegrees() const { return m_Orient / 10.0; }
+    double GetOrientationRadians() const { return m_Orient * M_PI / 1800; }
+
+    const LIB_ID& GetFPID() const { return m_fpid; }
+    void SetFPID( const LIB_ID& aFPID ) { m_fpid = aFPID; }
 
     const wxString& GetDescription() const { return m_Doc; }
     void SetDescription( const wxString& aDoc ) { m_Doc = aDoc; }
@@ -184,15 +255,18 @@ public:
     int GetAttributes() const { return m_Attributs; }
     void SetAttributes( int aAttributes ) { m_Attributs = aAttributes; }
 
-    void SetFlag( int aFlag ) { flag = aFlag; }
-    void IncrementFlag() { flag += 1; }
-    int GetFlag() const { return flag; }
+    void SetFlag( int aFlag ) { m_arflag = aFlag; }
+    void IncrementFlag() { m_arflag += 1; }
+    int GetFlag() const { return m_arflag; }
 
-    void Move( const wxPoint& aMoveVector );
+    // A bit of a hack until net ties are supported as first class citizens
+    bool IsNetTie() const { return GetKeywords().StartsWith( wxT( "net tie" ) ); }
 
-    void Rotate( const wxPoint& aRotCentre, double aAngle );
+    void Move( const wxPoint& aMoveVector ) override;
 
-    void Flip( const wxPoint& aCentre );
+    void Rotate( const wxPoint& aRotCentre, double aAngle ) override;
+
+    void Flip( const wxPoint& aCentre, bool aFlipLeftRight ) override;
 
     /**
      * Function MoveAnchorPosition
@@ -211,17 +285,18 @@ public:
      * function IsFlipped
      * @return true if the module is flipped, i.e. on the back side of the board
      */
-    bool IsFlipped() const {return GetLayer() == B_Cu; }
+    bool IsFlipped() const { return GetLayer() == B_Cu; }
 
 // m_ModuleStatus bits:
 #define MODULE_is_LOCKED    0x01        ///< module LOCKED: no autoplace allowed
 #define MODULE_is_PLACED    0x02        ///< In autoplace: module automatically placed
 #define MODULE_to_PLACE     0x04        ///< In autoplace: module waiting for autoplace
+#define MODULE_PADS_LOCKED  0x08        ///< In autoplace: module waiting for autoplace
 
 
-    bool IsLocked() const
+    bool IsLocked() const override
     {
-        return (m_ModuleStatus & MODULE_is_LOCKED) != 0;
+        return ( m_ModuleStatus & MODULE_is_LOCKED ) != 0;
     }
 
     /**
@@ -229,7 +304,7 @@ public:
      * sets the MODULE_is_LOCKED bit in the m_ModuleStatus
      * @param isLocked When true means turn on locked status, else unlock
      */
-    void SetLocked( bool isLocked )
+    void SetLocked( bool isLocked ) override
     {
         if( isLocked )
             m_ModuleStatus |= MODULE_is_LOCKED;
@@ -237,7 +312,7 @@ public:
             m_ModuleStatus &= ~MODULE_is_LOCKED;
     }
 
-    bool IsPlaced() const   { return (m_ModuleStatus & MODULE_is_PLACED); }
+    bool IsPlaced() const { return m_ModuleStatus & MODULE_is_PLACED;  }
     void SetIsPlaced( bool isPlaced )
     {
         if( isPlaced )
@@ -246,7 +321,7 @@ public:
             m_ModuleStatus &= ~MODULE_is_PLACED;
     }
 
-    bool NeedsPlaced() const  { return (m_ModuleStatus & MODULE_to_PLACE); }
+    bool NeedsPlaced() const { return m_ModuleStatus & MODULE_to_PLACE;  }
     void SetNeedsPlaced( bool needsPlaced )
     {
         if( needsPlaced )
@@ -255,39 +330,30 @@ public:
             m_ModuleStatus &= ~MODULE_to_PLACE;
     }
 
-    void SetLastEditTime( time_t aTime ) { m_LastEditTime = aTime; }
-    void SetLastEditTime( ) { m_LastEditTime = time( NULL ); }
-    time_t GetLastEditTime() const { return m_LastEditTime; }
+    bool PadsLocked() const { return m_ModuleStatus & MODULE_PADS_LOCKED;  }
+
+    void SetPadsLocked( bool aPadsLocked )
+    {
+        if( aPadsLocked )
+            m_ModuleStatus |= MODULE_PADS_LOCKED;
+        else
+            m_ModuleStatus &= ~MODULE_PADS_LOCKED;
+    }
+
+    void SetLastEditTime( timestamp_t aTime ) { m_LastEditTime = aTime; }
+    void SetLastEditTime() { m_LastEditTime = time( NULL ); }
+    timestamp_t GetLastEditTime() const { return m_LastEditTime; }
 
     /* drawing functions */
 
     /**
-     * Function Draw
-     * draws the footprint to the \a aDC.
-     * @param aPanel = draw panel, Used to know the clip box
+     * Function Print
+     * Prints the footprint to the \a aDC.
+     * @param aFrame = the current Frame
      * @param aDC = Current Device Context
-     * @param aDrawMode = GR_OR, GR_XOR..
      * @param aOffset = draw offset (usually wxPoint(0,0)
      */
-    void Draw( EDA_DRAW_PANEL* aPanel,
-               wxDC*           aDC,
-               GR_DRAWMODE     aDrawMode,
-               const wxPoint&  aOffset = ZeroOffset );
-
-    /**
-     * function ReadandInsert3DComponentShape
-     * read the 3D component shape(s) of the footprint (physical shape)
-     * and insert mesh in gl list
-     * @param glcanvas = the openGL canvas
-     * @param  aAllowNonTransparentObjects = true to load non transparent objects
-     * @param  aAllowTransparentObjects = true to load non transparent objects
-     * @param  aSideToLoad = false will load not fliped, true will load fliped objects
-     * in openGL, transparent objects should be drawn *after* non transparent objects
-     */
-    void ReadAndInsert3DComponentShape( EDA_3D_CANVAS* glcanvas,
-                                        bool aAllowNonTransparentObjects,
-                                        bool aAllowTransparentObjects,
-                                        bool aSideToLoad );
+    void Print( PCB_BASE_FRAME* aFrame, wxDC* aDC, const wxPoint& aOffset = ZeroOffset ) override;
 
     /**
      * function TransformPadsShapesWithClearanceToPolygon
@@ -295,22 +361,21 @@ public:
      * and adds these polygons to aCornerBuffer
      * Useful to generate a polygonal representation of a footprint
      * in 3D view and plot functions, when a full polygonal approach is needed
-     * @param aLayer = the current layer: pads on this layer are considered
+     * @param aLayer = the layer to consider, or UNDEFINED_LAYER to consider all
      * @param aCornerBuffer = the buffer to store polygons
      * @param aInflateValue = an additionnal size to add to pad shapes
      *          aInflateValue = 0 to have the exact pad size
-     * @param aCircleToSegmentsCount = number of segments to generate a circle
-     * @param aCorrectionFactor = the correction to apply to a circle radius
-     *  to approximate a circle by the polygon.
-     *  if aCorrectionFactor = 1.0, the polygon is inside the circle
-     *  the radius of circle approximated by segments is
-     *  initial radius * aCorrectionFactor
+     * @param aMaxError = Maximum deviation from true for arcs
+     * @param aSkipNPTHPadsWihNoCopper = if true, do not add a NPTH pad shape,
+     *  if the shape has same size and position as the hole. Usually, these
+     *  pads are not drawn on copper layers, because there is actually no copper
+     *  Due to diff between layers and holes, these pads must be skipped to be sure
+     *  there is no copper left on the board (for instance when creating Gerber Files or 3D shapes)
+     *  default = false
      */
-    void TransformPadsShapesWithClearanceToPolygon( LAYER_ID aLayer,
-                            CPOLYGONS_LIST& aCornerBuffer,
-                            int             aInflateValue,
-                            int             aCircleToSegmentsCount,
-                            double          aCorrectionFactor );
+    void TransformPadsShapesWithClearanceToPolygon( PCB_LAYER_ID aLayer,
+            SHAPE_POLY_SET& aCornerBuffer, int aInflateValue, int aMaxError = ARC_HIGH_DEF,
+            bool aSkipNPTHPadsWihNoCopper = false ) const;
 
     /**
      * function TransformGraphicShapesWithClearanceToPolygonSet
@@ -318,52 +383,53 @@ public:
      * and adds these polygons to aCornerBuffer
      * Useful to generate a polygonal representation of a footprint
      * in 3D view and plot functions, when a full polygonal approach is needed
-     * @param aLayer = the current layer: items on this layer are considered
+     * @param aLayer = the layer to consider, or UNDEFINED_LAYER to consider all
      * @param aCornerBuffer = the buffer to store polygons
      * @param aInflateValue = a value to inflate shapes
      *          aInflateValue = 0 to have the exact shape size
-     * @param aCircleToSegmentsCount = number of segments to generate a circle
-     * @param aCorrectionFactor = the correction to apply to a circle radius
-     *  to approximate a circle by the polygon.
-     *  if aCorrectionFactor = 1.0, the polygon is inside the circle
-     *  the radius of circle approximated by segments is
-     *  initial radius * aCorrectionFactor
+     * @param aError = Maximum error between true arc and polygon approx
+     * @param aIncludeText = True to transform text shapes
      */
-    void TransformGraphicShapesWithClearanceToPolygonSet(
-                            LAYER_ID aLayer,
-                            CPOLYGONS_LIST& aCornerBuffer,
-                            int             aInflateValue,
-                            int             aCircleToSegmentsCount,
-                            double          aCorrectionFactor );
+    void TransformGraphicShapesWithClearanceToPolygonSet( PCB_LAYER_ID aLayer,
+            SHAPE_POLY_SET& aCornerBuffer, int aInflateValue, int aError = ARC_HIGH_DEF,
+            bool aIncludeText = true ) const;
 
     /**
-     * Function DrawEdgesOnly
-     *  Draws the footprint edges only to the current Device Context
-     *  @param panel = The active Draw Panel (used to know the clip box)
-     *  @param DC = current Device Context
-     *  @param offset = draw offset (usually wxPoint(0,0)
-     *  @param draw_mode =  GR_OR, GR_XOR, GR_AND
+     * @brief TransformGraphicTextWithClearanceToPolygonSet
+     * This function is the same as TransformGraphicShapesWithClearanceToPolygonSet
+     * but only generate text
+     * @param aLayer = the layer to consider, or UNDEFINED_LAYER to consider all
+     * @param aCornerBuffer = the buffer to store polygons
+     * @param aInflateValue = a value to inflate shapes
+     *          aInflateValue = 0 to have the exact shape size
+     * @param aError = Maximum error between true arc and polygon approx
      */
-    void DrawEdgesOnly( EDA_DRAW_PANEL* panel, wxDC* DC, const wxPoint& offset,
-                        GR_DRAWMODE draw_mode );
+    void TransformGraphicTextWithClearanceToPolygonSet( PCB_LAYER_ID aLayer,
+            SHAPE_POLY_SET& aCornerBuffer, int aInflateValue, int aError = ARC_HIGH_DEF ) const;
 
-    void DrawAncre( EDA_DRAW_PANEL* panel, wxDC* DC,
-                    const wxPoint& offset, int dim_ancre, GR_DRAWMODE draw_mode );
+    ///> @copydoc EDA_ITEM::GetMsgPanelInfo
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector<MSG_PANEL_ITEM>& aList ) override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override;
 
-    bool HitTest( const wxPoint& aPosition ) const;
-
-    /** @copydoc BOARD_ITEM::HitTest(const EDA_RECT& aRect,
-     *                               bool aContained = true, int aAccuracy ) const
+    /**
+     * Tests if a point is inside the bounding polygon of the module
+     *
+     * The other hit test methods are just checking the bounding box, which
+     * can be quite inaccurate for rotated or oddly-shaped footprints.
+     *
+     * @param aPosition is the point to test
+     * @return true if aPosition is inside the bounding polygon
      */
-    bool HitTest( const EDA_RECT& aRect, bool aContained = true, int aAccuracy = 0 ) const;
+    bool HitTestAccurate( const wxPoint& aPosition, int aAccuracy = 0 ) const;
+
+    bool HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy = 0 ) const override;
 
     /**
      * Function GetReference
      * @return const wxString& - the reference designator text.
      */
-    const wxString& GetReference() const
+    const wxString GetReference() const
     {
         return m_Reference->GetText();
     }
@@ -379,10 +445,16 @@ public:
     }
 
     /**
+     * Function IncrementReference
+     * Bumps the current reference by aDelta.
+     */
+    void IncrementReference( int aDelta );
+
+    /**
      * Function GetValue
      * @return const wxString& - the value text.
      */
-    const wxString& GetValue()
+    const wxString GetValue() const
     {
         return m_Value->GetText();
     }
@@ -401,17 +473,15 @@ public:
     TEXTE_MODULE& Reference()   { return *m_Reference; }
 
     /// The const versions to keep the compiler happy.
-    TEXTE_MODULE& Value() const       { return *m_Value; }
-    TEXTE_MODULE& Reference() const   { return *m_Reference; }
-
+    TEXTE_MODULE& Value() const { return *m_Value; }
+    TEXTE_MODULE& Reference() const { return *m_Reference; }
 
     /**
      * Function FindPadByName
      * returns a D_PAD* with a matching name.  Note that names may not be
      * unique, depending on how the foot print was created.
      * @param aPadName the pad name to find
-     * @return D_PAD* - The first matching name is returned, or NULL if not
-     *                  found.
+     * @return D_PAD* - The first matching name is returned, or NULL if not found.
      */
     D_PAD* FindPadByName( const wxString& aPadName ) const;
 
@@ -425,11 +495,16 @@ public:
      */
     D_PAD* GetPad( const wxPoint& aPosition, LSET aLayerMask = LSET::AllLayersMask() );
 
-    enum INCLUDE_NPTH_T
+    D_PAD* GetTopLeftPad();
+
+    /**
+     * Gets the first pad in the list or NULL if none
+     * @return first pad or null pointer
+     */
+    D_PAD* GetFirstPad() const
     {
-        DO_NOT_INCLUDE_NPTH = false,
-        INCLUDE_NPTH = true
-    };
+        return m_pads.empty() ? nullptr : m_pads.front();
+    }
 
     /**
      * GetPadCount
@@ -439,70 +514,97 @@ public:
      *                     non-plated through holes when false.
      * @return the number of pads according to \a aIncludeNPTH.
      */
-    unsigned GetPadCount( INCLUDE_NPTH_T aIncludeNPTH = INCLUDE_NPTH ) const;
+    unsigned GetPadCount( INCLUDE_NPTH_T aIncludeNPTH = INCLUDE_NPTH_T(INCLUDE_NPTH) ) const;
 
-    double GetArea() const                  { return m_Surface; }
+    /**
+     * GetUniquePadCount
+     * returns the number of unique pads.
+     * A complex pad can be built with many pads having the same pad name
+     * to create a complex shape or fragmented solder paste areas.
+     *
+     * GetUniquePadCount calculate the count of not blank pad names
+     *
+     * @param aIncludeNPTH includes non-plated through holes when true.  Does not include
+     *                     non-plated through holes when false.
+     * @return the number of unique pads according to \a aIncludeNPTH.
+     */
+    unsigned GetUniquePadCount( INCLUDE_NPTH_T aIncludeNPTH = INCLUDE_NPTH_T(INCLUDE_NPTH) ) const;
 
-    time_t GetLink() const                  { return m_Link; }
-    void SetLink( time_t aLink )            { m_Link = aLink; }
+    /**
+     * Function GetNextPadName
+     * returns the next available pad name in the module
+     *
+     * @param aFillSequenceGaps true if the numbering should "fill in" gaps in the sequence,
+     *                          else return the highest value + 1
+     * @return the next available pad name
+     */
+    wxString GetNextPadName( bool aFillSequenceGaps ) const;
 
-    int GetPlacementCost180() const         { return m_CntRot180; }
+    double GetArea( int aPadding = 0 ) const;
+
+    timestamp_t GetLink() const { return m_Link; }
+    void SetLink( timestamp_t aLink )            { m_Link = aLink; }
+
+    int GetPlacementCost180() const { return m_CntRot180; }
     void SetPlacementCost180( int aCost )   { m_CntRot180 = aCost; }
 
-    int GetPlacementCost90() const          { return m_CntRot90; }
+    int GetPlacementCost90() const { return m_CntRot90; }
     void SetPlacementCost90( int aCost )    { m_CntRot90 = aCost; }
+
+    /**
+     * Function Duplicate
+     * Duplicate a given item within the module, without adding to the board
+     * @return the new item, or NULL if the item could not be duplicated
+     */
+    BOARD_ITEM* Duplicate( const BOARD_ITEM* aItem,
+            bool aIncrementPadNumbers,
+            bool aAddToModule = false );
 
     /**
      * Function Add3DModel
      * adds \a a3DModel definition to the end of the 3D model list.
      *
-     * @param a3DModel A pointer to a #S3D_MASTER to add to the list.
+     * @param a3DModel A pointer to a #MODULE_3D_SETTINGS to add to the list.
      */
-    void Add3DModel( S3D_MASTER* a3DModel );
+    void Add3DModel( MODULE_3D_SETTINGS* a3DModel );
 
-    SEARCH_RESULT Visit( INSPECTOR* inspector, const void* testData,
-                         const KICAD_T scanTypes[] );
+    SEARCH_RESULT Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] ) override;
 
-    wxString GetClass() const
+    wxString GetClass() const override
     {
         return wxT( "MODULE" );
     }
 
-    wxString GetSelectMenuText() const;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const { return  module_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
     /**
      * Function RunOnChildren
      *
      * Invokes a function on all BOARD_ITEMs that belong to the module (pads, drawings, texts).
+     * Note that this function should not add or remove items to the module
      * @param aFunction is the function to be invoked.
      */
-    void RunOnChildren( boost::function<void (BOARD_ITEM*)> aFunction );
-
-    /// @copydoc VIEW_ITEM::ViewUpdate()
-    void ViewUpdate( int aUpdateFlags = KIGFX::VIEW_ITEM::ALL );
-
-    /// @copydoc VIEW_ITEM::ViewGetLayers()
-    virtual void ViewGetLayers( int aLayers[], int& aCount ) const;
-
-    /// @copydoc VIEW_ITEM::ViewGetLOD()
-    virtual unsigned int ViewGetLOD( int aLayer ) const;
+    void RunOnChildren( const std::function<void (BOARD_ITEM*)>& aFunction );
 
     /**
-     * Function CopyNetlistSettings
-     * copies the netlist settings to \a aModule.
+     * Returns a set of all layers that this module has drawings on
+     * similar to ViewGetLayers()
      *
-     * The netlist settings are all of the #MODULE settings not define by a #MODULE in
-     * a netlist.  These setting include position, orientation, local clearances, ets.
-     * The reference designator, value, path, and physical geometry settings are not
-     * copied.
-     *
-     * @param aModule is the #MODULE to copy the settings to.
+     * @param aLayers is an array to store layer ids
+     * @param aCount is the number of layers stored in the array
+     * @param aIncludePads controls whether to also include pad layers
      */
-    void CopyNetlistSettings( MODULE* aModule );
+    void GetAllDrawingLayers( int aLayers[], int& aCount, bool aIncludePads = true ) const;
+
+    virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
+
+    virtual unsigned int ViewGetLOD( int aLayer, KIGFX::VIEW* aView ) const override;
+
+    virtual const BOX2I ViewBBox() const override;
 
     /**
      * static function IsLibNameValid
@@ -511,7 +613,7 @@ public:
      * @param aName = the name in library to validate
      * @return true if the given name is valid
      */
-    static bool IsLibNameValid( const wxString & aName );
+    static bool IsLibNameValid( const wxString& aName );
 
     /**
      * static function StringLibNameInvalidChars
@@ -526,17 +628,16 @@ public:
     /**
      * Function SetInitialComments
      * takes ownership of caller's heap allocated aInitialComments block.  The comments
-     * are single line strings already containing the s-expression comments with
-     * optional leading whitespace and then a '#' character followed by optional
-     * single line text (text with no line endings, not even one).
+     * are single line strings already containing the s-expression comments with optional
+     * leading whitespace and then a '#' character followed by optional single line text
+     * (text with no line endings, not even one).
      * This block of single line comments will be output upfront of any generated
      * s-expression text in the PCBIO::Format() function.
      * <p>
-     * Note that a block of single line comments constitutes a multiline block of
-     * single line comments.  That is, the block is made of consecutive single line
-     * comments.
+     * Note that a block of single line comments constitutes a multiline block of single
+     * line comments.  That is, the block is made of consecutive single line comments.
      * @param aInitialComments is a heap allocated wxArrayString or NULL, which the caller
-     *  gives up ownership of over to this MODULE.
+     *                         gives up ownership of over to this MODULE.
      */
     void SetInitialComments( wxArrayString* aInitialComments )
     {
@@ -544,51 +645,77 @@ public:
         m_initial_comments = aInitialComments;
     }
 
+    /**
+     * Function CoverageRatio
+     * Calculates the ratio of total area of the footprint pads and graphical items
+     * to the area of the footprint. Used by selection tool heuristics.
+     * @return the ratio
+     */
+    double CoverageRatio( const GENERAL_COLLECTOR& aCollector ) const;
+
     /// Return the initial comments block or NULL if none, without transfer of ownership.
     const wxArrayString* GetInitialComments() const { return m_initial_comments; }
 
+    /** Used in DRC to test the courtyard area (a complex polygon)
+     * @return the courtyard polygon
+     */
+    SHAPE_POLY_SET& GetPolyCourtyardFront() { return m_poly_courtyard_front; }
+    SHAPE_POLY_SET& GetPolyCourtyardBack() { return m_poly_courtyard_back; }
+
+    /** Used in DRC to build the courtyard area (a complex polygon)
+     * from graphic items put on the courtyard
+     * @return true if OK, or no courtyard defined,
+     * false only if the polygon cannot be built due to amalformed courtyard shape
+     * The polygon cannot be built if segments/arcs on courtyard layers
+     * cannot be grouped in a polygon.
+     */
+    bool BuildPolyCourtyard();
+
+    virtual void SwapData( BOARD_ITEM* aImage ) override;
+
 #if defined(DEBUG)
-    virtual void Show( int nestLevel, std::ostream& os ) const { ShowDummy( os ); }    // override
+    virtual void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }
 #endif
 
 private:
-    DLIST<D_PAD>      m_Pads;           ///< Linked list of pads.
-    DLIST<BOARD_ITEM> m_Drawings;       ///< Linked list of graphical items.
-    DLIST<S3D_MASTER> m_3D_Drawings;    ///< Linked list of 3D models.
-    double            m_Orient;         ///< Orientation in tenths of a degree, 900=90.0 degrees.
-    wxPoint           m_Pos;            ///< Position of module on the board in internal units.
-    TEXTE_MODULE*     m_Reference;      ///< Component reference designator value (U34, R18..)
-    TEXTE_MODULE*     m_Value;          ///< Component value (74LS00, 22K..)
-    FPID              m_fpid;           ///< The #FPID of the MODULE.
-    int               m_Attributs;      ///< Flag bits ( see Mod_Attribut )
-    int               m_ModuleStatus;   ///< For autoplace: flags (LOCKED, AUTOPLACED)
-    EDA_RECT          m_BoundaryBox;    ///< Bounding box : coordinates on board, real orientation.
+    DRAWINGS        m_drawings;         // BOARD_ITEMs for drawings on the board, owned by pointer.
+    PADS            m_pads;             // D_PAD items, owned by pointer
+    MODULE_ZONE_CONTAINERS m_fp_zones;  // MODULE_ZONE_CONTAINER items, owned by pointer
+    std::list<MODULE_3D_SETTINGS> m_3D_Drawings;  // Linked list of 3D models.
 
-    // The final margin is the sum of these 2 values
-    int               m_ThermalWidth;
-    int               m_ThermalGap;
-    wxString          m_Doc;            ///< File name and path for documentation file.
-    wxString          m_KeyWord;        ///< Search keywords to find module in library.
-    wxString          m_Path;
-    ZoneConnection    m_ZoneConnection;
-    time_t            m_LastEditTime;
-    int               flag;             ///< Use to trace ratsnest and auto routing.
-    double            m_Surface;        ///< Bounding box area
-    time_t            m_Link;           ///< Temporary logical link used in edition
-    int               m_CntRot90;       ///< Horizontal automatic placement cost ( 0..10 ).
-    int               m_CntRot180;      ///< Vertical automatic placement cost ( 0..10 ).
+    double         m_Orient;            // Orientation in tenths of a degree, 900=90.0 degrees.
+    wxPoint        m_Pos;               // Position of module on the board in internal units.
+    TEXTE_MODULE*  m_Reference;         // Component reference designator value (U34, R18..)
+    TEXTE_MODULE*  m_Value;             // Component value (74LS00, 22K..)
+    LIB_ID         m_fpid;              // The #LIB_ID of the MODULE.
+    int            m_Attributs;         // Flag bits ( see Mod_Attribut )
+    int            m_ModuleStatus;      // For autoplace: flags (LOCKED, AUTOPLACED)
+    EDA_RECT       m_BoundaryBox;       // Bounding box : coordinates on board, real orientation.
 
-    // Local tolerances. When zero, this means the corresponding netclass value
-    // is used. Usually theses local tolerances zero, in deference to the
-    // corresponding netclass values.
-    int               m_LocalClearance;
-    int               m_LocalSolderMaskMargin;    ///< Solder mask margin
-    int               m_LocalSolderPasteMargin;   ///< Solder paste margin absolute value
-    double            m_LocalSolderPasteMarginRatio;   ///< Solder mask margin ratio
-                                                       ///< value of pad size
+    ZoneConnection m_ZoneConnection;
+    int            m_ThermalWidth;
+    int            m_ThermalGap;
+    int            m_LocalClearance;
+    int            m_LocalSolderMaskMargin;       // Solder mask margin
+    int            m_LocalSolderPasteMargin;      // Solder paste margin absolute value
+    double         m_LocalSolderPasteMarginRatio; // Solder mask margin ratio value of pad size
 
-    wxArrayString*    m_initial_comments;   ///< leading s-expression comments in the module,
-                                            ///< lazily allocated only if needed for speed
+    wxString       m_Doc;               // File name and path for documentation file.
+    wxString       m_KeyWord;           // Search keywords to find module in library.
+    wxString       m_Path;
+    timestamp_t    m_LastEditTime;
+    int            m_arflag;            // Use to trace ratsnest and auto routing.
+    timestamp_t    m_Link;              // Temporary logical link used during editing
+    int            m_CntRot90;          // Horizontal automatic placement cost ( 0..10 ).
+    int            m_CntRot180;         // Vertical automatic placement cost ( 0..10 ).
+
+    wxArrayString* m_initial_comments;  ///< leading s-expression comments in the module,
+                                        ///< lazily allocated only if needed for speed
+
+    /// Used in DRC to test the courtyard area (a polygon which can be not basic
+    /// Note also a footprint can have courtyards on both board sides
+    SHAPE_POLY_SET m_poly_courtyard_front;
+    SHAPE_POLY_SET m_poly_courtyard_back;
 };
 
 #endif     // MODULE_H_

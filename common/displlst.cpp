@@ -29,9 +29,17 @@
 
 #include <fctsys.h>
 #include <macros.h>
-#include <draw_frame.h>
+#include <eda_draw_frame.h>
 #include <kicad_string.h>
 #include <dialog_helpers.h>
+
+
+// wxWidgets spends *far* too long calcuating column widths (most of it, believe it or
+// not, in repeatedly creating/destroying a wxDC to do the measurement in).
+// Use default column widths instead.
+static int DEFAULT_COL_WIDTHS[] = { 200, 600 };
+
+
 
 EDA_LIST_DIALOG::EDA_LIST_DIALOG( EDA_DRAW_FRAME* aParent, const wxString& aTitle,
                                   const wxArrayString& aItemHeaders,
@@ -39,7 +47,7 @@ EDA_LIST_DIALOG::EDA_LIST_DIALOG( EDA_DRAW_FRAME* aParent, const wxString& aTitl
                                   const wxString& aSelection,
                                   void( *aCallBackFunction )( wxString&, void* ),
                                   void* aCallBackFunctionData,
-                                  bool aSortList ) :
+                                  bool aSortList, bool aShowHeaders ) :
     EDA_LIST_DIALOG_BASE( aParent, wxID_ANY, aTitle )
 {
     m_sortList    = aSortList;
@@ -47,17 +55,35 @@ EDA_LIST_DIALOG::EDA_LIST_DIALOG( EDA_DRAW_FRAME* aParent, const wxString& aTitl
     m_cb_data     = aCallBackFunctionData;
     m_itemsListCp = &aItemList;
 
+    m_filterBox->SetHint( _( "Filter" ) );
+
+    initDialog( aItemHeaders, aSelection );
+
+    if( !aShowHeaders )
+        m_listBox->SetSingleStyle( wxLC_NO_HEADER, true );
+
+    // DIALOG_SHIM needs a unique hash_key because classname is not sufficient
+    // because so many dialogs share this same class, with different numbers of
+    // columns, different column names, and column widths.
+    m_hash_key = TO_UTF8( aTitle );
+
+    m_sdbSizerOK->SetDefault();
+
+    // this line fixes an issue on Linux Ubuntu using Unity (dialog not shown),
+    // and works fine on all systems
+    GetSizer()->Fit(  this );
+
+    Centre();
+}
+
+
+void EDA_LIST_DIALOG::initDialog( const wxArrayString& aItemHeaders, const wxString& aSelection)
+{
     for( unsigned i = 0; i < aItemHeaders.Count(); i++ )
-    {
-        wxListItem column;
+        m_listBox->InsertColumn( i, aItemHeaders.Item( i ),
+                                 wxLIST_FORMAT_LEFT, DEFAULT_COL_WIDTHS[ i ] );
 
-        column.SetId( i );
-        column.SetText( aItemHeaders.Item( i ) );
-
-        m_listBox->InsertColumn( i, column );
-    }
-
-    InsertItems( aItemList, 0 );
+    InsertItems( *m_itemsListCp, 0 );
 
     if( m_cb_func == NULL )
     {
@@ -65,75 +91,41 @@ EDA_LIST_DIALOG::EDA_LIST_DIALOG( EDA_DRAW_FRAME* aParent, const wxString& aTitl
         m_staticTextMsg->Show( false );
     }
 
-    for( unsigned col = 0; col < aItemHeaders.Count();  ++col )
+    if( !aSelection.IsEmpty() )
     {
-        m_listBox->SetColumnWidth( col, wxLIST_AUTOSIZE );
-
-#if !wxCHECK_VERSION( 2, 9, 0 )
-        // include the column header in the width decision, wx 2.8 forgets this:
-        wxListItem  col_info;
-
-        m_listBox->GetColumn( col, col_info );
-
-        wxString    header  = col_info.GetText();
-        int         headerz = GetTextSize( header, m_listBox ).x;
-
-        // A reasonable column header has about 14 pixels of whitespace
-        // in addition to the width of the text itself.
-        headerz += 14;
-
-        if( headerz > col_info.GetWidth() )
+        for( unsigned row = 0; row < m_itemsListCp->size(); ++row )
         {
-            col_info.SetWidth( headerz );
-
-            m_listBox->SetColumn( col, col_info );
-        }
-#endif
-    }
-
-
-#if !wxCHECK_VERSION( 2, 9, 0 )
-    // wx 2.8.x has bug in wxListCtrl WRT honoring the omission of wxHSCROLL, at least
-    // on gtk2.  Fix by setting minimum width so horizontal wxListCtrl scrolling is
-    // not needed on 2.8.x because of minumum visible width setting:
-    {
-        int width = 0;
-
-        for( unsigned col = 0;  col < aItemHeaders.Count();  ++col )
-        {
-            width += m_listBox->GetColumnWidth( col ) + 2;
-        }
-
-        wxSize sz = m_listBox->GetSize();
-
-        sz.SetWidth( width );
-
-        m_listBox->SetMinSize( sz );
-    }
-#endif
-
-    Fit();
-    Centre();
-
-    if( !!aSelection )
-    {
-        for( unsigned row = 0; row < aItemList.size(); ++row )
-        {
-            if( aItemList[row][0] == aSelection )
+            if( (*m_itemsListCp)[row][0] == aSelection )
             {
                 m_listBox->SetItemState( row, wxLIST_STATE_SELECTED, wxLIST_STATE_SELECTED );
+
+                // Set to a small size so EnsureVisible() won't be foiled by later additions.
+                // ListBox will expand to fit later.
+                m_listBox->SetSize( m_listBox->GetSize().GetX(), 100 );
                 m_listBox->EnsureVisible( row );
+
                 break;
             }
         }
     }
+}
 
-    // DIALOG_SHIM needs a unique hash_key because classname is not sufficient
-    // because so many dialogs share this same class, with different numbers of
-    // columns, different column names, and column widths.
-    m_hash_key = TO_UTF8( aTitle );
 
-    m_filterBox->SetFocus();
+void EDA_LIST_DIALOG::SetFilterHint( const wxString& aHint )
+{
+    m_filterBox->SetHint( aHint );
+}
+
+
+void EDA_LIST_DIALOG::SetListLabel( const wxString& aLabel )
+{
+    m_listLabel->SetLabel( aLabel );
+}
+
+
+void EDA_LIST_DIALOG::SetOKLabel( const wxString& aLabel )
+{
+    m_sdbSizerOK->SetLabel( aLabel );
 }
 
 
@@ -188,7 +180,7 @@ void EDA_LIST_DIALOG::Append( const wxArrayString& itemList )
 {
     long itemIndex = m_listBox->InsertItem( m_listBox->GetItemCount(), itemList[0] );
 
-    m_listBox->SetItemData( itemIndex, (long) &(itemList[0]) );
+    m_listBox->SetItemPtrData( itemIndex, wxUIntPtr( &itemList[0] ) );
 
     // Adding the next columns content
     for( unsigned i = 1; i < itemList.size(); i++ )
@@ -204,30 +196,31 @@ void EDA_LIST_DIALOG::InsertItems( const std::vector< wxArrayString >& itemList,
     {
         wxASSERT( (int) itemList[row].GetCount() == m_listBox->GetColumnCount() );
 
-        long itemIndex = 0;
         for( unsigned col = 0; col < itemList[row].GetCount(); col++ )
         {
+            wxListItem info;
+            info.m_itemId = row + position;
+            info.m_col = col;
+            info.m_text = itemList[row].Item( col );
+            info.m_width = DEFAULT_COL_WIDTHS[ col ];
+            info.m_mask = wxLIST_MASK_TEXT | wxLIST_MASK_WIDTH;
 
             if( col == 0 )
             {
-                itemIndex = m_listBox->InsertItem( row+position, itemList[row].Item( col ) );
-                m_listBox->SetItemData( itemIndex, (long) &itemList[row].Item( col ) );
+                info.m_data = wxUIntPtr( &itemList[row].Item( col ) );
+                info.m_mask |= wxLIST_MASK_DATA;
+
+                m_listBox->InsertItem( info );
             }
             else
             {
-                m_listBox->SetItem( itemIndex, col, itemList[row].Item( col ) );
+                m_listBox->SetItem( info );
             }
         }
     }
 
     if( m_sortList )
         sortList();
-}
-
-
-void EDA_LIST_DIALOG::onCancelClick( wxCommandEvent& event )
-{
-    EndModal( wxID_CANCEL );
 }
 
 
@@ -249,30 +242,19 @@ void EDA_LIST_DIALOG::onListItemActivated( wxListEvent& event )
 }
 
 
-void EDA_LIST_DIALOG::onOkClick( wxCommandEvent& event )
-{
-    EndModal( wxID_OK );
-}
-
-
-void EDA_LIST_DIALOG::onClose( wxCloseEvent& event )
-{
-    EndModal( wxID_CANCEL );
-}
-
-
 /* Sort alphabetically, case insensitive.
  */
-static int wxCALLBACK MyCompareFunction( long aItem1, long aItem2, long aSortData )
+static int wxCALLBACK myCompareFunction( wxIntPtr aItem1, wxIntPtr aItem2,
+                                         wxIntPtr WXUNUSED( aSortData ) )
 {
     wxString* component1Name = (wxString*) aItem1;
     wxString* component2Name = (wxString*) aItem2;
 
-    return StrNumCmp( *component1Name, *component2Name, INT_MAX, true );
+    return StrNumCmp( *component1Name, *component2Name, true );
 }
 
 
 void EDA_LIST_DIALOG::sortList()
 {
-    m_listBox->SortItems( MyCompareFunction, 0 );
+    m_listBox->SortItems( myCompareFunction, 0 );
 }

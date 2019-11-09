@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2014  Cirilo Bernardo
+ * Copyright (C) 2014-2017  Cirilo Bernardo
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,6 +25,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include <utility>
 
 #include <idf_helpers.h>
 #include <idf_outlines.h>
@@ -151,7 +152,7 @@ IDF3::OUTLINE_TYPE BOARD_OUTLINE::GetOutlineType( void )
     return outlineType;
 }
 
-void BOARD_OUTLINE::readOutlines( std::ifstream& aBoardFile, IDF3::IDF_VERSION aIdfVersion )
+void BOARD_OUTLINE::readOutlines( std::istream& aBoardFile, IDF3::IDF_VERSION aIdfVersion )
 {
     // reads the outline data from a file
     double x, y, ang;
@@ -200,6 +201,9 @@ void BOARD_OUTLINE::readOutlines( std::ifstream& aBoardFile, IDF3::IDF_VERSION a
             // rewind to the start of the last line; the routine invoking
             // this is responsible for checking that the current '.END_ ...'
             // matches the section header.
+            if(aBoardFile.eof())
+                aBoardFile.clear();
+
             aBoardFile.seekg( pos );
 
             if( outlines.size() > 0 )
@@ -374,8 +378,8 @@ void BOARD_OUTLINE::readOutlines( std::ifstream& aBoardFile, IDF3::IDF_VERSION a
                 }
 
                 // verify winding of previous outline
-                if( ( loopidx = 0 && !op->IsCCW() )
-                    || ( loopidx > 0 && op->IsCCW() ) )
+                if( ( loopidx == 0 && !op->IsCCW() )
+                    || ( loopidx > 0 && op->IsCCW() && !op->IsCircle() ) )
                 {
                     ostringstream ostr;
 
@@ -651,7 +655,7 @@ void BOARD_OUTLINE::readOutlines( std::ifstream& aBoardFile, IDF3::IDF_VERSION a
     return;
 }
 
-bool BOARD_OUTLINE::writeComments( std::ofstream& aBoardFile )
+bool BOARD_OUTLINE::writeComments( std::ostream& aBoardFile )
 {
     if( comments.empty() )
         return true;
@@ -668,7 +672,7 @@ bool BOARD_OUTLINE::writeComments( std::ofstream& aBoardFile )
     return !aBoardFile.fail();
 }
 
-bool BOARD_OUTLINE::writeOwner( std::ofstream& aBoardFile )
+bool BOARD_OUTLINE::writeOwner( std::ostream& aBoardFile )
 {
     switch( owner )
     {
@@ -688,7 +692,7 @@ bool BOARD_OUTLINE::writeOwner( std::ofstream& aBoardFile )
     return !aBoardFile.fail();
 }
 
-void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutline, size_t aIndex )
+void BOARD_OUTLINE::writeOutline( std::ostream& aBoardFile, IDF_OUTLINE* aOutline, size_t aIndex )
 {
     std::list<IDF_SEGMENT*>::iterator bo;
     std::list<IDF_SEGMENT*>::iterator eo;
@@ -732,9 +736,6 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
         return;
     }
 
-    // ensure that the very last point is the same as the very first point
-    aOutline->back()-> endPoint = aOutline->front()->startPoint;
-
     if( single )
     {
         // only indices 0 (CCW) and 1 (CW) are valid; set the index according to
@@ -745,6 +746,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
             aIndex = 1;
     }
 
+
     // check if we must reverse things
     if( ( aOutline->IsCCW() && ( aIndex > 0 ) )
         || ( ( !aOutline->IsCCW() ) && ( aIndex == 0 ) ) )
@@ -752,6 +754,14 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
         eo  = aOutline->begin();
         bo  = aOutline->end();
         --bo;
+
+        // ensure that the very last point is the same as the very first point
+        if( aOutline->size() > 1 )
+        {
+            std::list<IDF_SEGMENT*>::iterator to = eo;
+            ++to;
+            (*to)->startPoint = (*eo)->endPoint;
+        }
 
         // for the first item we write out both points
         if( unit != UNIT_THOU )
@@ -775,7 +785,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                 aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(5)
                 << aOutline->front()->startPoint.x << " "
                 << aOutline->front()->startPoint.y << " "
-                << setprecision(2) << -aOutline->front()->angle << "\n";
+                << setprecision(3) << -aOutline->front()->angle << "\n";
             }
         }
         else
@@ -799,7 +809,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                 aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(1)
                 << (aOutline->front()->startPoint.x / IDF_THOU_TO_MM) << " "
                 << (aOutline->front()->startPoint.y / IDF_THOU_TO_MM) << " "
-                << setprecision(2) << -aOutline->front()->angle << "\n";
+                << setprecision(3) << -aOutline->front()->angle << "\n";
             }
         }
 
@@ -819,7 +829,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                     aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(5)
                     << (*bo)->startPoint.x << " "
                     << (*bo)->startPoint.y << " "
-                    << setprecision(2) << -(*bo)->angle << "\n";
+                    << setprecision(3) << -(*bo)->angle << "\n";
                 }
             }
             else
@@ -835,7 +845,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                     aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(1)
                     << ((*bo)->startPoint.x / IDF_THOU_TO_MM) << " "
                     << ((*bo)->startPoint.y / IDF_THOU_TO_MM) << " "
-                    << setprecision(2) << -(*bo)->angle << "\n";
+                    << setprecision(3) << -(*bo)->angle << "\n";
                 }
             }
 
@@ -844,6 +854,10 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
     }
     else
     {
+        // ensure that the very last point is the same as the very first point
+        if( aOutline->size() > 1 )
+            aOutline->back()-> endPoint = aOutline->front()->startPoint;
+
         bo  = aOutline->begin();
         eo  = aOutline->end();
 
@@ -869,7 +883,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                 aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(5)
                 << (*bo)->endPoint.x << " "
                 << (*bo)->endPoint.y << " "
-                << setprecision(2) << (*bo)->angle << "\n";
+                << setprecision(3) << (*bo)->angle << "\n";
             }
         }
         else
@@ -893,7 +907,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                 aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(1)
                 << ((*bo)->endPoint.x / IDF_THOU_TO_MM) << " "
                 << ((*bo)->endPoint.y / IDF_THOU_TO_MM) << " "
-                << setprecision(2) << (*bo)->angle << "\n";
+                << setprecision(3) << (*bo)->angle << "\n";
             }
         }
 
@@ -915,7 +929,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                     aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(5)
                     << (*bo)->endPoint.x << " "
                     << (*bo)->endPoint.y << " "
-                    << setprecision(2) << (*bo)->angle << "\n";
+                    << setprecision(3) << (*bo)->angle << "\n";
                 }
             }
             else
@@ -931,7 +945,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
                     aBoardFile << aIndex << " " << setiosflags(ios::fixed) << setprecision(1)
                     << ((*bo)->endPoint.x / IDF_THOU_TO_MM) << " "
                     << ((*bo)->endPoint.y / IDF_THOU_TO_MM) << " "
-                    << setprecision(2) << (*bo)->angle << "\n";
+                    << setprecision(3) << (*bo)->angle << "\n";
                 }
             }
 
@@ -942,7 +956,7 @@ void BOARD_OUTLINE::writeOutline( std::ofstream& aBoardFile, IDF_OUTLINE* aOutli
     return;
 }
 
-void BOARD_OUTLINE::writeOutlines( std::ofstream& aBoardFile )
+void BOARD_OUTLINE::writeOutlines( std::ostream& aBoardFile )
 {
     if( outlines.empty() )
         return;
@@ -1016,7 +1030,7 @@ double BOARD_OUTLINE::GetThickness( void )
     return thickness;
 }
 
-void BOARD_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHeader,
+void BOARD_OUTLINE::readData( std::istream& aBoardFile, const std::string& aHeader,
                               IDF3::IDF_VERSION aIdfVersion )
 {
     //  BOARD_OUTLINE (PANEL_OUTLINE)
@@ -1210,7 +1224,7 @@ void BOARD_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHea
 }
 
 
-void BOARD_OUTLINE::writeData( std::ofstream& aBoardFile )
+void BOARD_OUTLINE::writeData( std::ostream& aBoardFile )
 {
     writeComments( aBoardFile );
 
@@ -1543,7 +1557,7 @@ OTHER_OUTLINE::OTHER_OUTLINE( IDF3_BOARD* aParent )
     return;
 }
 
-bool OTHER_OUTLINE::SetOutlineIdentifier( const std::string aUniqueID )
+bool OTHER_OUTLINE::SetOutlineIdentifier( const std::string& aUniqueID )
 {
 #ifndef DISABLE_IDF_OWNERSHIP
     if( !CheckOwnership( __LINE__, __FUNCTION__, parent, owner, outlineType, errormsg ) )
@@ -1597,7 +1611,7 @@ IDF3::IDF_LAYER OTHER_OUTLINE::GetSide( void )
     return side;
 }
 
-void OTHER_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHeader,
+void OTHER_OUTLINE::readData( std::istream& aBoardFile, const std::string& aHeader,
                               IDF3::IDF_VERSION aIdfVersion )
 {
     // OTHER_OUTLINE/VIA_KEEPOUT
@@ -1856,7 +1870,7 @@ void OTHER_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHea
     return;
 }
 
-void OTHER_OUTLINE::writeData( std::ofstream& aBoardFile )
+void OTHER_OUTLINE::writeData( std::ostream& aBoardFile )
 {
     // this section is optional; do not write if not required
     if( outlines.empty() )
@@ -1957,7 +1971,7 @@ IDF3::IDF_LAYER ROUTE_OUTLINE::GetLayers( void )
     return layers;
 }
 
-void ROUTE_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHeader,
+void ROUTE_OUTLINE::readData( std::istream& aBoardFile, const std::string& aHeader,
                               IDF3::IDF_VERSION aIdfVersion )
 {
     //  ROUTE_OUTLINE (or ROUTE_KEEPOUT)
@@ -2170,7 +2184,7 @@ void ROUTE_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHea
 }
 
 
-void ROUTE_OUTLINE::writeData( std::ofstream& aBoardFile )
+void ROUTE_OUTLINE::writeData( std::ostream& aBoardFile )
 {
     // this section is optional; do not write if not required
     if( outlines.empty() )
@@ -2229,9 +2243,10 @@ PLACE_OUTLINE::PLACE_OUTLINE( IDF3_BOARD* aParent )
     setParent( aParent );
     outlineType = OTLN_PLACE;
     single = true;
-    thickness = 0.0;
+    thickness = -1.0;
     side = LYR_INVALID;
 }
+
 
 bool PLACE_OUTLINE::SetSide( IDF3::IDF_LAYER aSide )
 {
@@ -2304,7 +2319,7 @@ double PLACE_OUTLINE::GetMaxHeight( void )
     return thickness;
 }
 
-void PLACE_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHeader,
+void PLACE_OUTLINE::readData( std::istream& aBoardFile, const std::string& aHeader,
                               IDF3::IDF_VERSION aIdfVersion )
 {
     //  PLACE_OUTLINE/KEEPOUT
@@ -2421,64 +2436,74 @@ void PLACE_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHea
             throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
         }
 
-        if( !GetIDFString( iline, token, quoted, idx ) )
+        if( GetIDFString( iline, token, quoted, idx ) )
         {
-            ostringstream ostr;
+            std::stringstream teststr;
+            teststr << token;
 
-            ostr << "\n* invalid outline: " << GetOutlineTypeString( outlineType ) << "\n";
-            ostr << "* violation: no height specified\n";
-            ostr << "* line: '" << iline << "'\n";
-            ostr << "* file position: " << pos;
+            teststr >> thickness;
 
-            throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+            if( teststr.fail() )
+            {
+                ostringstream ostr;
+
+                ostr << "\n* invalid outline: " << GetOutlineTypeString( outlineType ) << "\n";
+                ostr << "* violation: invalid height\n";
+                ostr << "* line: '" << iline << "'\n";
+                ostr << "* file position: " << pos;
+
+                throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+            }
+
+            if( thickness < 0.0 )
+            {
+                ostringstream ostr;
+
+                ostr << "\n* invalid outline: " << GetOutlineTypeString( outlineType ) << "\n";
+                ostr << "* violation: thickness < 0\n";
+                ostr << "* line: '" << iline << "'\n";
+                ostr << "* file position: " << pos;
+
+                throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+            }
+
+            if( unit == UNIT_THOU )
+            {
+                thickness *= IDF_THOU_TO_MM;
+            }
+            else if( ( aIdfVersion == IDF_V2 ) && ( unit == UNIT_TNM ) )
+            {
+                thickness *= IDF_TNM_TO_MM;
+            }
+            else if( unit != UNIT_MM )
+            {
+                ostringstream ostr;
+                ostr << "\n* BUG: invalid UNIT type: " << unit;
+
+                throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+            }
+
+            if( thickness < 0.0 )
+                thickness = 0.0;
+
         }
-
-        std::stringstream teststr;
-        teststr << token;
-
-        teststr >> thickness;
-        if( teststr.fail() )
+        else
         {
-            ostringstream ostr;
+            // for OTLN_PLACE, thickness may be omitted, but is required for OTLN_PLACE_KEEPOUT
+            if( outlineType == OTLN_PLACE_KEEPOUT )
+            {
+                ostringstream ostr;
 
-            ostr << "\n* invalid outline: " << GetOutlineTypeString( outlineType ) << "\n";
-            ostr << "* violation: invalid height\n";
-            ostr << "* line: '" << iline << "'\n";
-            ostr << "* file position: " << pos;
+                ostr << "\n* invalid outline: " << GetOutlineTypeString( outlineType ) << "\n";
+                ostr << "* violation: missing thickness\n";
+                ostr << "* line: '" << iline << "'\n";
+                ostr << "* file position: " << pos;
 
-            throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+                throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
+            }
+
+            thickness = -1.0;
         }
-
-        if( thickness < 0.0 )
-        {
-            ostringstream ostr;
-
-            ostr << "\n* invalid outline: " << GetOutlineTypeString( outlineType ) << "\n";
-            ostr << "* violation: thickness < 0\n";
-            ostr << "* line: '" << iline << "'\n";
-            ostr << "* file position: " << pos;
-
-            throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
-        }
-
-        if( unit == UNIT_THOU )
-        {
-            thickness *= IDF_THOU_TO_MM;
-        }
-        else if( ( aIdfVersion == IDF_V2 ) && ( unit == UNIT_TNM ) )
-        {
-            thickness *= IDF_TNM_TO_MM;
-        }
-        else if( unit != UNIT_MM )
-        {
-            ostringstream ostr;
-            ostr << "\n* BUG: invalid UNIT type: " << unit;
-
-            throw( IDF_ERROR( __FILE__, __FUNCTION__, __LINE__, ostr.str() ) );
-        }
-
-        if( thickness < 0.0 )
-            thickness = 0.0;
     }
     else
     {
@@ -2534,7 +2559,7 @@ void PLACE_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHea
     return;
 }
 
-void PLACE_OUTLINE::writeData( std::ofstream& aBoardFile )
+void PLACE_OUTLINE::writeData( std::ostream& aBoardFile )
 {
     // this section is optional; do not write if not required
     if( outlines.empty() )
@@ -2571,12 +2596,20 @@ void PLACE_OUTLINE::writeData( std::ofstream& aBoardFile )
             break;
     }
 
-    aBoardFile << " ";
-
-    if( unit != UNIT_THOU )
-        aBoardFile << setiosflags(ios::fixed) << setprecision(5) << thickness << "\n";
+    // thickness is optional for OTLN_PLACE, but mandatory for OTLN_PLACE_KEEPOUT
+    if( thickness < 0.0 && outlineType == OTLN_PLACE_KEEPOUT)
+    {
+        aBoardFile << "\n";
+    }
     else
-        aBoardFile << setiosflags(ios::fixed) << setprecision(1) << (thickness / IDF_THOU_TO_MM) << "\n";
+    {
+        aBoardFile << " ";
+
+        if( unit != UNIT_THOU )
+            aBoardFile << setiosflags(ios::fixed) << setprecision(5) << thickness << "\n";
+        else
+            aBoardFile << setiosflags(ios::fixed) << setprecision(1) << (thickness / IDF_THOU_TO_MM) << "\n";
+    }
 
     // write RECORD 3
     writeOutlines( aBoardFile );
@@ -2698,7 +2731,7 @@ bool GROUP_OUTLINE::SetGroupName( std::string aGroupName )
         return false;
 #endif
 
-    groupName = aGroupName;
+    groupName = std::move(aGroupName);
 
     return true;
 }
@@ -2710,7 +2743,7 @@ const std::string& GROUP_OUTLINE::GetGroupName( void )
 }
 
 
-void GROUP_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHeader,
+void GROUP_OUTLINE::readData( std::istream& aBoardFile, const std::string& aHeader,
                               IDF3::IDF_VERSION aIdfVersion )
 {
     //  Placement Group
@@ -2869,7 +2902,7 @@ void GROUP_OUTLINE::readData( std::ifstream& aBoardFile, const std::string& aHea
 }
 
 
-void GROUP_OUTLINE::writeData( std::ofstream& aBoardFile )
+void GROUP_OUTLINE::writeData( std::ostream& aBoardFile )
 {
     // this section is optional; do not write if not required
     if( outlines.empty() )
@@ -2942,7 +2975,7 @@ IDF3_COMP_OUTLINE::IDF3_COMP_OUTLINE( IDF3_BOARD* aParent )
     return;
 }
 
-void IDF3_COMP_OUTLINE::readProperties( std::ifstream& aLibFile )
+void IDF3_COMP_OUTLINE::readProperties( std::istream& aLibFile )
 {
     bool quoted = false;
     bool comment = false;
@@ -2998,6 +3031,9 @@ void IDF3_COMP_OUTLINE::readProperties( std::ifstream& aLibFile )
 
         if( token.size() >= 5 && CompareToken( ".END_", token.substr( 0, 5 ) ) )
         {
+            if(aLibFile.eof())
+                aLibFile.clear();
+
             aLibFile.seekg( pos );
             return;
         }
@@ -3059,7 +3095,7 @@ void IDF3_COMP_OUTLINE::readProperties( std::ifstream& aLibFile )
 }
 
 
-bool IDF3_COMP_OUTLINE::writeProperties( std::ofstream& aLibFile )
+bool IDF3_COMP_OUTLINE::writeProperties( std::ostream& aLibFile )
 {
     if( props.empty() )
         return true;
@@ -3076,7 +3112,7 @@ bool IDF3_COMP_OUTLINE::writeProperties( std::ofstream& aLibFile )
     return !aLibFile.fail();
 }
 
-void IDF3_COMP_OUTLINE::readData( std::ifstream& aLibFile, const std::string& aHeader,
+void IDF3_COMP_OUTLINE::readData( std::istream& aLibFile, const std::string& aHeader,
                                   IDF3::IDF_VERSION aIdfVersion )
 {
     //  .ELECTRICAL/.MECHANICAL
@@ -3285,7 +3321,7 @@ void IDF3_COMP_OUTLINE::readData( std::ifstream& aLibFile, const std::string& aH
     // check RECORD 4
     while( aLibFile.good() && !FetchIDFLine( aLibFile, iline, comment, pos ) );
 
-    if( ( !aLibFile.good() && aLibFile.eof() ) || iline.empty() )
+    if( ( !aLibFile.good() && aLibFile.eof() ) && iline.empty() )
     {
         ostringstream ostr;
 
@@ -3342,7 +3378,7 @@ void IDF3_COMP_OUTLINE::readData( std::ifstream& aLibFile, const std::string& aH
 }
 
 
-void IDF3_COMP_OUTLINE::writeData( std::ofstream& aLibFile )
+void IDF3_COMP_OUTLINE::writeData( std::ostream& aLibFile )
 {
     if( refNum == 0 )
         return;    // nothing to do

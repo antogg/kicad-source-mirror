@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -28,18 +29,35 @@
 
 #include "pns_item.h"
 
-class PNS_NODE;
+namespace PNS {
 
-class PNS_VIA : public PNS_ITEM
+class NODE;
+
+// uniquely identifies a VIA within a NODE without using pointers. Used to
+// simplify (or complexifiy, depending on the point of view) the pointer management
+// in PNS::NODE. Sooner or later I'll have to fix it for good using smart pointers - twl
+struct VIA_HANDLE
+{
+    bool valid = false;
+    VECTOR2I pos;
+    LAYER_RANGE layers;
+    int net;
+};
+
+class VIA : public ITEM
 {
 public:
-    PNS_VIA() :
-        PNS_ITEM( VIA )
-    {}
+    VIA() :
+        ITEM( VIA_T )
+    {
+        m_diameter = 2;     // Dummy value
+        m_drill = 0;
+        m_viaType = VIA_THROUGH;
+    }
 
-    PNS_VIA( const VECTOR2I& aPos, const PNS_LAYERSET& aLayers,
+    VIA( const VECTOR2I& aPos, const LAYER_RANGE& aLayers,
              int aDiameter, int aDrill, int aNet = -1, VIATYPE_T aViaType = VIA_THROUGH ) :
-        PNS_ITEM( VIA )
+        ITEM( VIA_T )
     {
         SetNet( aNet );
         SetLayers( aLayers );
@@ -48,11 +66,18 @@ public:
         m_drill = aDrill;
         m_shape = SHAPE_CIRCLE( aPos, aDiameter / 2 );
         m_viaType = aViaType;
+
+        //If we're a through-board via, use all layers regardless of the set passed
+        if( aViaType == VIA_THROUGH )
+        {
+            LAYER_RANGE allLayers( 0, MAX_CU_LAYERS - 1 );
+            SetLayers( allLayers );
+        }
     }
 
 
-    PNS_VIA( const PNS_VIA& aB ) :
-        PNS_ITEM( VIA )
+    VIA( const VIA& aB ) :
+        ITEM( aB )
     {
         SetNet( aB.Net() );
         SetLayers( aB.Layers() );
@@ -61,10 +86,15 @@ public:
         m_shape = SHAPE_CIRCLE( m_pos, m_diameter / 2 );
         m_marker = aB.m_marker;
         m_rank = aB.m_rank;
-        m_owner = aB.m_owner;
         m_drill = aB.m_drill;
         m_viaType = aB.m_viaType;
     }
+
+    static inline bool ClassOf( const ITEM* aItem )
+    {
+        return aItem && VIA_T == aItem->Kind();
+    }
+
 
     const VECTOR2I& Pos() const
     {
@@ -108,30 +138,34 @@ public:
         m_drill = aDrill;
     }
 
-    bool PushoutForce( PNS_NODE* aNode,
+    bool PushoutForce( NODE* aNode,
             const VECTOR2I& aDirection,
             VECTOR2I& aForce,
             bool aSolidsOnly = true,
             int aMaxIterations = 10 );
 
-    const SHAPE* Shape() const
+    const SHAPE* Shape() const override
     {
         return &m_shape;
     }
 
-    PNS_VIA* Clone() const;
+    VIA* Clone() const override;
 
-    const SHAPE_LINE_CHAIN Hull( int aClearance = 0, int aWalkaroundThickness = 0 ) const;
+    const SHAPE_LINE_CHAIN Hull( int aClearance = 0, int aWalkaroundThickness = 0 ) const override;
 
-    virtual VECTOR2I Anchor( int n ) const
+    virtual VECTOR2I Anchor( int n ) const override
     {
         return m_pos;
     }
 
-    virtual int AnchorCount() const
+    virtual int AnchorCount() const override
     {
         return 1;
     }
+
+    OPT_BOX2I ChangedArea( const VIA* aOther ) const;
+
+    const VIA_HANDLE MakeHandle() const;
 
 private:
     int m_diameter;
@@ -140,5 +174,7 @@ private:
     SHAPE_CIRCLE m_shape;
     VIATYPE_T m_viaType;
 };
+
+}
 
 #endif

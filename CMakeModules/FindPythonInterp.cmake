@@ -37,7 +37,7 @@ unset(_Python_NAMES)
 
 set(_PYTHON1_VERSIONS 1.6 1.5)
 set(_PYTHON2_VERSIONS 2.7 2.6 2.5 2.4 2.3 2.2 2.1 2.0)
-set(_PYTHON3_VERSIONS 3.3 3.2 3.1 3.0)
+set(_PYTHON3_VERSIONS 3.8 3.7 3.6 3.5 3.4 3.3 3.2 3.1 3.0)
 
 if(PythonInterp_FIND_VERSION)
     if(PythonInterp_FIND_VERSION MATCHES "^[0-9]+\\.[0-9]+(\\.[0-9]+.*)?$")
@@ -91,7 +91,7 @@ unset(_PYTHON3_VERSIONS)
 
 # Search for newest python version if python executable isn't found
 if(NOT PYTHON_EXECUTABLE)
-    
+
     # If using the MINGW compiler, we mustn't find the standard python
     # distribution because of multiple C-Runtime errors. We must instead
     # use the Python-a-mingw-us distribution
@@ -110,7 +110,7 @@ if(NOT PYTHON_EXECUTABLE)
     else()
         list( APPEND _Python_PPATHS [HKEY_LOCAL_MACHINE\\SOFTWARE\\Python\\PythonCore\\${_CURRENT_VERSION}\\InstallPath] )
     endif()
-    
+
     foreach(_CURRENT_VERSION ${_Python_VERSIONS})
       set(_Python_NAMES python${_CURRENT_VERSION})
       if(WIN32)
@@ -169,7 +169,7 @@ endif()
 
 # handle the QUIETLY and REQUIRED arguments and set PYTHONINTERP_FOUND to TRUE if
 # all listed variables are TRUE
-include(${CMAKE_CURRENT_LIST_DIR}/FindPackageHandleStandardArgs.cmake)
-FIND_PACKAGE_HANDLE_STANDARD_ARGS(PythonInterp REQUIRED_VARS PYTHON_EXECUTABLE VERSION_VAR PYTHON_VERSION_STRING)
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(PythonInterp REQUIRED_VARS PYTHON_EXECUTABLE VERSION_VAR PYTHON_VERSION_STRING)
 
 mark_as_advanced(PYTHON_EXECUTABLE)

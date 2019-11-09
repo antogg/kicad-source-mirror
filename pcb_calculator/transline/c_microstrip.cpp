@@ -38,8 +38,36 @@
 
 C_MICROSTRIP::C_MICROSTRIP() : TRANSLINE()
 {
-    m_name = "Coupled_MicroStrip";
+    m_Name = "Coupled_MicroStrip";
     aux_ms = NULL;
+
+    // Initialize these variables mainly to avoid warnings from a static analyzer
+    h = 0.0;                    // height of substrate
+    ht = 0.0;                   // height to the top of box
+    t = 0.0;                    // thickness of top metal
+    rough = 0.0;                // Roughness of top metal
+    w = 0.0;                    // width of lines
+    w_t_e = 0.0;                // even-mode thickness-corrected line width
+    w_t_o = 0.0;                // odd-mode thickness-corrected line width
+    l = 0.0;                    // length of lines
+    s = 0.0;                    // spacing of lines
+    Z0_e_0 = 0.0;               // static even-mode impedance
+    Z0_o_0 = 0.0;               // static odd-mode impedance
+    Z0e = 0.0;                  // even-mode impedance
+    Z0o = 0.0;                  // odd-mode impedance
+    c_e = 0.0;                  // even-mode capacitance
+    c_o = 0.0;                  // odd-mode capacitance
+    ang_l_e = 0.0;              // even-mode electrical length in angle
+    ang_l_o = 0.0;              // odd-mode electrical length in angle
+    er_eff_e = 0.0;             // even-mode effective dielectric constant
+    er_eff_o = 0.0;             // odd-mode effective dielectric constant
+    er_eff_e_0 = 0.0;           // static even-mode effective dielectric constant
+    er_eff_o_0 = 0.0;           // static odd-mode effective dielectric constant
+    w_eff = 0.0;                // Effective width of line
+    atten_dielectric_e = 0.0;   // even-mode dielectric losses (dB)
+    atten_cond_e = 0.0;         // even-mode conductors losses (dB)
+    atten_dielectric_o = 0.0;   // odd-mode conductors losses (dB)
+    atten_cond_o = 0.0;         // odd-mode conductors losses (dB)
 }
 
 
@@ -134,8 +162,8 @@ void C_MICROSTRIP::compute_single_line()
 
     //aux_ms->t = t;
     aux_ms->ht   = 1e12;    /* arbitrarily high */
-    aux_ms->f    = f;
-    aux_ms->murC = murC;
+    aux_ms->m_freq = m_freq;
+    aux_ms->m_murC = m_murC;
     aux_ms->microstrip_Z0();
     aux_ms->dispersion();
 }
@@ -169,14 +197,12 @@ double C_MICROSTRIP::filling_factor_even( double u, double g, double e_r )
  */
 double C_MICROSTRIP::filling_factor_odd( double u, double g, double e_r )
 {
-    double b_o, c_o, d_o, q_inf;
-
-    b_o = 0.747 * e_r / (0.15 + e_r);
-    c_o = b_o - (b_o - 0.207) * exp( -0.414 * u );
-    d_o = 0.593 + 0.694 * exp( -0.562 * u );
+    double b_odd = 0.747 * e_r / (0.15 + e_r);
+    double c_odd = b_odd - (b_odd - 0.207) * exp( -0.414 * u );
+    double d_odd = 0.593 + 0.694 * exp( -0.562 * u );
 
     /* filling factor, with width corrected for thickness */
-    q_inf = exp( -c_o * pow( g, d_o ) );
+    double q_inf = exp( -c_odd * pow( g, d_odd ) );
 
     return q_inf;
 }
@@ -424,7 +450,7 @@ void C_MICROSTRIP::er_eff_freq()
     g = s / h;          /* normalize line spacing */
 
     /* normalized frequency [GHz * mm] */
-    f_n = f * h / 1e06;
+    f_n = m_freq * h / 1e06;
 
     er_eff = er_eff_e_0;
     P_1    = 0.27488 + ( 0.6315 + 0.525 / pow( 1.0 + 0.0157 * f_n, 20.0 ) ) * u - 0.065683 * exp(
@@ -471,26 +497,26 @@ void C_MICROSTRIP::conductor_losses()
     e_r_eff_o_0 = er_eff_o_0;
     Z0_h_e = Z0_e_0 * sqrt( e_r_eff_e_0 );  /* homogeneous stripline impedance */
     Z0_h_o = Z0_o_0 * sqrt( e_r_eff_o_0 );  /* homogeneous stripline impedance */
-    delta  = skindepth;
+    delta  = m_skindepth;
 
-    if( f > 0.0 )
+    if( m_freq > 0.0 )
     {
         /* current distribution factor (same for the two modes) */
         K = exp( -1.2 * pow( (Z0_h_e + Z0_h_o) / (2.0 * ZF0), 0.7 ) );
         /* skin resistance */
-        R_s = 1.0 / (sigma * delta);
+        R_s = 1.0 / (m_sigma * delta);
         /* correction for surface roughness */
         R_s *= 1.0 + ( (2.0 / M_PI) * atan( 1.40 * pow( (rough / delta), 2.0 ) ) );
 
         /* even-mode strip inductive quality factor */
-        Q_c_e = (M_PI * Z0_h_e * w * f) / (R_s * C0 * K);
+        Q_c_e = (M_PI * Z0_h_e * w * m_freq) / (R_s * C0 * K);
         /* even-mode losses per unith length */
-        alpha_c_e = ( 20.0 * M_PI / log( 10.0 ) ) * f * sqrt( e_r_eff_e_0 ) / (C0 * Q_c_e);
+        alpha_c_e = ( 20.0 * M_PI / log( 10.0 ) ) * m_freq * sqrt( e_r_eff_e_0 ) / (C0 * Q_c_e);
 
         /* odd-mode strip inductive quality factor */
-        Q_c_o = (M_PI * Z0_h_o * w * f) / (R_s * C0 * K);
+        Q_c_o = (M_PI * Z0_h_o * w * m_freq) / (R_s * C0 * K);
         /* odd-mode losses per unith length */
-        alpha_c_o = ( 20.0 * M_PI / log( 10.0 ) ) * f * sqrt( e_r_eff_o_0 ) / (C0 * Q_c_o);
+        alpha_c_o = ( 20.0 * M_PI / log( 10.0 ) ) * m_freq * sqrt( e_r_eff_o_0 ) / (C0 * Q_c_o);
     }
     else
     {
@@ -518,11 +544,11 @@ void C_MICROSTRIP::dielectric_losses()
     alpha_d_e =
         ( 20.0 * M_PI /
          log( 10.0 ) ) *
-        (f / C0) * ( e_r / sqrt( e_r_eff_e_0 ) ) * ( (e_r_eff_e_0 - 1.0) / (e_r - 1.0) ) * tand;
+        (m_freq / C0) * ( e_r / sqrt( e_r_eff_e_0 ) ) * ( (e_r_eff_e_0 - 1.0) / (e_r - 1.0) ) * m_tand;
     alpha_d_o =
         ( 20.0 * M_PI /
          log( 10.0 ) ) *
-        (f / C0) * ( e_r / sqrt( e_r_eff_o_0 ) ) * ( (e_r_eff_o_0 - 1.0) / (e_r - 1.0) ) * tand;
+        (m_freq / C0) * ( e_r / sqrt( e_r_eff_o_0 ) ) * ( (e_r_eff_o_0 - 1.0) / (e_r - 1.0) ) * m_tand;
 
     atten_dielectric_e = alpha_d_e * l;
     atten_dielectric_o = alpha_d_o * l;
@@ -535,7 +561,7 @@ void C_MICROSTRIP::dielectric_losses()
  */
 void C_MICROSTRIP::attenuation()
 {
-    skindepth = skin_depth();
+    m_skindepth = skin_depth();
     conductor_losses();
     dielectric_losses();
 }
@@ -557,9 +583,9 @@ void C_MICROSTRIP::line_angle()
     /* odd-mode velocity */
     v_o = C0 / sqrt( e_r_eff_o );
     /* even-mode wavelength */
-    lambda_g_e = v_e / f;
+    lambda_g_e = v_e / m_freq;
     /* odd-mode wavelength */
-    lambda_g_o = v_o / f;
+    lambda_g_o = v_o / m_freq;
     /* electrical angles */
     ang_l_e = 2.0 * M_PI * l / lambda_g_e;  /* in radians */
     ang_l_o = 2.0 * M_PI * l / lambda_g_o;  /* in radians */
@@ -574,13 +600,14 @@ void C_MICROSTRIP::syn_err_fun( double* f1,
                                 double  w_h_se,
                                 double  w_h_so )
 {
-    double g, h;
+    double g, he;
 
     g = cosh( 0.5 * M_PI * s_h );
-    h = cosh( M_PI * w_h + 0.5 * M_PI * s_h );
+    he = cosh( M_PI * w_h + 0.5 * M_PI * s_h );
 
-    *f1 = (2.0 / M_PI) * acosh( (2.0 * h - g + 1.0) / (g + 1.0) );
-    *f2 = (2.0 / M_PI) * acosh( (2.0 * h - g - 1.0) / (g - 1.0) );
+    *f1 = (2.0 / M_PI) * acosh( (2.0 * he - g + 1.0) / (g + 1.0) );
+    *f2 = (2.0 / M_PI) * acosh( (2.0 * he - g - 1.0) / (g - 1.0) );
+
     if( e_r <= 6.0 )
     {
         *f2 += ( 4.0 / ( M_PI * (1.0 + e_r / 2.0) ) ) * acosh( 1.0 + 2.0 * w_h / s_h );
@@ -589,6 +616,7 @@ void C_MICROSTRIP::syn_err_fun( double* f1,
     {
         *f2 += (1.0 / M_PI) * acosh( 1.0 + 2.0 * w_h / s_h );
     }
+
     *f1 -= w_h_se;
     *f2 -= w_h_so;
 }
@@ -689,7 +717,7 @@ void C_MICROSTRIP::Z0_dispersion()
     g = s / h;          /* normalize line spacing */
 
     /* normalized frequency [GHz * mm] */
-    f_n = f * h / 1e06;
+    f_n = m_freq * h / 1e06;
 
     e_r_eff_single_f = aux_ms->er_eff;
     e_r_eff_single_0 = aux_ms->er_eff_0;
@@ -808,12 +836,12 @@ void C_MICROSTRIP::calc()
 void C_MICROSTRIP::get_c_microstrip_sub()
 {
     er    = getProperty( EPSILONR_PRM );
-    murC  = getProperty( MURC_PRM );
+    m_murC  = getProperty( MURC_PRM );
     h     = getProperty( H_PRM );
     ht    = getProperty( H_T_PRM );
     t     = getProperty( T_PRM );
-    sigma = 1.0/getProperty( RHO_PRM );
-    tand  = getProperty( TAND_PRM );
+    m_sigma = 1.0/getProperty( RHO_PRM );
+    m_tand  = getProperty( TAND_PRM );
     rough = getProperty( ROUGH_PRM );
 }
 
@@ -825,7 +853,7 @@ void C_MICROSTRIP::get_c_microstrip_sub()
  */
 void C_MICROSTRIP::get_c_microstrip_comp()
 {
-    f = getProperty( FREQUENCY_PRM );
+    m_freq = getProperty( FREQUENCY_PRM );
 }
 
 
@@ -869,7 +897,7 @@ void C_MICROSTRIP::show_results()
     setResult( 4, atten_dielectric_e, "dB" );
     setResult( 5, atten_dielectric_o, "dB" );
 
-    setResult( 6, skindepth / UNIT_MICRON, "µm" );
+    setResult( 6, m_skindepth / UNIT_MICRON, "µm" );
 }
 
 
@@ -978,8 +1006,8 @@ void C_MICROSTRIP::synthesize()
     /* calculate physical length */
     ang_l_e = getProperty( ANG_L_PRM );
     ang_l_o = getProperty( ANG_L_PRM );
-    le = C0 / f / sqrt( er_eff_e ) * ang_l_e / 2.0 / M_PI;
-    lo = C0 / f / sqrt( er_eff_o ) * ang_l_o / 2.0 / M_PI;
+    le = C0 / m_freq / sqrt( er_eff_e ) * ang_l_e / 2.0 / M_PI;
+    lo = C0 / m_freq / sqrt( er_eff_o ) * ang_l_o / 2.0 / M_PI;
     l  = sqrt( le * lo );
     setProperty( PHYS_LEN_PRM, l );
 

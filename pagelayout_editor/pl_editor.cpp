@@ -31,12 +31,9 @@
 #include <kiface_i.h>
 #include <confirm.h>
 #include <gestfich.h>
-#include <worksheet_shape_builder.h>
+#include <ws_draw_item.h>
 #include <pl_editor_frame.h>
-#include <hotkeys.h>
-
 #include <build_version.h>
-
 #include <wx/file.h>
 #include <wx/snglinst.h>
 
@@ -51,11 +48,11 @@ static struct IFACE : public KIFACE_I
         KIFACE_I( aName, aType )
     {}
 
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits );
+    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits ) override;
 
-    void OnKifaceEnd();
+    void OnKifaceEnd() override;
 
-    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 )
+    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 ) override
     {
         switch( aClassId )
         {
@@ -84,7 +81,7 @@ static struct IFACE : public KIFACE_I
      *
      * @return void* - and must be cast into the know type.
      */
-    void* IfaceOrAddress( int aDataId )
+    void* IfaceOrAddress( int aDataId ) override
     {
         return NULL;
     }
@@ -119,13 +116,6 @@ PGM_BASE& Pgm()
 bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
 {
     start_common( aCtlBits );
-
-    // Must be called before creating the main frame in order to
-    // display the real hotkeys in menus or tool tips
-    ReadHotkeyConfig( wxT("PlEditorFrame"), s_PlEditor_Hokeys_Descr );
-
-    g_UserUnit = MILLIMETRES;
-
     return true;
 }
 
@@ -134,73 +124,3 @@ void IFACE::OnKifaceEnd()
 {
     end_common();
 }
-
-
-#if 0
-bool MYFACE::OnKifaceStart( PGM_BASE* aProgram )
-
-{
-    wxFileName          fn;
-
-    InitEDA_Appl( wxT( "pl_editor" ), APP_PL_EDITOR_T );
-
-    if( m_Checker && m_Checker->IsAnotherRunning() )
-    {
-        if( !IsOK( NULL, _( "pl_editor is already running. Continue?" ) ) )
-            return false;
-    }
-
-    g_UserUnit = MILLIMETRES;
-
-    // read current setup and reopen last directory if no filename to open in
-    // command line
-    bool reopenLastUsedDirectory = argc == 1;
-    GetSettings( reopenLastUsedDirectory );
-
-    // Must be called before creating the main frame in order to
-    // display the real hotkeys in menus or tool tips
-    ReadHotkeyConfig( wxT("PlEditorFrame"), s_PlEditor_Hokeys_Descr );
-
-    PL_EDITOR_FRAME * frame = new PL_EDITOR_FRAME( NULL, wxT( "PlEditorFrame" ), wxPoint( 0, 0 ), wxSize( 600, 400 ) );
-
-    // frame title:
-    frame->SetTitle( GetTitle() + wxT( " " ) + GetBuildVersion() );
-
-    SetTopWindow( frame );
-    frame->Show( true );
-    frame->Zoom_Automatique( true );        // Zoom fit in frame
-    frame->GetScreen()->m_FirstRedraw = false;
-
-
-    bool descrLoaded = false;
-    if( argc > 1 )
-    {
-        fn = argv[1];
-
-        if( fn.IsOk() )
-        {
-            bool success = frame->LoadPageLayoutDescrFile( fn.GetFullPath() );
-            if( !success )
-            {
-                wxString msg;
-                msg.Printf( _("Error when loading file <%s>"),
-                            fn.GetFullPath().GetData() );
-                wxMessageBox( msg );
-            }
-            else
-            {
-                descrLoaded = true;
-                frame->OnNewPageLayout();
-            }
-        }
-    }
-
-    if( !descrLoaded )
-    {
-        WORKSHEET_LAYOUT::GetTheInstance().SetPageLayout();
-        frame->OnNewPageLayout();
-    }
-
-    return true;
-}
-#endif

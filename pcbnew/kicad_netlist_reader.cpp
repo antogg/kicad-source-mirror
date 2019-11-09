@@ -5,7 +5,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 1992-2011 Jean-Pierre Charras.
- * Copyright (C) 1992-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2016 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -35,7 +35,7 @@
 using namespace NL_T;
 
 
-void KICAD_NETLIST_READER::LoadNetlist() throw ( IO_ERROR, PARSE_ERROR )
+void KICAD_NETLIST_READER::LoadNetlist()
 {
     m_parser->Parse();
 
@@ -55,12 +55,13 @@ void KICAD_NETLIST_READER::LoadNetlist() throw ( IO_ERROR, PARSE_ERROR )
 KICAD_NETLIST_PARSER::KICAD_NETLIST_PARSER( LINE_READER* aReader, NETLIST* aNetlist ) :
     NETLIST_LEXER( aReader )
 {
-    m_lineReader  = aReader;
-    m_netlist = aNetlist;
+    m_lineReader = aReader;
+    m_netlist    = aNetlist;
+    token        = T_NONE;
 }
 
 
-void KICAD_NETLIST_PARSER::skipCurrent() throw( IO_ERROR, PARSE_ERROR )
+void KICAD_NETLIST_PARSER::skipCurrent()
 {
     int curr_level = 0;
 
@@ -80,12 +81,9 @@ void KICAD_NETLIST_PARSER::skipCurrent() throw( IO_ERROR, PARSE_ERROR )
 }
 
 
-void KICAD_NETLIST_PARSER::Parse() throw( IO_ERROR, PARSE_ERROR )
+void KICAD_NETLIST_PARSER::Parse()
 {
-    wxString text;
-
-    int plevel = 0;     // the count of ')' to read and end of file,
-                        // after parsing all sections
+    int plevel = 0;     // the count of ')' to read at end of file after parsing all sections
 
     while( ( token = NextTok() ) != T_EOF )
     {
@@ -95,8 +93,7 @@ void KICAD_NETLIST_PARSER::Parse() throw( IO_ERROR, PARSE_ERROR )
         switch( token )
         {
         case T_export:  // The netlist starts here.
-            // nothing to do here,
-            // just increment the count of ')' to read and end of file
+            // nothing to do here, just increment the count of ')' to read at end of file
             plevel++;
             break;
 
@@ -107,43 +104,43 @@ void KICAD_NETLIST_PARSER::Parse() throw( IO_ERROR, PARSE_ERROR )
             break;
 
         case T_components:  // The section comp starts here.
-            while( ( token = NextTok() ) != T_RIGHT )
+            while( ( token = NextTok() ) != T_EOF )
             {
-                if( token == T_LEFT )
+                if( token == T_RIGHT )
+                    break;
+                else if( token == T_LEFT )
                     token = NextTok();
 
-                if( token == T_comp )   // A component section found. Read it
+                if( token == T_comp )       // A component section found. Read it
                     parseComponent();
             }
 
             break;
 
         case T_nets:    // The section nets starts here.
-            while( ( token = NextTok() ) != T_RIGHT )
+            while( ( token = NextTok() ) != T_EOF )
             {
-                if( token == T_LEFT )
+                if( token == T_RIGHT )
+                    break;
+                else if( token == T_LEFT )
                     token = NextTok();
 
-                if( token == T_net )
-                {
-                    // A net section if found. Read it
+                if( token == T_net )        // A net section if found. Read it
                     parseNet();
-                }
             }
 
             break;
 
         case T_libparts:    // The section libparts starts here.
-            while( ( token = NextTok() ) != T_RIGHT )
+            while( ( token = NextTok() ) != T_EOF )
             {
-                if( token == T_LEFT )
+                if( token == T_RIGHT )
+                    break;
+                else if( token == T_LEFT )
                     token = NextTok();
 
-                if( token == T_libpart )
-                {
-                    // A libpart section if found. Read it
+                if( token == T_libpart )    // A libpart section if found. Read it
                     parseLibPartList();
-                }
             }
 
             break;
@@ -160,7 +157,6 @@ void KICAD_NETLIST_PARSER::Parse() throw( IO_ERROR, PARSE_ERROR )
             break;
 
         case T_RIGHT:    // The closing parenthesis of the file.
-            // Not used (mainly they are comments), just skip it
             plevel--;
             break;
 
@@ -178,7 +174,7 @@ void KICAD_NETLIST_PARSER::Parse() throw( IO_ERROR, PARSE_ERROR )
 }
 
 
-void KICAD_NETLIST_PARSER::parseNet() throw( IO_ERROR, PARSE_ERROR )
+void KICAD_NETLIST_PARSER::parseNet()
 {
     /* Parses a section like
      * (net (code 20) (name /PC-A0)
@@ -195,9 +191,11 @@ void KICAD_NETLIST_PARSER::parseNet() throw( IO_ERROR, PARSE_ERROR )
     int        nodecount = 0;
 
     // The token net was read, so the next data is (code <number>)
-    while( (token = NextTok()) != T_RIGHT )
+    while( (token = NextTok()) != T_EOF )
     {
-        if( token == T_LEFT )
+        if( token == T_RIGHT )
+            break;
+        else if( token == T_LEFT )
             token = NextTok();
 
         switch( token )
@@ -219,9 +217,11 @@ void KICAD_NETLIST_PARSER::parseNet() throw( IO_ERROR, PARSE_ERROR )
             break;
 
         case T_node:
-            while( (token = NextTok()) != T_RIGHT )
+            while( (token = NextTok()) != T_EOF )
             {
-                if( token == T_LEFT )
+                if( token == T_RIGHT )
+                    break;
+                else if( token == T_LEFT )
                     token = NextTok();
 
                 switch( token )
@@ -269,7 +269,7 @@ void KICAD_NETLIST_PARSER::parseNet() throw( IO_ERROR, PARSE_ERROR )
 }
 
 
-void KICAD_NETLIST_PARSER::parseComponent() throw( IO_ERROR, PARSE_ERROR )
+void KICAD_NETLIST_PARSER::parseComponent()
 {
    /* Parses a section like
      * (comp (ref P1)
@@ -283,9 +283,8 @@ void KICAD_NETLIST_PARSER::parseComponent() throw( IO_ERROR, PARSE_ERROR )
      * A component need a reference, value, footprint name and a full time stamp
      * The full time stamp is the sheetpath time stamp + the component time stamp
      */
-    FPID     fpid;
+    LIB_ID   fpid;
     wxString footprint;
-    wxString tmp;
     wxString ref;
     wxString value;
     wxString library;
@@ -337,15 +336,25 @@ void KICAD_NETLIST_PARSER::parseComponent() throw( IO_ERROR, PARSE_ERROR )
                     name = FROM_UTF8( CurText() );
                     NeedRIGHT();
                 }
+                else if( token == T_description )
+                {
+                    NeedSYMBOLorNUMBER();
+                    NeedRIGHT();
+                }
                 else
                 {
-                    Expecting( "part or lib" );
+                    Expecting( "part, lib or description" );
                 }
             }
             break;
 
         case T_sheetpath:
-            while( ( token = NextTok() ) != T_tstamps );
+            while( ( token = NextTok() ) != T_EOF )
+            {
+                if( token == T_tstamps )
+                    break;
+            }
+
             NeedSYMBOLorNUMBER();
             pathtimestamp = FROM_UTF8( CurText() );
             NeedRIGHT();
@@ -365,11 +374,11 @@ void KICAD_NETLIST_PARSER::parseComponent() throw( IO_ERROR, PARSE_ERROR )
         }
     }
 
-    if( !footprint.IsEmpty() && fpid.Parse( footprint ) >= 0 )
+    if( !footprint.IsEmpty() && fpid.Parse( footprint, LIB_ID::ID_PCB, true ) >= 0 )
     {
         wxString error;
-        error.Printf( _( "invalid PFID in\nfile: <%s>\nline: %d\noffset: %d" ),
-                      GetChars( CurSource() ), CurLineNumber(), CurOffset() );
+        error.Printf( _( "Invalid footprint ID in\nfile: \"%s\"\nline: %d\noffset: %d" ),
+                      CurSource(), CurLineNumber(), CurOffset() );
 
         THROW_IO_ERROR( error );
     }
@@ -382,10 +391,13 @@ void KICAD_NETLIST_PARSER::parseComponent() throw( IO_ERROR, PARSE_ERROR )
 }
 
 
-void KICAD_NETLIST_PARSER::parseLibPartList() throw( IO_ERROR, PARSE_ERROR )
+void KICAD_NETLIST_PARSER::parseLibPartList()
 {
    /* Parses a section like
     *   (libpart (lib device) (part C)
+    *  (aliases
+    *    (alias Cxx)
+    *    (alias Cyy))
     *     (description "Condensateur non polarise")
     *     (footprints
     *       (fp SM*)
@@ -405,6 +417,8 @@ void KICAD_NETLIST_PARSER::parseLibPartList() throw( IO_ERROR, PARSE_ERROR )
     wxString          libName;
     wxString          libPartName;
     wxArrayString     footprintFilters;
+    wxArrayString     aliases;
+    int               pinCount = 0;
 
     // The last token read was libpart, so read the next token
     while( (token = NextTok()) != T_RIGHT )
@@ -440,7 +454,36 @@ void KICAD_NETLIST_PARSER::parseLibPartList() throw( IO_ERROR, PARSE_ERROR )
                 footprintFilters.Add( FROM_UTF8( CurText() ) );
                 NeedRIGHT();
             }
+            break;
 
+        case T_aliases:
+            while( (token = NextTok()) != T_RIGHT )
+            {
+                if( token == T_LEFT )
+                    token = NextTok();
+
+                if( token != T_alias )
+                    Expecting( T_alias );
+
+                NeedSYMBOLorNUMBER();
+                aliases.Add( FROM_UTF8( CurText() ) );
+                NeedRIGHT();
+            }
+            break;
+
+        case T_pins:
+            while( (token = NextTok()) != T_RIGHT )
+            {
+                if( token == T_LEFT )
+                    token = NextTok();
+
+                if( token != T_pin )
+                    Expecting( T_pin );
+
+                pinCount++;
+
+                skipCurrent();
+            }
             break;
 
         default:
@@ -456,6 +499,19 @@ void KICAD_NETLIST_PARSER::parseLibPartList() throw( IO_ERROR, PARSE_ERROR )
         component = m_netlist->GetComponent( i );
 
         if( component->IsLibSource( libName, libPartName ) )
+        {
             component->SetFootprintFilters( footprintFilters );
+            component->SetPinCount( pinCount );
+        }
+
+        for( unsigned jj = 0; jj < aliases.GetCount(); jj++ )
+        {
+            if( component->IsLibSource( libName, aliases[jj] ) )
+            {
+                component->SetFootprintFilters( footprintFilters );
+                component->SetPinCount( pinCount );
+            }
+        }
+
     }
 }

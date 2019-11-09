@@ -52,7 +52,7 @@ bool SEG::PointCloserThan( const VECTOR2I& aP, int aDist ) const
         int cb = sgn( d.x );
         int cc = -ca * A.x - cb * A.y;
 
-        ecoord num = ca * aP.x + cb * aP.y + cc;
+        ecoord num = (ecoord) ca * aP.x + (ecoord) cb * aP.y + cc;
         num *= num;
 
         if( ca && cb )
@@ -60,6 +60,7 @@ bool SEG::PointCloserThan( const VECTOR2I& aP, int aDist ) const
 
         if( num > ( dist_sq + 100 ) )
             return false;
+
         else if( num < ( dist_sq - 100 ) )
             return true;
     }
@@ -92,6 +93,39 @@ SEG::ecoord SEG::SquaredDistance( const SEG& aSeg ) const
         m = std::min( m, pts[i].SquaredEuclideanNorm() );
 
     return m;
+}
+
+
+const VECTOR2I SEG::NearestPoint( const SEG& aSeg ) const
+{
+    if( auto p = Intersect( aSeg ) )
+        return *p;
+
+    const VECTOR2I pts_origin[4] =
+    {
+            aSeg.NearestPoint( A ),
+            aSeg.NearestPoint( B ),
+            NearestPoint( aSeg.A ),
+            NearestPoint( aSeg.B )
+    };
+
+    const ecoord pts_dist[4] =
+    {
+            ( pts_origin[0] - A ).SquaredEuclideanNorm(),
+            ( pts_origin[1] - B ).SquaredEuclideanNorm(),
+            ( pts_origin[2] - aSeg.A ).SquaredEuclideanNorm(),
+            ( pts_origin[3] - aSeg.B ).SquaredEuclideanNorm()
+    };
+
+    int min_i = 0;
+
+    for( int i = 0; i < 4; i++ )
+    {
+        if( pts_dist[i] < pts_dist[min_i] )
+            min_i = i;
+    }
+
+    return pts_origin[min_i];
 }
 
 

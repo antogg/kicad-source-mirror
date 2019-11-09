@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2011 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
  * Copyright (C) 2009 Dick Hollenbeck, dick@softplc.com
- * Copyright (C) 2004-2012 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2012 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,18 +28,14 @@
 #define _DIALOG_DRC_H_
 
 #include <wx/htmllbox.h>
-
 #include <fctsys.h>
 #include <pcbnew.h>
-#include <class_drawpanel.h>
-#include <wxstruct.h>
-#include <drc_stuff.h>
+#include <tools/drc.h>
 #include <class_marker_pcb.h>
 #include <class_board.h>
-
 #include <dialog_drc_base.h>
 #include <dialog_drclistbox.h>
-
+#include <widgets/unit_binder.h>
 
 // forward declarations
 class DRCLISTBOX;
@@ -50,6 +46,7 @@ class BOARD_DESIGN_SETTINGS;
 /*!
  * DrcDialog class declaration
  */
+#define DIALOG_DRC_WINDOW_NAME "DialogDrcWindowName"
 
 class DIALOG_DRC_CONTROL: public DIALOG_DRC_CONTROL_BASE
 {
@@ -57,69 +54,119 @@ public:
     BOARD_DESIGN_SETTINGS  m_BrdSettings;
 
     /// Constructors
-    DIALOG_DRC_CONTROL( DRC* aTester, PCB_EDIT_FRAME* parent );
-    ~DIALOG_DRC_CONTROL(){};
+    DIALOG_DRC_CONTROL( DRC* aTester, PCB_EDIT_FRAME* aEditorFrame, wxWindow* aParent );
+    ~DIALOG_DRC_CONTROL();
+
+    /**
+     * Enable/disable the report file creation
+     * @param aEnable = true to ask for creation
+     * @param aFileName = the filename or the report file
+     */
+    void SetRptSettings( bool aEnable, const wxString& aFileName );
+
+    void GetRptSettings( bool* aEnable, wxString& aFileName );
+
+    void UpdateDisplayedCounts();
+
 
 private:
     /**
      * Function writeReport
      * outputs the MARKER items and unconnecte DRC_ITEMs with commentary to an
      * open text file.
-     * @param fpOut The text file to write the report to.
+     * @param aFullFileName The text filename to write the report to.
+     * @return true if OK, false on error
      */
-    void writeReport( FILE* fpOut );
+    bool writeReport( const wxString& aFullFileName );
+
+    /**
+     * filenames can be entered by name.
+     * @return a good report filename  (with .rpt extension) (a full filename)
+     * from m_CreateRptCtrl
+     */
+    const wxString makeValidFileNameReport();
 
     void InitValues( );
 
-    void SetDrcParmeters( );
+    void DisplayDRCValues( );
 
-    /// wxEVT_COMMAND_CHECKBOX_CLICKED event handler for ID_CHECKBOX
-    void OnReportCheckBoxClicked( wxCommandEvent& event );
+    void SetDRCParameters( );
+
+    /// wxEVT_COMMAND_CHECKBOX_CLICKED event handler for ID_CHECKBOX_RPT_FILE
+    void OnReportCheckBoxClicked( wxCommandEvent& event ) override;
+
+    /// wxEVT_COMMAND_TEXT_UPDATED event handler for m_RptFilenameCtrl
+    void OnReportFilenameEdited( wxCommandEvent &event ) override;
 
     /// wxEVT_COMMAND_BUTTON_CLICKED event handler for ID_BUTTON_BROWSE_RPT_FILE
-    void OnButtonBrowseRptFileClick( wxCommandEvent& event );
+    void OnButtonBrowseRptFileClick( wxCommandEvent& event ) override;
 
     /// wxEVT_COMMAND_BUTTON_CLICKED event handler for ID_STARTDRC
-    void OnStartdrcClick( wxCommandEvent& event );
-
-    /// wxEVT_COMMAND_BUTTON_CLICKED event handler for ID_LIST_UNCONNECTED
-    void OnListUnconnectedClick( wxCommandEvent& event );
+    void OnStartdrcClick( wxCommandEvent& event ) override;
 
     /// wxEVT_COMMAND_BUTTON_CLICKED event handler for ID_DELETE_ALL
-    void OnDeleteAllClick( wxCommandEvent& event );
+    void OnDeleteAllClick( wxCommandEvent& event ) override;
 
     /// wxEVT_COMMAND_BUTTON_CLICKED event handler for ID_DELETE_ONE
-    void OnDeleteOneClick( wxCommandEvent& event );
+    void OnDeleteOneClick( wxCommandEvent& event ) override;
 
     /// wxEVT_LEFT_DCLICK event handler for ID_CLEARANCE_LIST
-    void OnLeftDClickClearance( wxMouseEvent& event );
+    void OnLeftDClickClearance( wxMouseEvent& event ) override;
+
+    /// wxEVT_LEFT_UP event handler for ID_CLEARANCE_LIST
+    void OnLeftUpClearance( wxMouseEvent& event ) override;
 
     /// wxEVT_RIGHT_UP event handler for ID_CLEARANCE_LIST
-    void OnRightUpClearance( wxMouseEvent& event );
+    void OnRightUpClearance( wxMouseEvent& event ) override;
 
     /// wxEVT_LEFT_DCLICK event handler for ID_UNCONNECTED_LIST
-    void OnLeftDClickUnconnected( wxMouseEvent& event );
+    void OnLeftDClickUnconnected( wxMouseEvent& event ) override;
+
+    /// wxEVT_LEFT_UP event handler for ID_UNCONNECTED_LIST
+    void OnLeftUpUnconnected( wxMouseEvent& event ) override;
 
     /// wxEVT_RIGHT_UP event handler for ID_UNCONNECTED_LIST
-    void OnRightUpUnconnected( wxMouseEvent& event );
+    void OnRightUpUnconnected( wxMouseEvent& event ) override;
+
+    /// wxEVT_LEFT_DCLICK event handler for ID_FOOTPRINTS_LIST
+    void OnLeftDClickFootprints( wxMouseEvent& event ) override;
+
+    /// wxEVT_RIGHT_UP event handler for ID_FOOTPRINTS_LIST
+    void OnRightUpFootprints( wxMouseEvent& event ) override;
 
     /// wxEVT_COMMAND_BUTTON_CLICKED event handler for wxID_CANCEL
-    void OnCancelClick( wxCommandEvent& event );
+    void OnCancelClick( wxCommandEvent& event ) override;
 
-    /// wxEVT_COMMAND_BUTTON_CLICKED event handler for wxID_OK
-    void OnOkClick( wxCommandEvent& event );
+    /// handler for activate event, updating data which can be modified outside the dialog
+    /// (DRC parameters)
+    void OnActivateDlg( wxActivateEvent& event ) override;
 
-    void OnMarkerSelectionEvent( wxCommandEvent& event );
-    void OnUnconnectedSelectionEvent( wxCommandEvent& event );
-	void OnChangingMarkerList( wxNotebookEvent& event );
+    void OnMarkerSelectionEvent( wxCommandEvent& event ) override;
+    void OnUnconnectedSelectionEvent( wxCommandEvent& event ) override;
+    void OnFootprintsSelectionEvent( wxCommandEvent& event ) override;
+    void OnChangingMarkerList( wxNotebookEvent& event ) override;
 
     void DelDRCMarkers();
     void RedrawDrawPanel();
 
-    void OnPopupMenu( wxCommandEvent& event );
+    /// Run the SELECTION_TOOL's disambiguation menu to highlight the two BOARD_ITEMs
+    /// in the DRC_ITEM.
+    void doSelectionMenu( const DRC_ITEM* aItem );
 
+    bool focusOnItem( const DRC_ITEM* aItem );
+
+    BOARD*              m_currentBoard;     // the board currently on test
     DRC*                m_tester;
-    PCB_EDIT_FRAME*     m_Parent;
+    PCB_EDIT_FRAME*     m_brdEditor;
+    wxConfigBase*       m_config;
+
+    wxString            m_markersTitleTemplate;
+    wxString            m_unconnectedTitleTemplate;
+    wxString            m_footprintsTitleTemplate;
+
+    UNIT_BINDER         m_trackMinWidth;
+    UNIT_BINDER         m_viaMinSize;
+    UNIT_BINDER         m_uviaMinSize;
 };
 
 #endif  // _DIALOG_DRC_H_

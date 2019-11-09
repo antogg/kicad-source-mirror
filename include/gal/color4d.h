@@ -2,7 +2,7 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 2012 Torsten Hueter, torstenhtr <at> gmx.de
- * Copyright (C) 2012 Kicad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2017-2019 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * Color class
  *
@@ -41,7 +41,7 @@ class COLOR4D
 public:
     // Constructor (creates the Color 0,0,0,0)
     COLOR4D() :
-        r( 0 ), g( 0 ), b( 0 ), a( 1 )
+        r( 0 ), g( 0 ), b( 0 ), a( 1.0 )
     {
     }
 
@@ -53,7 +53,7 @@ public:
      * @param aBlue  is the blue component  [0.0 .. 1.0].
      * @param aAlpha is the alpha value     [0.0 .. 1.0].
      */
-    COLOR4D( double aRed, double aGreen, double aBlue, double aAlpha ) :
+    constexpr COLOR4D( double aRed, double aGreen, double aBlue, double aAlpha ) :
         r( aRed ), g( aGreen ), b( aBlue ), a( aAlpha )
     {
         assert( r >= 0.0 && r <= 1.0 );
@@ -77,7 +77,65 @@ public:
      * @param aColor is the color type used by wxWidgets.
      */
     COLOR4D( const wxColour& aColor );
+
+    /**
+     * Function SetFromWxString
+     * Sets color values by parsing a string using wxColour::Set()
+     *
+     * @param aColorString is a color string that wxColour can understand
+     * @return true if color was set successfully
+     */
+    bool SetFromWxString( const wxString& aColorString );
+
+    wxString ToWxString( long flags ) const;
+
+    wxColour ToColour() const;
+
+    /**
+     * Function LegacyMix()
+     * Mixes this COLOR4D with an input COLOR4D using the OR-mixing of legacy canvas.
+     *
+     * Can be removed once legacy canvas is removed.
+     * Depends on wxColour for simplicity, but could be re-written to avoid
+     * this dependency if desired.
+     *
+     * @param aColor The color to mix with this one
+     */
+    COLOR4D LegacyMix( COLOR4D aColor ) const;
+
+    /**
+     * Packs the color into an unsigned int for compatibility with legacy canvas.
+     * Note that this is a lossy downsampling and also that the alpha channel is lost.
+     */
+    unsigned int ToU32() const;
+
+    /**
+     * Unpacks from a unsigned int in the legacy EDA_COLOR_T format.
+     */
+    void FromU32( unsigned int aPackedColor );
 #endif /* WX_COMPATIBLITY */
+
+
+    /**
+     * Function ToHSL()
+     * Converts current color (stored in RGB) to HSL format.
+     *
+     * @param aOutHue is the conversion result for hue component, in degrees 0 ... 360.0
+     * @param aOutSaturation is the conversion result for saturation component (0 ... 1.0).
+     * @param aOutLightness is conversion result for value component (0 ... 1.0).
+     * @note saturation is set to 0.0 for black color if r = g = b,
+     */
+    void ToHSL( double& aOutHue, double& aOutSaturation, double& aOutValue ) const;
+
+    /**
+     * Function FromHSL()
+     * Changes currently used color to the one given by hue, saturation and lightness parameters.
+     *
+     * @param aInHue is hue component, in degrees (0.0 - 360.0)
+     * @param aInSaturation is saturation component (0.0 - 1.0)
+     * @param aInLightness is lightness component (0.0 - 1.0)
+     */
+    void FromHSL( double aInHue, double aInSaturation, double aInLightness );
 
     /**
      * Function Brighten
@@ -165,6 +223,35 @@ public:
     }
 
     /**
+     * Function Mix
+     * Returns a color that is mixed with the input by a factor
+     * @param aFactor Specifies how much of the original color to keep (valid values: 0.0 .. 1.0).
+     * @return COLOR4D Mixed color.
+     */
+    COLOR4D Mix( const COLOR4D& aColor, double aFactor ) const
+    {
+        assert( aFactor >= 0.0 && aFactor <= 1.0 );
+
+        return COLOR4D( aColor.r * ( 1.0 - aFactor ) + r * aFactor,
+                        aColor.g * ( 1.0 - aFactor ) + g * aFactor,
+                        aColor.b * ( 1.0 - aFactor ) + b * aFactor,
+                        a );
+    }
+
+    /**
+     * Function WithAlpha
+     * Returns a colour with the same colour, but the given alpha
+     * @param aAlpha specifies the alpha of the new color
+     * @return COLOR4D color with that alpha
+     */
+     COLOR4D WithAlpha( double aAlpha ) const
+     {
+         assert( aAlpha >= 0.0 && aAlpha <= 1.0 );
+
+         return COLOR4D( r, g, b, aAlpha );
+     }
+
+    /**
      * Function Inverted
      * Returns an inverted color, alpha remains the same.
      * @return COLOR4D& Inverted color.
@@ -189,34 +276,50 @@ public:
      * Function ToHSV()
      * Converts current color (stored in RGB) to HSV format.
      *
-     * @param aOutH is conversion result for hue component.
-     * @param aOutS is conversion result for saturation component.
-     * @param aOutV is conversion result for value component.
+     * @param aOutHue is the conversion result for hue component, in degrees 0 ... 360.0
+     * @param aOutSaturation is the conversion result for saturation component (0 ... 1.0).
+     * @param aOutValue is conversion result for value component (0 ... 1.0).
+     * @param aAlwaysDefineHue controls the way hue is defined when r = v = b
+     * @note saturation is set to 0.0 for black color (r = v = b = 0), and if r = v = b,
+     * hue is set to 0.0 if aAlwaysDefineHue = true, and set to NAN if aAlwaysDefineHue = false.
+     * this option is usefull to convert a 4D color to a legacy color, because Red has hue = 0,
+     * therefore aAlwaysDefineHue = false makes difference between Red and Gray colors.
      */
-    void ToHSV( double& aOutH, double& aOutS, double& aOutV ) const;
+    void ToHSV( double& aOutHue, double& aOutSaturation, double& aOutValue, bool aAlwaysDefineHue = false ) const;
 
     /**
      * Function FromHSV()
      * Changes currently used color to the one given by hue, saturation and value parameters.
      *
-     * @param aOutH is hue component.
-     * @param aOutS is saturation component.
-     * @param aOutV is value component.
+     * @param aInH is hue component, in degrees.
+     * @param aInS is saturation component.
+     * @param aInV is value component.
      */
     void FromHSV( double aInH, double aInS, double aInV );
-
-    /// @brief Equality operator, are two colors equal
-    const bool operator==( const COLOR4D& aColor );
-
-    /// @brief Not equality operator, are two colors not equal
-    const bool operator!=( const COLOR4D& aColor );
 
     // Color components: red, green, blue, alpha
     double r; ///< Red component
     double g; ///< Green component
     double b; ///< Blue component
     double a; ///< Alpha component
+
+    /// For legacy support; used as a value to indicate color hasn't been set yet
+    static const COLOR4D UNSPECIFIED;
+
+    // Declare a few color shortcuts that are used for comparisons frequently
+    static const COLOR4D WHITE;
+    static const COLOR4D BLACK;
 };
+
+/// @brief Equality operator, are two colors equal
+const bool operator==( const COLOR4D& lhs, const COLOR4D& rhs );
+
+/// @brief Not equality operator, are two colors not equal
+const bool operator!=( const COLOR4D& lhs, const COLOR4D& rhs );
+
+/// Syntactic sugar for outputting colors to strings
+std::ostream &operator<<( std::ostream &aStream, COLOR4D const &aColor );
+
 } // namespace KIGFX
 
 #endif /* COLOR4D_H_ */

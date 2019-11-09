@@ -350,9 +350,9 @@ void make_vcyl( bool inch, bool axial, double dia, double length,
         fprintf( fp, "0 0 0 0\n" );
 
         if( inch )
-            fprintf( fp, "0 %d 0 360\n", (int) (dia * 1000) );
+            fprintf( fp, "0 %d 0 360\n", (int) (dia * 500) );
         else
-            fprintf( fp, "0 %.3f 0 360\n", dia );
+            fprintf( fp, "0 %.3f 0 360\n", dia / 2.0 );
 
         fprintf( fp, ".END_ELECTRICAL\n" );
         fclose( fp );
@@ -426,14 +426,13 @@ void make_vcyl( bool inch, bool axial, double dia, double length,
 void make_hcyl( bool inch, bool axial, double dia, double length,
                 double z, double wireDia )
 {
-    bool ok = false;
     stringstream tstr;
     string line;
 
     double pitch = 0.0;
     double lead  = 0.0; // lead length for radial leads
 
-    ok = false;
+    bool ok = false;
     while( !ok )
     {
         if( axial )
@@ -579,7 +578,7 @@ void make_hcyl( bool inch, bool axial, double dia, double length,
 
     fprintf( fp, ".END_ELECTRICAL\n" );
     fclose( fp );
-    return;
+
     return;
 }
 

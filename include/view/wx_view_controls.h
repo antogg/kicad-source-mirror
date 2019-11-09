@@ -32,14 +32,18 @@
 #define __WX_VIEW_CONTROLS_H
 
 #include <wx/wx.h>
-#include <wx/event.h>
 
 #include <view/view_controls.h>
+
+#include <memory>
 
 class EDA_DRAW_PANEL_GAL;
 
 namespace KIGFX
 {
+
+class ZOOM_CONTROLLER;
+
 /**
  * Class WX_VIEW_CONTROLS
  * is a specific implementation of class VIEW_CONTROLS for wxWidgets library.
@@ -47,16 +51,20 @@ namespace KIGFX
 class WX_VIEW_CONTROLS : public VIEW_CONTROLS, public wxEvtHandler
 {
 public:
-    WX_VIEW_CONTROLS( VIEW* aView, wxWindow* aParentPanel );
-    ~WX_VIEW_CONTROLS()
-    {}
+    WX_VIEW_CONTROLS( VIEW* aView, wxScrolledCanvas* aParentPanel );
+    virtual ~WX_VIEW_CONTROLS();
 
     /// Handler functions
     void onWheel( wxMouseEvent& aEvent );
     void onMotion( wxMouseEvent& aEvent );
+#if wxCHECK_VERSION( 3, 1, 0 ) || defined( USE_OSX_MAGNIFY_EVENT )
+    void onMagnify( wxMouseEvent& aEvent );
+#endif
     void onButton( wxMouseEvent& aEvent );
     void onEnter( wxMouseEvent& WXUNUSED( aEvent ) );
+    void onLeave( wxMouseEvent& WXUNUSED( aEvent ) );
     void onTimer( wxTimerEvent& WXUNUSED( aEvent ) );
+    void onScroll( wxScrollWinEvent& aEvent );
 
     /**
      * Function SetGrabMouse()
@@ -64,27 +72,35 @@ public:
      *
      * @param aEnabled says whether the option should be enabled or disabled.
      */
-    void SetGrabMouse( bool aEnabled );
-
-    /**
-     * Function SetAutoPan()
-     * Enables/disables autopanning (panning when mouse cursor reaches the panel border).
-     *
-     * @param aEnabled says whether the option should enabled or disabled.
-     */
-    void SetAutoPan( bool aEnabled )
-    {
-        m_autoPanEnabled = aEnabled;
-
-        if( m_state == AUTO_PANNING )
-            m_state = IDLE;
-    }
+    void SetGrabMouse( bool aEnabled ) override;
 
     /// @copydoc VIEW_CONTROLS::GetMousePosition()
-    VECTOR2D GetMousePosition() const;
+    VECTOR2D GetMousePosition( bool aWorldCoordinates = true ) const override;
+
+    using VIEW_CONTROLS::GetCursorPosition;
 
     /// @copydoc VIEW_CONTROLS::GetCursorPosition()
-    VECTOR2D GetCursorPosition() const;
+    VECTOR2D GetCursorPosition( bool aSnappingEnabled ) const override;
+
+    /// @copydoc VIEW_CONTROLS::GetRawCursorPosition()
+    VECTOR2D GetRawCursorPosition( bool aSnappingEnabled = true ) const override;
+
+    void SetCursorPosition( const VECTOR2D& aPosition, bool warpView, bool aTriggeredByArrows ) override;
+
+    /// @copydoc VIEW_CONTROLS::SetCrossHairCursorPosition()
+    void SetCrossHairCursorPosition( const VECTOR2D& aPosition, bool aWarpView ) override;
+
+    /// @copydoc VIEW_CONTROLS::CursorWarp()
+    void WarpCursor( const VECTOR2D& aPosition, bool aWorldCoordinates = false,
+            bool aWarpView = false ) override;
+
+    /// @copydoc VIEW_CONTROLS::CenterOnCursor()
+    void CenterOnCursor() const override;
+
+    /// Adjusts the scrollbars position to match the current viewport.
+    void UpdateScrollbars();
+
+    void ForceCursorPosition( bool aEnabled, const VECTOR2D& aPosition = VECTOR2D( 0, 0 ) ) override;
 
     /// Event that forces mouse move event in the dispatcher (eg. used in autopanning, when mouse
     /// cursor does not move in screen coordinates, but does in world coordinates)
@@ -109,11 +125,23 @@ private:
      */
     bool handleAutoPanning( const wxMouseEvent& aEvent );
 
+    /**
+     * Sends an event to refresh mouse position. It is mostly used for notifying the tools
+     * that the cursor position in the world coordinates has changed, whereas the screen coordinates
+     * remained the same (e.g. frame edge autopanning).
+     */
+    void refreshMouse();
+
+    /**
+     * Gets the cursor position in the screen coordinates.
+     */
+    wxPoint getMouseScreenPosition() const;
+
     /// Current state of VIEW_CONTROLS
     STATE       m_state;
 
     /// Panel that is affected by VIEW_CONTROLS
-    wxWindow*   m_parentPanel;
+    wxScrolledCanvas* m_parentPanel;
 
     /// Stores information about point where dragging has started
     VECTOR2D    m_dragStartPoint;
@@ -124,11 +152,28 @@ private:
     /// Current direction of panning (only autopanning mode)
     VECTOR2D    m_panDirection;
 
-    /// Used for determining time intervals between scroll & zoom events
-    wxLongLong  m_timeStamp;
-
     /// Timer repsonsible for handling autopanning
     wxTimer     m_panTimer;
+
+    /// Ratio used for scaling world coordinates to scrollbar position.
+    VECTOR2D    m_scrollScale;
+
+    /// Current scrollbar position
+    VECTOR2I    m_scrollPos;
+
+#ifdef __WXGTK3__
+    /// Last event timestamp used to de-bounce mouse wheel
+    long int    m_lastTimestamp;
+#endif
+
+    /// Current cursor position (world coordinates)
+    VECTOR2D    m_cursorPos;
+
+    /// Flag deciding whether the cursor position should be calculated using the mouse position
+    bool        m_updateCursor;
+
+    /// a ZOOM_CONTROLLER that determines zoom steps. This is platform-specific.
+    std::unique_ptr<ZOOM_CONTROLLER> m_zoomController;
 };
 } // namespace KIGFX
 

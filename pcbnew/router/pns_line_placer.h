@@ -1,7 +1,8 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -26,80 +27,75 @@
 #include <geometry/shape.h>
 #include <geometry/shape_line_chain.h>
 
+#include "pns_sizes_settings.h"
 #include "pns_node.h"
 #include "pns_via.h"
 #include "pns_line.h"
-#include "pns_algo_base.h"
+#include "pns_placement_algo.h"
 
-class PNS_ROUTER;
-class PNS_SHOVE;
-class PNS_OPTIMIZER;
-class PNS_ROUTER_BASE;
+namespace PNS {
+
+class ROUTER;
+class SHOVE;
+class OPTIMIZER;
+class VIA;
+class SIZES_SETTINGS;
+
 
 /**
- * Class PNS_LINE_PLACER
+ * Class LINE_PLACER
  *
- * Single track placement algorithm. Interactively routes a track. 
+ * Single track placement algorithm. Interactively routes a track.
  * Applies shove and walkaround algorithms when needed.
  */
 
-class PNS_LINE_PLACER : public PNS_ALGO_BASE
+class LINE_PLACER : public PLACEMENT_ALGO
 {
 public:
-    PNS_LINE_PLACER( PNS_ROUTER* aRouter );
-    ~PNS_LINE_PLACER();
+    LINE_PLACER( ROUTER* aRouter );
+    ~LINE_PLACER();
 
     /**
      * Function Start()
-     * 
+     *
      * Starts routing a single track at point aP, taking item aStartItem as anchor
      * (unless NULL).
      */
-    void Start( const VECTOR2I& aP, PNS_ITEM* aStartItem );
+    bool Start( const VECTOR2I& aP, ITEM* aStartItem ) override;
 
     /**
      * Function Move()
-     * 
-     * Moves the end of the currently routed trace to the point aP, taking 
+     *
+     * Moves the end of the currently routed trace to the point aP, taking
      * aEndItem as anchor (if not NULL).
      * (unless NULL).
      */
-    void Move( const VECTOR2I& aP, PNS_ITEM* aEndItem );
+    bool Move( const VECTOR2I& aP, ITEM* aEndItem ) override;
 
     /**
      * Function FixRoute()
-     * 
+     *
      * Commits the currently routed track to the parent node, taking
      * aP as the final end point and aEndItem as the final anchor (if provided).
      * @return true, if route has been commited. May return false if the routing
      * result is violating design rules - in such case, the track is only committed
      * if Settings.CanViolateDRC() is on.
      */
-    bool FixRoute( const VECTOR2I& aP, PNS_ITEM* aEndItem );
-    
+    bool FixRoute( const VECTOR2I& aP, ITEM* aEndItem, bool aForceFinish ) override;
+
     /**
-     * Function AddVia()
-     * 
+     * Function ToggleVia()
+     *
      * Enables/disables a via at the end of currently routed trace.
-     * @param aEnabled if true, a via is attached during placement
-     * @param aDiameter diameter of the via
-     * @param aDrill drill of the via
      */
-    void AddVia( bool aEnabled, int aDiameter, int aDrill );
+    bool ToggleVia( bool aEnabled ) override;
 
     /**
      * Function SetLayer()
      *
      * Sets the current routing layer.
      */
-    void SetLayer( int aLayer );
-
-    /**
-     * Function SetWidth()
-     *
-     * Sets the current track width.
-     */
-    void SetWidth( int aWidth );
+    bool SetLayer( int aLayer ) override;
 
     /**
      * Function Head()
@@ -107,37 +103,37 @@ public:
      * Returns the "head" of the line being placed, that is the volatile part
      * that has not "settled" yet.
      */
-    const PNS_LINE& Head() const { return m_head; }
-    
+    const LINE& Head() const { return m_head; }
+
     /**
      * Function Tail()
      *
      * Returns the "tail" of the line being placed, the part which has already wrapped around
      * and shoved some obstacles.
      */
-    const PNS_LINE& Tail() const { return m_tail; }
+    const LINE& Tail() const { return m_tail; }
 
     /**
      * Function Trace()
      *
      * Returns the complete routed line.
      */
-    const PNS_LINE Trace() const;
+    const LINE Trace() const;
 
     /**
      * Function Traces()
      *
-     * Returns the complete routed line, as a single-member PNS_ITEMSET.
+     * Returns the complete routed line, as a single-member ITEM_SET.
      */
-    const PNS_ITEMSET Traces();
+    const ITEM_SET Traces() override;
 
     /**
      * Function CurrentEnd()
      *
      * Returns the current end of the line being placed. It may not be equal
      * to the cursor position due to collisions.
-     */ 
-    const VECTOR2I& CurrentEnd() const
+     */
+    const VECTOR2I& CurrentEnd() const override
     {
         return m_currentEnd;
     }
@@ -146,18 +142,18 @@ public:
      * Function CurrentNet()
      *
      * Returns the net code of currently routed track.
-     */ 
-    int CurrentNet() const 
+     */
+    const std::vector<int> CurrentNets() const override
     {
-        return m_currentNet;
+        return std::vector<int>( 1, m_currentNet );
     }
 
     /**
      * Function CurrentLayer()
      *
      * Returns the layer of currently routed track.
-     */ 
-    int CurrentLayer() const 
+     */
+    int CurrentLayer() const override
     {
         return m_currentLayer;
     }
@@ -167,15 +163,15 @@ public:
      *
      * Returns the most recent world state.
      */
-    PNS_NODE* CurrentNode( bool aLoopsRemoved = false ) const;
-    
+    NODE* CurrentNode( bool aLoopsRemoved = false ) const override;
+
     /**
      * Function FlipPosture()
      *
      * Toggles the current posture (straight/diagonal) of the trace head.
      */
-    void FlipPosture();
-    
+    void FlipPosture() override;
+
     /**
      * Function UpdateSizes()
      *
@@ -183,7 +179,24 @@ public:
      * a settings class. Used to dynamically change these parameters as
      * the track is routed.
      */
-    void UpdateSizes( const PNS_ROUTING_SETTINGS& aSettings );
+    void UpdateSizes( const SIZES_SETTINGS& aSizes ) override;
+
+    void SetOrthoMode( bool aOrthoMode ) override;
+
+    bool IsPlacingVia() const override { return m_placingVia; }
+
+    void GetModifiedNets( std::vector<int>& aNets ) const override;
+
+    LOGGER* Logger() override;
+
+    /**
+     * Function SplitAdjacentSegments()
+     *
+     * Checks if point aP lies on segment aSeg. If so, splits the segment in two,
+     * forming a joint at aP and stores updated topology in node aNode.
+     */
+    bool SplitAdjacentSegments( NODE* aNode, ITEM* aSeg, const VECTOR2I& aP );
+
 
 private:
     /**
@@ -202,24 +215,24 @@ private:
      * Function updateLeadingRatLine()
      *
      * Draws the "leading" ratsnest line, which connects the end of currently
-     * routed track and the nearest yet unrouted item. If the routing for 
+     * routed track and the nearest yet unrouted item. If the routing for
      * current net is complete, draws nothing.
      */
     void updateLeadingRatLine();
-    
+
     /**
      * Function setWorld()
      *
      * Sets the board to route.
      */
-    void setWorld( PNS_NODE* aWorld );
-    
+    void setWorld( NODE* aWorld );
+
     /**
      * Function startPlacement()
      *
      * Initializes placement of a new line with given parameters.
      */
-    void startPlacement( const VECTOR2I& aStart, int aNet, int aWidth, int aLayer );
+    void initPlacement();
 
     /**
      * Function setInitialDirection()
@@ -230,36 +243,21 @@ private:
     void setInitialDirection( const DIRECTION_45& aDirection );
 
     /**
-     * Function splitAdjacentSegments()
-     *
-     * Checks if point aP lies on segment aSeg. If so, splits the segment in two,
-     * forming a joint at aP and stores updated topology in node aNode.
-     */
-    void splitAdjacentSegments( PNS_NODE* aNode, PNS_ITEM* aSeg, const VECTOR2I& aP );
-
-    /**
      * Function removeLoops()
      *
      * Searches aNode for traces concurrent to aLatest and removes them. Updated
      * topology is stored in aNode.
      */
-    void removeLoops( PNS_NODE* aNode, PNS_LINE* aLatest );
+    void removeLoops( NODE* aNode, LINE& aLatest );
 
     /**
      * Function simplifyNewLine()
      *
      * Assembles a line starting from segment aLatest, removes collinear segments
-     * and redundant vertexes. If a simplification bhas been found, replaces the 
+     * and redundant vertexes. If a simplification bhas been found, replaces the
      * old line with the simplified one in aNode.
      */
-    void simplifyNewLine( PNS_NODE *aNode, PNS_SEGMENT *aLatest );
-
-    /**
-     * Function handleViaPlacement()
-     *
-     * Attempts to find a spot to place the via at the end of line aHead.
-     */
-    bool handleViaPlacement( PNS_LINE& aHead );
+    void simplifyNewLine( NODE* aNode, SEGMENT* aLatest );
 
     /**
      * Function checkObtusity()
@@ -326,7 +324,7 @@ private:
      * around all colliding solid or non-movable items. Movable segments are
      * ignored, as they'll be handled later by the shove algorithm.
      */
-    bool routeHead( const VECTOR2I& aP, PNS_LINE& aNewHead);
+    bool routeHead( const VECTOR2I& aP, LINE& aNewHead);
 
     /**
      * Function routeStep()
@@ -337,15 +335,24 @@ private:
      */
     void routeStep( const VECTOR2I& aP );
 
+    const LINE reduceToNearestObstacle( const LINE& aOriginalLine );
+
+    bool rhStopAtNearestObstacle( const VECTOR2I& aP, LINE& aNewHead );
+
+
     ///> route step, walkaround mode
-    bool rhWalkOnly( const VECTOR2I& aP, PNS_LINE& aNewHead);
+    bool rhWalkOnly( const VECTOR2I& aP, LINE& aNewHead);
 
     ///> route step, shove mode
-    bool rhShoveOnly( const VECTOR2I& aP, PNS_LINE& aNewHead);
+    bool rhShoveOnly( const VECTOR2I& aP, LINE& aNewHead);
 
     ///> route step, mark obstacles mode
-    bool rhMarkObstacles( const VECTOR2I& aP, PNS_LINE& aNewHead );
-    
+    bool rhMarkObstacles( const VECTOR2I& aP, LINE& aNewHead );
+
+    const VIA makeVia( const VECTOR2I& aP );
+
+    bool buildInitialLine( const VECTOR2I& aP, LINE& aHead, bool aInvertPosture = false );
+
     ///> current routing direction
     DIRECTION_45 m_direction;
 
@@ -354,50 +361,45 @@ private:
 
     ///> routing "head": volatile part of the track from the previously
     ///  analyzed point to the current routing destination
-    PNS_LINE m_head;
+    LINE m_head;
 
     ///> routing "tail": part of the track that has been already fixed due to collisions with obstacles
-    PNS_LINE m_tail;
-
-    ///> current algorithm iteration
-    int m_iteration;
+    LINE m_tail;
 
     ///> pointer to world to search colliding items
-    PNS_NODE* m_world;
+    NODE* m_world;
 
     ///> current routing start point (end of tail, beginning of head)
     VECTOR2I m_p_start;
 
     ///> The shove engine
-    PNS_SHOVE* m_shove;
+    std::unique_ptr< SHOVE > m_shove;
 
     ///> Current world state
-    PNS_NODE* m_currentNode;
+    NODE* m_currentNode;
 
     ///> Postprocessed world state (including marked collisions & removed loops)
-    PNS_NODE* m_lastNode;
+    NODE* m_lastNode;
+
+    SIZES_SETTINGS m_sizes;
 
     ///> Are we placing a via?
     bool m_placingVia;
 
-    ///> current via diameter
-    int m_viaDiameter;
-
-    ///> current via drill
-    int m_viaDrill;
-
-    ///> current track width
-    int m_currentWidth;
-
     int m_currentNet;
     int m_currentLayer;
 
-    bool m_startsOnVia;
-    
-    VECTOR2I m_originalStart, m_currentEnd, m_currentStart;
-    PNS_LINE m_currentTrace;
+    VECTOR2I m_currentEnd, m_currentStart;
+    LINE m_currentTrace;
 
     PNS_MODE m_currentMode;
+    ITEM* m_startItem;
+
+    bool m_idle;
+    bool m_chainedPlacement;
+    bool m_orthoMode;
 };
+
+}
 
 #endif    // __PNS_LINE_PLACER_H

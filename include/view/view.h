@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2016 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -27,10 +27,13 @@
 
 #include <vector>
 #include <set>
-#include <boost/unordered/unordered_map.hpp>
+#include <unordered_map>
+#include <memory>
 
 #include <math/box2.h>
 #include <gal/definitions.h>
+
+#include <view/view_overlay.h>
 
 namespace KIGFX
 {
@@ -50,7 +53,7 @@ class VIEW_RTREE;
  *    Foreseen for preview windows and printing.
  * Items in a view are grouped in layers (not to be confused with Kicad's PCB layers). Each layer is
  * identified by an integer number. Visibility and rendering order can be set individually for each
- * of the layers. Future versions of the VIEW will also allow to assign different layers to different
+ * of the layers. Future versions of the VIEW will also allows one to assign different layers to different
  * rendering targets, which will be composited at the final stage by the GAL.
  * The VIEW class also provides fast methods for finding all visible objects that are within a given
  * rectangular area, useful for object selection/hit testing.
@@ -65,25 +68,33 @@ public:
     /**
      * Constructor.
      * @param aIsDynamic decides whether we are creating a static or a dynamic VIEW.
-     * @param aUseGroups tells if items added to the VIEW should be stored in groups.
      */
     VIEW( bool aIsDynamic = true );
 
-    ~VIEW();
+    virtual ~VIEW();
+
+    // nasty hack, invoked by the destructor of VIEW_ITEM to auto-remove the item
+    // from the owning VIEW if there is any. Kicad relies too much on this mechanism.
+    // this is the only linking dependency now between EDA_ITEM and VIEW class. In near future
+    // I'll replace it with observers.
+    static void OnDestroy( VIEW_ITEM* aItem );
 
     /**
      * Function Add()
      * Adds a VIEW_ITEM to the view.
+     * Set aDrawPriority to -1 to assign sequential priorities.
      * @param aItem: item to be added. No ownership is given
+     * @param aDrawPriority: priority to draw this item on its layer, lowest first.
      */
-    void Add( VIEW_ITEM* aItem );
+    virtual void Add( VIEW_ITEM* aItem, int aDrawPriority = -1 );
 
     /**
      * Function Remove()
      * Removes a VIEW_ITEM from the view.
      * @param aItem: item to be removed. Caller must dispose the removed item if necessary
      */
-    void Remove( VIEW_ITEM* aItem );
+    virtual void Remove( VIEW_ITEM* aItem );
+
 
     /**
      * Function Query()
@@ -94,7 +105,42 @@ public:
      *  first).
      * @return Number of found items.
      */
-    int Query( const BOX2I& aRect, std::vector<LAYER_ITEM_PAIR>& aResult ) const;
+    virtual int Query( const BOX2I& aRect, std::vector<LAYER_ITEM_PAIR>& aResult ) const;
+
+    /**
+     * Sets the item visibility.
+     *
+     * @param aItem: the item to modify.
+     * @param aIsVisible: whether the item is visible (on all layers), or not.
+     */
+    void SetVisible( VIEW_ITEM* aItem, bool aIsVisible = true );
+
+    /**
+     * Temporarily hides the item in the view (e.g. for overlaying)
+     *
+     * @param aItem: the item to modify.
+     * @param aHide: whether the item is hidden (on all layers), or not.
+     */
+    void Hide( VIEW_ITEM* aItem, bool aHide = true );
+
+    /**
+     * Returns information if the item is visible (or not).
+     *
+     * @param aItem: the item to test.
+     * @return when true, the item is visible (i.e. to be displayed, not visible in the
+     * *current* viewport)
+     */
+    bool IsVisible( const VIEW_ITEM* aItem ) const;
+
+    /**
+     * For dynamic VIEWs, informs the associated VIEW that the graphical representation of
+     * this item has changed. For static views calling has no effect.
+     *
+     * @param aItem: the item to update.
+     * @param aUpdateFlags: how much the object has changed.
+     */
+    virtual void Update( VIEW_ITEM* aItem, int aUpdateFlags );
+    virtual void Update( VIEW_ITEM* aItem );
 
     /**
      * Function SetRequired()
@@ -131,7 +177,7 @@ public:
      * Returns the GAL this view is using to draw graphical primitives.
      * @return Pointer to the currently used GAL instance.
      */
-    GAL* GetGAL() const
+    inline GAL* GetGAL() const
     {
         return m_gal;
     }
@@ -140,7 +186,7 @@ public:
      * Function SetPainter()
      * Sets the painter object used by the view for drawing VIEW_ITEMS.
      */
-    void SetPainter( PAINTER* aPainter )
+    inline void SetPainter( PAINTER* aPainter )
     {
         m_painter = aPainter;
     }
@@ -150,7 +196,7 @@ public:
      * Returns the painter object used by the view for drawing VIEW_ITEMS.
      * @return Pointer to the currently used Painter instance.
      */
-    PAINTER* GetPainter() const
+    inline PAINTER* GetPainter() const
     {
         return m_painter;
     }
@@ -178,31 +224,83 @@ public:
     void SetMirror( bool aMirrorX, bool aMirrorY );
 
     /**
-     * Function SetScale()
-     * Sets the scaling factor. Scale = 1 corresponds to the real world size of the objects
-     * (depending on correct GAL unit length & DPI settings).
-     * @param aScale: the scalefactor
+     * Function IsMirroredX()
+     * Returns true if view is flipped across the X axis.
      */
-    void SetScale( double aScale )
+    bool IsMirroredX() const
     {
-        SetScale( aScale, m_center );
+        return m_mirrorX;
+    }
+
+    /**
+     * Function IsMirroredX()
+     * Returns true if view is flipped across the Y axis.
+     */
+    bool IsMirroredY() const
+    {
+        return m_mirrorY;
     }
 
     /**
      * Function SetScale()
      * Sets the scaling factor, zooming around a given anchor point.
      * (depending on correct GAL unit length & DPI settings).
+     * @param aAnchor: the zooming  anchor point
      * @param aScale: the scale factor
      */
-    void SetScale( double aScale, const VECTOR2D& aAnchor );
+    virtual void SetScale( double aScale, VECTOR2D aAnchor = { 0, 0 } );
 
     /**
      * Function GetScale()
-     * @return Current scalefactor of this VIEW
+     * @return Current scale factor of this VIEW.
      */
-    double GetScale() const
+    inline double GetScale() const
     {
         return m_scale;
+    }
+
+    /**
+     * Function SetBoundary()
+     * Sets limits for view area.
+     * @param aBoundary is the box that limits view area.
+     */
+    inline void SetBoundary( const BOX2D& aBoundary )
+    {
+        m_boundary = aBoundary;
+    }
+
+     /**
+     * Function SetBoundary()
+     * Sets limits for view area.
+     * @param aBoundary is the box that limits view area.
+     */
+    inline void SetBoundary( const BOX2I& aBoundary )
+    {
+        m_boundary.SetOrigin( aBoundary.GetOrigin() );
+        m_boundary.SetEnd( aBoundary.GetEnd() );
+    }
+
+    /**
+     * Function GetBoundary()
+     * @return Current view area boundary.
+     */
+    inline const BOX2D& GetBoundary() const
+    {
+        return m_boundary;
+    }
+
+    /**
+     * Function SetScaleLimits()
+     * Sets minimum and maximum values for scale.
+     * @param aMaximum is the maximum value for scale.
+     * @param aMinimum is the minimum value for scale.
+     */
+    void SetScaleLimits( double aMaximum, double aMinimum )
+    {
+        wxASSERT_MSG( aMaximum > aMinimum, wxT( "I guess you passed parameters in wrong order" ) );
+
+        m_minScale = aMinimum;
+        m_maxScale = aMaximum;
     }
 
     /**
@@ -212,6 +310,15 @@ public:
      * @param aCenter: the new center point, in world space coordinates.
      */
     void SetCenter( const VECTOR2D& aCenter );
+
+    /**
+     * Function SetCenter()
+     * Sets the center point of the VIEW, attempting to avoid \a occultingScreenRect (for
+     * instance, the screen rect of a modeless dialog in front of the VIEW).
+     * @param aCenter: the new center point, in world space coordinates.
+     * @param occultingScreenRect: the occulting rect, in screen space coordinates.
+     */
+    void SetCenter( VECTOR2D aCenter, const BOX2D& occultingScreenRect );
 
     /**
      * Function GetCenter()
@@ -235,7 +342,7 @@ public:
      * Function ToWorld()
      * Converts a screen space one dimensional size to a one dimensional size in world
      * space coordinates.
-     * @param aCoord: the size to be converted
+     * @param aSize : the size to be converted
      */
     double ToWorld( double aSize ) const;
 
@@ -249,11 +356,10 @@ public:
 
     /**
      * Function ToScreen()
-     * Converts a world space coordinate to a coordinate in screen space coordinates.
-     * @param aCoord: the coordinate to be transformed.
-     * @param aAbsolute: when true, aCoord is treated as a point, otherwise - as a direction (vector)
+     * Converts a world space one dimensionsal size to a one dimensional size in screen space.
+     * @param aSize: the size to be transformed.
      */
-    double ToScreen( double aCoord, bool aAbsolute = true ) const;
+    double ToScreen( double aSize ) const;
 
     /**
      * Function GetScreenPixelSize()
@@ -292,6 +398,8 @@ public:
      */
     inline void SetLayerVisible( int aLayer, bool aVisible = true )
     {
+        wxCHECK( aLayer < (int) m_layers.size(), /*void*/ );
+
         if( m_layers[aLayer].visible != aVisible )
         {
             // Target has to be redrawn after changing its visibility
@@ -307,7 +415,14 @@ public:
      */
     inline bool IsLayerVisible( int aLayer ) const
     {
+        wxCHECK( aLayer < (int) m_layers.size(), false );
         return m_layers.at( aLayer ).visible;
+    }
+
+    inline void SetLayerDisplayOnly( int aLayer, bool aDisplayOnly = true )
+    {
+        wxCHECK( aLayer < (int) m_layers.size(), /*void*/ );
+        m_layers[aLayer].displayOnly = aDisplayOnly;
     }
 
     /**
@@ -318,6 +433,7 @@ public:
      */
     inline void SetLayerTarget( int aLayer, RENDER_TARGET aTarget )
     {
+        wxCHECK( aLayer < (int) m_layers.size(), /*void*/ );
         m_layers[aLayer].target = aTarget;
     }
 
@@ -348,6 +464,15 @@ public:
     void SortLayers( int aLayers[], int& aCount ) const;
 
     /**
+     * Remaps the data between layer ids without invalidating that data
+     *
+     * Used by GerbView for the "Sort by X2" functionality
+     *
+     * @param aReorderMap is a mapping of old to new layer ids
+     */
+    void ReorderLayerData( std::unordered_map<int, int> aReorderMap );
+
+    /**
      * Function UpdateLayerColor()
      * Applies the new coloring scheme held by RENDER_SETTINGS in case that it has changed.
      * @param aLayer is a number of the layer to be updated.
@@ -363,31 +488,24 @@ public:
     void UpdateAllLayersColor();
 
     /**
-     * Function ChangeLayerDepth()
-     * Changes the depth of items on the given layer.
-     * @param aLayer is a number of the layer to be updated.
-     * @param aDepth is the new depth.
-     */
-    void ChangeLayerDepth( int aLayer, int aDepth );
-
-    /**
      * Function SetTopLayer()
      * Sets given layer to be displayed on the top or sets back the default order of layers.
+     * @param aEnabled = true to display aLayer on the top.
      * @param aLayer: the layer or -1 in case when no particular layer should
      * be displayed on the top.
      */
-    void SetTopLayer( int aLayer, bool aEnabled = true );
+    virtual void SetTopLayer( int aLayer, bool aEnabled = true );
 
     /**
      * Function EnableTopLayer()
      * Enables or disables display of the top layer. When disabled - layers are rendered as usual
      * with no influence from SetTopLayer function. Otherwise on the top there is displayed the
      * layer set previously with SetTopLayer function.
-     * @param aEnabled: whether to enable or disable display of the top layer.
+     * @param aEnable whether to enable or disable display of the top layer.
      */
-    void EnableTopLayer( bool aEnable );
+    virtual void EnableTopLayer( bool aEnable );
 
-    int GetTopLayer() const;
+    virtual int GetTopLayer() const;
 
     /**
      * Function ClearTopLayers()
@@ -413,15 +531,13 @@ public:
      * Function Redraw()
      * Immediately redraws the whole view.
      */
-    void Redraw();
+    virtual void Redraw();
 
     /**
      * Function RecacheAllItems()
      * Rebuilds GAL display lists.
-     * @param aForceNow decides if every item should be instantly recached. Otherwise items are
-     * going to be recached when they become visible.
      */
-    void RecacheAllItems( bool aForceNow = false );
+    void RecacheAllItems();
 
     /**
      * Function IsDynamic()
@@ -457,8 +573,7 @@ public:
      */
     bool IsTargetDirty( int aTarget ) const
     {
-        wxASSERT( aTarget < TARGETS_NUMBER );
-
+        wxCHECK( aTarget < TARGETS_NUMBER, false );
         return m_dirtyTargets[aTarget];
     }
 
@@ -469,15 +584,23 @@ public:
      */
     inline void MarkTargetDirty( int aTarget )
     {
-        wxASSERT( aTarget < TARGETS_NUMBER );
-
+        wxCHECK( aTarget < TARGETS_NUMBER, /* void */ );
         m_dirtyTargets[aTarget] = true;
     }
 
     /// Returns true if the layer is cached
     inline bool IsCached( int aLayer ) const
     {
-        return m_layers.at( aLayer ).target == TARGET_CACHED;
+        wxCHECK( aLayer < (int) m_layers.size(), false );
+
+        try
+        {
+            return m_layers.at( aLayer ).target == TARGET_CACHED;
+        }
+        catch( const std::out_of_range& )
+        {
+            return false;
+        }
     }
 
     /**
@@ -495,10 +618,7 @@ public:
      * Adds an item to a list of items that are going to be refreshed upon the next frame rendering.
      * @param aItem is the item to be refreshed.
      */
-    void MarkForUpdate( VIEW_ITEM* aItem )
-    {
-        m_needsUpdate.push_back( aItem );
-    }
+    void MarkForUpdate( VIEW_ITEM* aItem );
 
     /**
      * Function UpdateItems()
@@ -506,16 +626,86 @@ public:
      */
     void UpdateItems();
 
-    const BOX2I CalculateExtents() ;
+    /**
+     * Updates all items in the view according to the given flags
+     * @param aUpdateFlags is is according to KIGFX::VIEW_UPDATE_FLAGS
+     */
+    void UpdateAllItems( int aUpdateFlags );
 
-    static const int VIEW_MAX_LAYERS = 256;      ///< maximum number of layers that may be shown
+    /**
+     * Updates items in the view according to the given flags and condition
+     * @param aUpdateFlags is is according to KIGFX::VIEW_UPDATE_FLAGS
+     * @param aCondition is a function returning true if the item should be updated
+     */
+    void UpdateAllItemsConditionally( int aUpdateFlags,
+                                      std::function<bool( VIEW_ITEM* )> aCondition );
 
-private:
+    /**
+     * Function IsUsingDrawPriority()
+     * @return true if draw priority is being respected while redrawing.
+     */
+    bool IsUsingDrawPriority() const
+    {
+        return m_useDrawPriority;
+    }
+
+    /**
+     * Function UseDrawPriority()
+     * @param aFlag is true if draw priority should be respected while redrawing.
+     */
+    void UseDrawPriority( bool aFlag )
+    {
+        m_useDrawPriority = aFlag;
+    }
+
+    /**
+     * Function IsDrawOrderReversed()
+     * @return true if draw order is reversed
+     */
+    bool IsDrawOrderReversed() const
+    {
+        return m_reverseDrawOrder;
+    }
+
+    /**
+     * Function ReverseDrawOrder()
+     * Only takes effect if UseDrawPriority is true.
+     * @param aFlag is true if draw order should be reversed
+     */
+    void ReverseDrawOrder( bool aFlag )
+    {
+        m_reverseDrawOrder = aFlag;
+    }
+
+    std::shared_ptr<VIEW_OVERLAY> MakeOverlay();
+
+    /**
+     * Returns a new VIEW object that shares the same set of VIEW_ITEMs and LAYERs.
+     * GAL, PAINTER and other properties are left uninitialized.
+     */
+    std::unique_ptr<VIEW> DataReference() const;
+
+    /**
+     * @return the printing mode.
+     * if return <= 0, the current mode is not a printing mode, just the draw mode
+     */
+    int GetPrintMode() { return m_printMode; }
+
+    /**
+     * Set the printing mode.
+     * @param aPrintMode is the printing mode.
+     * If 0, the current mode is not a printing mode, just the draw mode
+     */
+    void SetPrintMode( int aPrintMode ) { m_printMode = aPrintMode; }
+
+    static constexpr int VIEW_MAX_LAYERS = 512;      ///< maximum number of layers that may be shown
+
+protected:
     struct VIEW_LAYER
     {
         bool                    visible;         ///< is the layer to be rendered?
         bool                    displayOnly;     ///< is the layer display only?
-        VIEW_RTREE*             items;           ///< R-tree indexing all items on this layer.
+        std::shared_ptr<VIEW_RTREE> items;       ///< R-tree indexing all items on this layer.
         int                     renderingOrder;  ///< rendering order of this layer
         int                     id;              ///< layer ID
         RENDER_TARGET           target;          ///< where the layer should be rendered
@@ -523,7 +713,7 @@ private:
     };
 
     // Convenience typedefs
-    typedef boost::unordered_map<int, VIEW_LAYER>   LAYER_MAP;
+    typedef std::unordered_map<int, VIEW_LAYER>     LAYER_MAP;
     typedef LAYER_MAP::iterator                     LAYER_MAP_ITER;
     typedef std::vector<VIEW_LAYER*>                LAYER_ORDER;
     typedef std::vector<VIEW_LAYER*>::iterator      LAYER_ORDER_ITER;
@@ -543,8 +733,7 @@ private:
 
     inline void markTargetClean( int aTarget )
     {
-        wxASSERT( aTarget < TARGETS_NUMBER );
-
+        wxCHECK( aTarget < TARGETS_NUMBER, /* void */ );
         m_dirtyTargets[aTarget] = false;
     }
 
@@ -555,8 +744,8 @@ private:
      *
      * @param aItem is the item to be drawn.
      * @param aLayer is the layer which should be drawn.
-     * @param aImmediate dictates the way of drawing - it allows to force immediate drawing mode
-     * for cached items.
+     * @param aImmediate dictates the way of drawing - it allows one to force
+     * immediate drawing mode for cached items.
      */
     void draw( VIEW_ITEM* aItem, int aLayer, bool aImmediate = false );
 
@@ -565,8 +754,8 @@ private:
      * Draws an item on all layers that the item uses.
      *
      * @param aItem is the item to be drawn.
-     * @param aImmediate dictates the way of drawing - it allows to force immediate drawing mode
-     * for cached items.
+     * @param aImmediate dictates the way of drawing - it allows one to force
+     * immediate drawing mode for cached items.
      */
     void draw( VIEW_ITEM* aItem, bool aImmediate = false );
 
@@ -574,9 +763,9 @@ private:
      * Function draw()
      * Draws a group of items on all layers that those items use.
      *
-     * @param aItem is the group to be drawn.
-     * @param aImmediate dictates the way of drawing - it allows to force immediate drawing mode
-     * for cached items.
+     * @param aGroup is the group to be drawn.
+     * @param aImmediate dictates the way of drawing - it allows one to force
+     * immediate drawing mode for cached items.
      */
     void draw( VIEW_GROUP* aGroup, bool aImmediate = false );
 
@@ -622,6 +811,9 @@ private:
     /// Contains set of possible displayed layers and its properties
     LAYER_MAP m_layers;
 
+    /// Flat list of all items
+    std::shared_ptr<std::vector<VIEW_ITEM*>> m_allItems;
+
     /// Sorted list of pointers to members of m_layers
     LAYER_ORDER m_orderedLayers;
 
@@ -633,6 +825,21 @@ private:
 
     /// Scale of displayed VIEW_ITEMs
     double m_scale;
+
+    /// View boundaries
+    BOX2D m_boundary;
+
+    /// Scale lower limit
+    double m_minScale;
+
+    /// Scale upper limit
+    double m_maxScale;
+
+    ///> Horizontal flip flag
+    bool m_mirrorX;
+
+    ///> Vertical flip flag
+    bool m_mirrorY;
 
     /// PAINTER contains information how do draw items
     PAINTER* m_painter;
@@ -648,10 +855,23 @@ private:
     bool m_dirtyTargets[TARGETS_NUMBER];
 
     /// Rendering order modifier for layers that are marked as top layers
-    static const int TOP_LAYER_MODIFIER = -VIEW_MAX_LAYERS;
+    static const int TOP_LAYER_MODIFIER;
 
-    /// Items to be updated
-    std::vector<VIEW_ITEM*> m_needsUpdate;
+    /// Flat list of all items
+    /// Flag to respect draw priority when drawing items
+    bool m_useDrawPriority;
+
+    /// The next sequential drawing priority
+    int m_nextDrawPriority;
+
+    /// Flag to reverse the draw order when using draw priority
+    bool m_reverseDrawOrder;
+
+    /// A control for printing: m_printMode <= 0 means no printing mode (normal draw mode
+    /// m_printMode > 0 is a printing mode (currently means "we are in printing mode")
+    int m_printMode;
+
+    VIEW( const VIEW& ) = delete;
 };
 } // namespace KIGFX
 

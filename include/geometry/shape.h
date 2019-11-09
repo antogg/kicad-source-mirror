@@ -25,6 +25,9 @@
 #ifndef __SHAPE_H
 #define __SHAPE_H
 
+#include <string>
+#include <sstream>
+
 #include <math/vector2d.h>
 #include <math/box2.h>
 
@@ -40,7 +43,11 @@ enum SHAPE_TYPE
     SH_RECT = 0,        ///> axis-aligned rectangle
     SH_SEGMENT,         ///> line segment
     SH_LINE_CHAIN,      ///> line chain (polyline)
-    SH_CIRCLE           ///> circle
+    SH_CIRCLE,          ///> circle
+    SH_SIMPLE,          ///> simple polygon
+    SH_POLY_SET,        ///> set of polygons (with holes, etc.)
+    SH_COMPOUND,        ///> compound shape, consisting of multiple simple shapes
+    SH_ARC              ///> circular arc
 };
 
 /**
@@ -60,7 +67,7 @@ public:
      * Creates an empty shape of type aType
      */
 
-    SHAPE ( SHAPE_TYPE aType ) : m_type( aType )
+    SHAPE( SHAPE_TYPE aType ) : m_type( aType )
     {}
 
     // Destructor
@@ -112,8 +119,8 @@ public:
      * @param aMTV minimum translation vector
      * @return true, if there is a collision.
      */
-    virtual bool Collide( const SHAPE* aShape, int aClerance, VECTOR2I& aMTV ) const;
-    virtual bool Collide( const SHAPE* aShape, int aClerance = 0 ) const;
+    virtual bool Collide( const SHAPE* aShape, int aClearance, VECTOR2I& aMTV ) const;
+    virtual bool Collide( const SHAPE* aShape, int aClearance = 0 ) const;
 
     /**
      * Function Collide()
@@ -125,11 +132,11 @@ public:
     virtual bool Collide( const SEG& aSeg, int aClearance = 0 ) const = 0;
 
     /**
-     * Function Collide()
+     * Function BBox()
      *
      * Computes a bounding box of the shape, with a margin of aClearance
      * a collision.
-     * @aClearance how much the bounding box is expanded wrs to the minimum enclosing rectangle
+     * @param aClearance how much the bounding box is expanded wrs to the minimum enclosing rectangle
      * for the shape.
      * @return the bounding box.
      */
@@ -146,7 +153,15 @@ public:
         return BBox( 0 ).Centre(); // if nothing better is available....
     }
 
-private:
+    virtual void Move ( const VECTOR2I& aVector ) = 0;
+
+    virtual bool IsSolid() const = 0;
+
+    virtual bool Parse( std::stringstream& aStream );
+
+    virtual const std::string Format( ) const;
+
+protected:
     ///> type of our shape
     SHAPE_TYPE m_type;
 };

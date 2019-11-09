@@ -1,11 +1,13 @@
-
 [Desktop Entry]
-Categories=Development;Electronics
-Comment=Design a printed circuit board
-Exec=gerbview
-GenericName=EDA Suite
+Version=1.0
+Terminal=false
 Icon=gerbview
-MimeType=application/x-gerbview-project;
-Name=gerbview
 Type=Application
-Name[en_US]=gerbview
+Categories=Development;Electronics;
+Exec=gerbview
+MimeType=application/x-gerber;application/x-excellon
+Name=GerbView
+GenericName=Gerber File Viewer
+GenericName[it]=Visualizzatore file Gerber
+Comment=View Gerber files
+Comment[it]=Visualizza file in formato Gerber

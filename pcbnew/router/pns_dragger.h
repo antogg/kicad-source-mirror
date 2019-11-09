@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -21,6 +22,7 @@
 #ifndef __PNS_DRAGGER_H
 #define __PNS_DRAGGER_H
 
+#include <memory>
 #include <math/vector2d.h>
 
 #include "pns_node.h"
@@ -28,37 +30,40 @@
 #include "pns_line.h"
 #include "pns_algo_base.h"
 #include "pns_itemset.h"
+#include "pns_layerset.h"
 
-class PNS_ROUTER;
-class PNS_SHOVE;
-class PNS_OPTIMIZER;
-class PNS_ROUTER_BASE;
+
+namespace PNS {
+
+class ROUTER;
+class SHOVE;
+class OPTIMIZER;
 
 /**
- * Class PNS_DRAGGER
+ * Class DRAGGER
  *
  * Via, segment and corner dragging algorithm.
  */
-class PNS_DRAGGER : public PNS_ALGO_BASE
+class DRAGGER : public ALGO_BASE
 {
 public:
-	 PNS_DRAGGER( PNS_ROUTER* aRouter );
-    ~PNS_DRAGGER();
+     DRAGGER( ROUTER* aRouter );
+    ~DRAGGER();
 
     /**
      * Function SetWorld()
      *
      * Sets the board to work on.
      */
-    void SetWorld( PNS_NODE* aWorld );
+    void SetWorld( NODE* aWorld );
 
     /**
      * Function Start()
-     * 
+     *
      * Starts routing a single track at point aP, taking item aStartItem as anchor
      * (unless NULL). Returns true if a dragging operation has started.
      */
-    bool Start( const VECTOR2I& aP, PNS_ITEM* aStartItem );
+    bool Start( const VECTOR2I& aP, ITEM* aStartItem );
 
     /**
      * Function Drag()
@@ -67,64 +72,64 @@ public:
      * @return true, if dragging finished with success.
      */
     bool Drag( const VECTOR2I& aP );
-    
+
     /**
      * Function FixRoute()
      *
-     * Checks if the result of current dragging operation is correct 
+     * Checks if the result of current dragging operation is correct
      * and eventually commits it to the world.
      * @return true, if dragging finished with success.
      */
     bool FixRoute();
-    
-    /** 
+
+    /**
      * Function CurrentNode()
      *
      * Returns the most recent world state, including all
      * items changed due to dragging operation.
      */
-    PNS_NODE* CurrentNode() const;
-    
+    NODE* CurrentNode() const;
+
     /**
      * Function Traces()
      *
      * Returns the set of dragged items.
      */
-    const PNS_ITEMSET Traces();
+    const ITEM_SET Traces();
 
-    /// @copydoc PNS_ALGO_BASE::Logger()
-    virtual PNS_LOGGER* Logger();
-    
+    /// @copydoc ALGO_BASE::Logger()
+    virtual LOGGER* Logger() override;
+
+    void SetMode( int aDragMode );
+
 private:
-    typedef std::pair<PNS_LINE *, PNS_LINE *> LinePair;
-    typedef std::vector<LinePair> LinePairVec;
 
-	enum DragMode {
-		CORNER = 0,
-		SEGMENT,
-		VIA
-	};
-
+    const ITEM_SET findViaFanoutByHandle ( NODE *aNode, const VIA_HANDLE& handle );
+    
     bool dragMarkObstacles( const VECTOR2I& aP );
     bool dragShove(const VECTOR2I& aP );
-	bool startDragSegment( const VECTOR2D& aP, PNS_SEGMENT* aSeg );
-	bool startDragVia( const VECTOR2D& aP, PNS_VIA* aVia );
-	void dumbDragVia( PNS_VIA* aVia, PNS_NODE* aNode, const VECTOR2I& aP );
+    bool startDragSegment( const VECTOR2D& aP, SEGMENT* aSeg );
+    bool startDragVia( VIA* aVia );
+    void dumbDragVia( const VIA_HANDLE& aHandle, NODE* aNode, const VECTOR2I& aP );
 
-	PNS_NODE*   m_world;
-	PNS_NODE*   m_lastNode;
-	DragMode    m_mode;
-	PNS_LINE*   m_draggedLine;
-	PNS_VIA*    m_draggedVia;
-	PNS_LINE    m_lastValidDraggedLine;
-	PNS_SHOVE*  m_shove;
-    int         m_draggedSegmentIndex;
-    bool        m_dragStatus;
-    PNS_MODE    m_currentMode;
-    std::vector<PNS_LINE>   m_origViaConnections;
-    std::vector<PNS_LINE>   m_draggedViaConnections;
-    PNS_VIA*                m_initialVia;
-    PNS_ITEMSET             m_draggedItems;
+    VIA_HANDLE m_initialVia;
+    VIA_HANDLE m_draggedVia;
+
+    NODE*    m_world;
+    NODE*    m_lastNode;
+    int      m_mode;
+    LINE     m_draggedLine;
+    //VIA*     m_draggedVia;
+    //LINE     m_lastValidDraggedLine;
+    std::unique_ptr<SHOVE> m_shove;
+    int      m_draggedSegmentIndex;
+    bool     m_dragStatus;
+    PNS_MODE m_currentMode;
+    ITEM_SET m_origViaConnections;
+    ITEM_SET m_draggedItems;
+    bool     m_freeAngleMode;
 };
+
+}
 
 #endif

@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Dick Hollenbeck, dick@softplc.com
- * Copyright (C) 2004-2012 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2009-2016 Dick Hollenbeck, dick@softplc.com
+ * Copyright (C) 2004-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,24 +27,12 @@
 #define _DIALOG_DRCLISTBOX_H_
 
 #include <wx/htmllbox.h>
-
 #include <fctsys.h>
 #include <pcbnew.h>
-#include <class_drawpanel.h>
-#include <wxstruct.h>
-#include <drc_stuff.h>
+#include <tools/drc.h>
 #include <class_marker_pcb.h>
 #include <class_board.h>
-
 #include <dialog_drc_base.h>
-
-
-// outside @end control identifiers since wxFormBuilder knows not DRCLISTBOX
-#define ID_DRCLISTCTRL 14000
-#define ID_POPUP_UNCONNECTED_A  14001
-#define ID_POPUP_UNCONNECTED_B  14002
-#define ID_POPUP_MARKERS_A      14003
-#define ID_POPUP_MARKERS_B      14004
 
 
 /**
@@ -71,13 +59,13 @@ public:
 
     //-----<Interface DRC_ITEM_LIST>---------------------------------------
 
-    void            DeleteAllItems()
+    void DeleteAllItems() override
     {
         m_board->DeleteMARKERs();
     }
 
 
-    const DRC_ITEM* GetItem( int aIndex )
+    const DRC_ITEM* GetItem( int aIndex ) override
     {
         const MARKER_PCB* marker = m_board->GetMARKER( aIndex );
         if( marker )
@@ -85,7 +73,7 @@ public:
         return NULL;
     }
 
-    void DeleteItem( int aIndex )
+    void DeleteItem( int aIndex ) override
     {
         MARKER_PCB* marker = m_board->GetMARKER( aIndex );
         if( marker )
@@ -97,7 +85,7 @@ public:
      * Function GetCount
      * returns the number of items in the list.
      */
-    int  GetCount()
+    int  GetCount() override
     {
         return m_board->GetMARKERCount();
     }
@@ -108,30 +96,30 @@ public:
 
 
 /**
- * Class DRC_LIST_UNCONNECTED
+ * Class DRC_LIST_GENERIC
  * is an implementation of the interface named DRC_ITEM_LIST which uses
  * a vector of pointers to DRC_ITEMs to fulfill the interface.  No ownership is taken of the
  * vector, which will reside in class DRC
  */
-class DRC_LIST_UNCONNECTED : public DRC_ITEM_LIST
+class DRC_LIST_GENERIC : public DRC_ITEM_LIST
 {
     DRC_LIST*         m_vector;
 
 public:
 
-    DRC_LIST_UNCONNECTED( DRC_LIST* aList ) :
+    DRC_LIST_GENERIC( DRC_LIST* aList ) :
         m_vector(aList)
     {
     }
 
     /* no destructor since we do not own anything to delete, not even the BOARD.
-    ~DRC_LIST_UNCONNECTED() {}
+    ~DRC_LIST_GENERIC() {}
     */
 
 
     //-----<Interface DRC_ITEM_LIST>---------------------------------------
 
-    void            DeleteAllItems()
+    void            DeleteAllItems() override
     {
         if( m_vector )
         {
@@ -143,7 +131,7 @@ public:
     }
 
 
-    const DRC_ITEM* GetItem( int aIndex )
+    const DRC_ITEM* GetItem( int aIndex ) override
     {
         if( m_vector &&  (unsigned)aIndex < m_vector->size() )
         {
@@ -153,7 +141,7 @@ public:
         return NULL;
     }
 
-    void DeleteItem( int aIndex )
+    void DeleteItem( int aIndex ) override
     {
         if( m_vector &&  (unsigned)aIndex < m_vector->size() )
         {
@@ -167,7 +155,7 @@ public:
      * Function GetCount
      * returns the number of items in the list.
      */
-    int  GetCount()
+    int  GetCount() override
     {
         if( m_vector )
         {
@@ -189,6 +177,7 @@ public:
 class DRCLISTBOX : public wxHtmlListBox
 {
 private:
+    EDA_UNITS_T    m_units;
     DRC_ITEM_LIST* m_list;     ///< wxHtmlListBox does not own the list, I do
 
 public:
@@ -197,6 +186,7 @@ public:
             long style = 0, const wxString choices[] = NULL, int unused = 0)
         : wxHtmlListBox( parent, id, pos, size, style )
     {
+        m_units = MILLIMETRES;
         m_list = 0;
     }
 
@@ -214,10 +204,11 @@ public:
      * @param aList The DRC_ITEM_LIST* containing the DRC_ITEMs which will be
      *  displayed in the wxHtmlListBox
      */
-    void SetList( DRC_ITEM_LIST* aList )
+    void SetList( EDA_UNITS_T aUnits, DRC_ITEM_LIST* aList )
     {
         delete m_list;
 
+        m_units = aUnits;
         m_list = aList;
         SetItemCount( aList->GetCount() );
         Refresh();
@@ -244,13 +235,19 @@ public:
      * @param n An index into the list.
      * @return wxString - the simple html text to show in the listbox.
      */
-    wxString OnGetItem( size_t n ) const
+    wxString OnGetItem( size_t n ) const override
     {
         if( m_list )
         {
             const DRC_ITEM*   item = m_list->GetItem( (int) n );
             if( item )
-                return item->ShowHtml();
+            {
+                wxColour color = wxSystemSettings::GetColour( wxSYS_COLOUR_WINDOWTEXT );
+
+                return wxString::Format( wxT( "<font color='%s'>%s</font>" ),
+                                         color.GetAsString( wxC2S_HTML_SYNTAX ),
+                                         item->ShowHtml( m_units ) );
+            }
         }
         return wxString();
     }
@@ -262,7 +259,7 @@ public:
      * @param n An index into the list.
      * @return wxString - the simple html text to show in the listbox.
      */
-    wxString OnGetItemMarkup( size_t n ) const
+    wxString OnGetItemMarkup( size_t n ) const override
     {
         return OnGetItem( n );
     }

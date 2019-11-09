@@ -2,7 +2,7 @@
 #  This program source code file is part of KICAD, a free EDA CAD application.
 #
 # Copyright (C) 2011 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
-# Copyright (C) 2011 Kicad Developers, see change_log.txt for contributors#.
+# Copyright (C) 2011-2018 Kicad Developers, see AUTHORS.txt for contributors.
 #
 #  This program is free software; you can redistribute it and/or
 #  modify it under the terms of the GNU General Public License
@@ -27,6 +27,7 @@
 # 1) PNG files are created from SVG files
 # 2) CPP files are created from PNG files.
 # 3) Object files are created from CPP files.
+# 4) A static library is created from the object files
 
 # Step 3) is universal and is done for any builder, whereas steps 1) and 2) are
 # optional and depend on MAINTAIN_PNGS being defined in CMake.  The reason we
@@ -47,23 +48,6 @@
 
 # lower case is used for local variables, uppercase for global variables
 
-
-# If this file is used as part of the Kicad build, disable the stand alone build mode.
-if( NOT DEFINED CMAKE_PROJECT_NAME )
-
-    # stand alone debugging
-    project( kicad_for_bitmaps )
-
-    cmake_minimum_required( VERSION 2.8.0 FATAL_ERROR )
-
-    include_directories( /svn/kicad/work/include )
-
-    set( CMAKE_MODULE_PATH /svn/kicad/work/CMakeModules )
-
-    add_definitions( -I/usr/lib/wx/include/gtk2-unicode-release-2.8 -I/usr/include/wx-2.8 -D_FILE_OFFSET_BITS=64 -D_LARGE_FILES -D__WXGTK__ -pthread )
-
-endif( NOT DEFINED CMAKE_PROJECT_NAME )
-
 option( MAINTAIN_PNGS
         "Set to true if you are a PNG maintainer and have the required tools given in the bitmaps_png/CMakeLists.txt file (default OFF)."
         OFF)
@@ -71,25 +55,18 @@ option( MAINTAIN_PNGS
 # Used Only to maintain PNG files (and therefore to recreate .cpp files)
 # The png2cpp creates files with native End of Line format.
 
-include_directories(BEFORE ${INC_BEFORE})
-include_directories(
-    ${INC_AFTER}
-    )
-
-
-
-
 # Plan for three sizes of bitmaps:
-# SMALL - for menus
-# MID   - for toolbars  26 x 26
-# BIG   - for program icons  48 x 48
+# SMALL - for menus         - 16 x 16
+# MID   - for toolbars      - 26 x 26
+# BIG   - for program icons - 48 x 48
 # which are given on three basename lists: BMAPS_SMALL, BMAPS_MID,a nd BMAPS_BIG
 # respectively.  The basename is without file extension and without path.
 # A corresponding ${basename}.svg file must exist in 'sources' dir below here.
 
 
-# small icons (16x16) needed in listboxes
+# small icons (16x16) needed in listboxes and dialog buttons
 set( BMAPS_SMALL
+    folder
     pinorient_right
     pinorient_left
     pinorient_up
@@ -114,14 +91,24 @@ set( BMAPS_SMALL
     pintype_opencoll
     pintype_openemit
     pintype_noconnect
+    refresh
+    small_down
+    small_edit
+    small_library
+    small_plus
+    small_up
+    trash
     tree_nosel
     tree_sel
+    www
     )
 
 
 # image basenames that go into the toolbar sized destinations, i.e. 26x26
 set( BMAPS_MID
+    about
     add_arc
+    add_board
     add_bus2bus
     add_bus
     add_circle
@@ -129,31 +116,44 @@ set( BMAPS_MID
     add_corner
     add_dashed_line
     add_dimension
-    add_entry
+    add_document
+    add_gerber
     add_glabel
+    add_graphical_segments
+    add_graphical_polygon
     add_hierarchical_label
     add_hierar_pin
     add_hierarchical_subsheet
     add_junction
     add_keepout_area
+    add_library
     add_line2bus
     add_line_label
     add_line
-    add_mires
-    add_polygon
+    add_pcb_target
     add_power
     add_rectangle
-    add_text
     add_tracks
+    add_via
     add_zone_cutout
     add_zone
+    align_items
+    align_items_left
+    align_items_right
+    align_items_top
+    align_items_bottom
+    align_items_center
+    align_items_middle
     anchor
     annotate_down_right
     annotate_right_down
     annotate
+    apply_pad_settings
+    array
     auto_associe
     auto_delete_track
     auto_track_width
+    autoplace_fields
     axis3d_back
     axis3d_bottom
     axis3d_front
@@ -161,70 +161,53 @@ set( BMAPS_MID
     axis3d_right
     axis3d_top
     axis3d
+    bitmap2component
     bom
-    book
     break_bus
     break_line
     browse_files
+    bus_definition_tool
+    calculator
     cancel
     change_entry_orient
+    contrast_mode
+    curved_ratsnest
     create_cmp_file
     checked_ok
+    color_materials
     component_select_unit
     component_select_alternate_shape
     config
-    copyblock
-    copycomponent
-    copy_button
-    copy_library
+    copy
+    copy_pad_settings
     copper_layers_setup
     cursor_shape
     cursor
-    cut_button
+    custom_pad_to_primitives
+    cut
     cvpcb
-    dashline
     datasheet
-    delete_arc
     delete_association
-    delete_bus
-    delete_circle
-    delete_connection
-    delete_cotation
-    delete_field
-    delete_glabel
-    delete_line
-    delete_module
-    delete_net
-    delete_node
-    delete_pad
-    delete_pinsheet
-    delete_pin
-    delete_polygon
-    delete_rectangle
-    delete_segment
+    delete_gerber
     delete_sheet
-    delete_text
-    delete_track
     delete
     directory
+    directory_browser
     display_options
+    distribute_horizontal
+    distribute_vertical
     down
-    drag_module
-    drag_outline_segment
-    drag_pad
+    drag
     drag_segment_withslope
-    drag_track_segment
     drc_off
     drc
-    edges_sketch
+    duplicate
     edit_comp_footprint
-    edit_component
     edit_comp_ref
     edit_comp_value
     edit_module
     editor
-    edit_part
-    edit_sheet
+    edit_cmp_symb_links
     edit_text
     edit
     eeschema
@@ -234,11 +217,14 @@ set( BMAPS_MID
     ercwarn
     erc
     exit
+    exchange
+    export3d
     export_dsn
     export_idf
     export_footprint_names
     export_module
-    export_options_pad
+    export_part
+    export_step
     export
     fabrication
     file_footprint
@@ -246,25 +232,21 @@ set( BMAPS_MID
     find
     find_replace
     flag
+    flip_board
     fonts
     footprint_text
     gbr_select_mode0
     gbr_select_mode1
     gbr_select_mode2
     gerber_file
-    gerber_recent_files
-    gerber_open_dcode_file
+    gerber_job_file
     gerbview_show_negative_objects
     gerbview_drill_file
     gerbview_clear_layers
-    gerber_open_dcode_file
-    gerbview_open_recent_drill_files
     general_deletions
     general_ratsnest
-    glabel2label
-    glabel2text
-    gl_change
-    global_options_pad
+    go_down
+    go_up
     green
     grid_select
     grid_select_axis
@@ -272,28 +254,30 @@ set( BMAPS_MID
     hammer
     help
     hidden_pin
-    hierarchy_cursor
     hierarchy_nav
+    highlight_remove
     hotkeys
+    html
+    icon
     icon_cvpcb_small
     icon_gerbview_small
-    icon_txt
     import3d
     image
-    import_cmp_from_lib
+    import_brd_file
+    import_document
     import_footprint_names
     import_hierarchical_label
     import_module
+    import_part
+    import_project
+    import_vector
     import
     info
     insert_module_board
     invisible_text
     kicad_icon_small
-    label2glabel
-    label2text
     label
-    lang_catalan
-    lang_chinese
+    lang_ca
     lang_bg
     lang_cs
     lang_def
@@ -311,34 +295,36 @@ set( BMAPS_MID
     lang_pl
     lang_pt
     lang_ru
+    lang_sk
     lang_sl
+    lang_lt
+    lang_zh
     language
     layers_manager
     leave_sheet
     left
     libedit
-    libedprt
     lib_next
     lib_previous
     library_browse
-    library_update
+    library_archive
+    library_archive_as
     library
     library_table
-    libview
     lines90
+    list_nets
+    load_gerber
     load_module_board
-    load_module_lib
     local_ratsnest
+    lock_unlock
     locked
-    macros_record
-    mirepcb
+    measurement
+    minus
+    pcb_target
     mirror_h
     mirror_v
-    mirror_footprint_axisX
-    mirror_footprint_axisY
     mode_module
     mode_track
-    modratsnest
     module_check
     module_editor
     module_wizard
@@ -347,27 +333,14 @@ set( BMAPS_MID
     module_options
     module_pin_filtered_list
     module_library_list
-    module_ratsnest
+    module_name_filtered_list
     module
     modview_icon
     morgan1
     morgan2
-    move_arc
-    move_circle
-    move_field
-    move_glabel
-    move_line
-    move_module
-    move_pad
-    move_pinsheet
-    move_pin
-    move_polygon
-    move_rectangle
-    move_sheet
-    move_text
-    move_track_segment
-    move_track
+    move_exactly
     move
+    move_relative
     mw_add_gap
     mw_add_line
     mw_add_shape
@@ -375,94 +348,86 @@ set( BMAPS_MID
     mw_add_stub
     mw_toolbar
     net_highlight
+    net_highlight_schematic
     netlist
     net_locked
     net_unlocked
+    new_board
     new_component
     new_cvpcb
+    new_document
     new_footprint
     new_library
-    new_pcb
+    new_generic
+    new_page_layout
     new_project
     new_project_with_template
-    new_sch
-    new_txt
-    new
     noconn
     normal
     online_help
-    open_brd_file
-    open_library
     open_project
-    open_document
-    options_all_tracks_and_vias
-    options_all_tracks
-    options_all_vias
-    options_arc
-    options_circle
-    options_module
-    options_new_pad
+    options_3drender
+    options_board
+    options_generic
     options_pad
-    options_pinsheet
-    options_pin
-    options_rectangle
-    options_segment
-    options_text
-    options_tracks
-    options_track
-    options_vias
     opt_show_polygon
-    orient
     ortho
     pad_sketch
     pad
-    pad_dimensions
+    pad_enumerate
     pads_mask_layers
+    path
     pagelayout_load
-    pagelayout_load_default
-    pagelayout_new
-    pagelayout_recent
     pagelayout_normal_view_mode
     pagelayout_special_view_mode
     palette
     part_properties
     paste
     pcbnew
+    pcbcalculator
     pcb_offset
     pin2pin
-    pin_name_to
-    pin_number_to
     pin_size_to
-    pin_to
+    pin_show_etype
+    pin_table
     pin
     plot
-    plot_dxf
-    plot_hpg
-    plot_pdf
-    plot_ps
     plot_svg
+    plus
     polar_coord
     post_compo
     post_drill
     post_module
     preference
+    primitives_to_custom_pad
     print_button
     ps_router
+    ps_diff_pair
+    ps_diff_pair_gap
+    ps_diff_pair_tune_length
+    ps_diff_pair_tune_phase
+    ps_diff_pair_via_gap
+    ps_tune_length
+    push_pad_settings
     py_script
     ratsnest
     read_setup
+    recent
     redo
     red
     reload2
     reload
+    render_mode
     reset_text
     resize_sheet
+    rescue
     right
-    rotate_field
-    rotate_glabel
-    rotate_module_cw
-    rotate_module_ccw
-    rotate_pin
+    router_len_tuner
+    router_len_tuner_setup
+    router_len_tuner_amplitude_decr
+    router_len_tuner_amplitude_incr
+    router_len_tuner_dist_decr
+    router_len_tuner_dist_incr
     rotate_ccw
     rotate_cw
     rotate_neg_x
@@ -472,18 +437,28 @@ set( BMAPS_MID
     rotate_neg_z
     rotate_pos_z
     save_as
-    save_library
-    save_netlist
-    save_part_in_mem
-    save_project
-    save_setup
+    save_fp_to_board
     save
-    schematic
     select_grid
     select_layer_pair
     select_w_layer
+    select_same_sheet
     shape_3d
     sheetset
+    simulator
+    sim_run
+    sim_stop
+    sim_tune
+    sim_probe
+    sim_add_signal
+    sim_settings
+    search_tree
+    setcolor_3d_bg
+    setcolor_silkscreen
+    setcolor_soldermask
+    setcolor_solderpaste
+    setcolor_copper
+    setcolor_board_body
     show_dcodenumber
     show_footprint
     show_mod_edge
@@ -491,8 +466,14 @@ set( BMAPS_MID
     show_zone
     show_zone_disable
     show_zone_outline_only
+    show_all_layers
+    show_no_layers
+    show_no_copper_layers
+    show_all_copper_layers
+    spreadsheet
     svg_file
     swap_layer
+    text
     text_sketch
     three_d
     tool_ratsnest
@@ -500,7 +481,6 @@ set( BMAPS_MID
     track_locked
     track_sketch
     track_unlocked
-    transistor
     undelete
     undo
     unit_inch
@@ -508,20 +488,18 @@ set( BMAPS_MID
     unknown
     unlocked
     unzip
-    update_module_board
     up
+    update_fields
+    update_pcb_from_sch
     use_3D_copper_thickness
     via
+    via_buried
+    via_microvia
     via_sketch
     warning
-    web_support
-    width_net
-    width_segment
     width_track_via
     width_track
-    width_vias
-    window_close
-    zip_tool
+    wizard_add_fplib_small
     zip
     zone_duplicate
     zone_unfill
@@ -544,28 +522,46 @@ set( BMAPS_BIG
     icon_eeschema
     icon_gerbview
     icon_kicad
+    icon_libedit
     icon_modedit
     icon_pcbnew
     icon_bitmap2component
     icon_pcbcalculator
-    libedit_icon
     viewlibs_icon
     icon_pagelayout_editor
+    wizard_add_fplib_icon
+    )
+
+set( BMAPS_OTHER
+    tune_diff_pair_length_legend
+    tune_diff_pair_skew_legend
+    tune_single_track_length_legend
     )
 
 
 # @todo keep these in sync with .bzrignore
-set( TMP_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/tmp" )
+set( TMP_DIR   "${CMAKE_CURRENT_BINARY_DIR}/tmp" )
+
+# true to generate log files, false to build icon files only
+# generate logs is useful only if you have problems
+set( CREATE_LOG_FILES false )
+
 
 function( svg2png inputFile outFile pngWidth pngHeight )
     #message( "svg2png( inputFile: ${inputFile} outFile: ${outFile} pngWidth: ${pngWidth} pngHeight: ${pngHeight})")
+
+    if( CREATE_LOG_FILES )
+        set( logfile "${TMP_DIR}/${bmn}.inkscape.log" )
+    else()
+        set( logfile "null" )
+    endif()
 
     get_filename_component( bmn ${inputFile} NAME_WE )
 
     add_custom_command(
         OUTPUT ${outFile}
-        COMMAND ${Inkscape_EXECUTABLE} --export-area-snap -f ${inputFile} -e ${outFile}
-            -w ${pngWidth} -h ${pngHeight} > ${TMP_DIR}/${bmn}.inkscape.log
+        COMMAND ${Inkscape_EXECUTABLE} --without-gui --export-area-snap -f ${inputFile} -e ${outFile}
+            -w ${pngWidth} -h ${pngHeight} > ${logfile}
         DEPENDS ${inputFile}
         COMMENT "Creating ${pngHeight} pixel tall ${outFile}"
         )
@@ -576,17 +572,23 @@ endfunction()
 # converts a basic PNG to one
 function( png2png inputFile outFile )
 
+    if( CREATE_LOG_FILES )
+        set( logfile "${TMP_DIR}/${bmn}.pngcrush.log" )
+    else()
+        set( logfile "null" )
+    endif()
+
     get_filename_component( bmn ${inputFile} NAME_WE )
 
     add_custom_command(
         OUTPUT  ${outFile}
 
-        # pngcrush all icons without background to remove any extraneous tEXt records.
-        COMMAND ${pngcrush_EXECUTABLE} -rem alla ${inputFile} ${outFile} > ${TMP_DIR}/${bmn}.pngcrush.log
+        # pngcrush all icons without background to remove any extraneous text records.
+        COMMAND ${pngcrush_EXECUTABLE} -rem alla ${inputFile} ${outFile} > ${logfile}
 
         DEPENDS ${inputFile}
 
-        COMMENT "Creating ${outFile}"
+        COMMENT "Creating cleaned file ${outFile}"
         )
 endfunction()
 
@@ -682,32 +684,12 @@ if( MAINTAIN_PNGS )
 
     bitmap_dir( 48 48 "${BMAPS_BIG}" )
 
-if(CONVERT_EOL)
-    # dos2unix is required to convert EOL format (CRLF) to unix EOL format (LF)
-    set( eol2unix_FOUND FALSE )
-
-    if( NOT eol2unix_FOUND )
-        find_program( eol2unix_EXECUTABLE ${eol2unix_converter} DOC "The EOL to LF converter program." )
-
-        if( NOT eol2unix_EXECUTABLE )
-            message( FATAL_ERROR "Could not find the ${eol2unix_converter} EOL to LF converter program." )
-        else( NOT eol2unix_EXECUTABLE )
-            set( eol2unix_FOUND TRUE )
-            set( eol2unix_EXECUTABLE ${eol2unix_EXECUTABLE}
-                 CACHE FILEPATH "Path and file name of the end of line converter program." )
-            message( STATUS "The ${eol2unix_converter} EOL to LF converter program found." )
-        endif( NOT eol2unix_EXECUTABLE )
-    endif( NOT eol2unix_FOUND )
-elseif(APPLE)
-        #TODO: see if a EOL converted is needed # OSX
-endif(CONVERT_EOL)
+endif( MAINTAIN_PNGS )
 
     #message( "CPP_LIST: ${CPP_LIST}" )
 
     # a target with no output, just so changes get built
     #add_custom_target( make_cpp_files ALL DEPENDS ${CPP_LIST} )
-
-endif( MAINTAIN_PNGS )
 
 set( CPP_LIST "" )
 
@@ -726,5 +708,14 @@ foreach( bmn ${BMAPS_BIG} )
     list( APPEND CPP_LIST cpp_48/${bmn}.cpp )
 endforeach()
 
+foreach( bmn ${BMAPS_OTHER} )
+    #message( "library add cpp_other/${bmn}.cpp" )
+    list( APPEND CPP_LIST cpp_other/${bmn}.cpp )
+endforeach()
+
 #add_library( bitmaps SHARED ${CPP_LIST} )
 add_library( bitmaps STATIC ${CPP_LIST} )
+
+target_include_directories( bitmaps PUBLIC
+    include
+)

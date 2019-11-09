@@ -1,5 +1,5 @@
-update=07/03/2011 07:10:44
-last_client=cvpcb
+update=21/11/2017 21:18:56
+last_client=kicad
 [general]
 version=1
 RootSch=pic_programmer.sch
@@ -74,3 +74,6 @@ version=1
 NetIExt=.net
 [cvpcb/libraries]
 EquName1=devcms
+[eeschema]
+version=1
+LibDir=

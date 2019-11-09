@@ -5,7 +5,7 @@
 /* This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2013 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2013-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -43,10 +43,9 @@
 #define INVOKE_A_DIALOG_H_
 
 
-class wxTopLevelWindow;
+class wxWindow;
 class wxPoint;
 class wxSize;
-//class wxRealPoint;
 class wxString;
 
 class BOARD;
@@ -55,19 +54,33 @@ class MODULE;
 // Often this is not used in the prototypes, since wxFrame is good enough and would
 // represent maximum information hiding.
 class PCB_BASE_FRAME;
+class PCB_EDIT_FRAME;
+class FOOTPRINT_EDIT_FRAME;
 class FP_LIB_TABLE;
 class BOARD;
 class PCB_PLOT_PARAMS;
+class KIWAY;
 
 
 /**
  * Function InvokePcbLibTableEditor
- * shows the modal DIALOG_FP_LIB_TABLE for purposes of editing two lib tables.
+ * shows the modal DIALOG_FP_LIB_TABLE for purposes of editing the global and project
+ * library tables.
  *
- * @return int - bits 0 and 1 tell whether a change was made to the @a aGlobal
- *  and/or the @a aProject table, respectively.  If set, table was modified.
+ * @param aCaller is the wxWindow which is invoking the dialog.
+ * @return true if either table changed.
  */
-int InvokePcbLibTableEditor( wxTopLevelWindow* aCaller, FP_LIB_TABLE* aGlobal, FP_LIB_TABLE* aProject );
+void InvokePcbLibTableEditor( KIWAY* aKiway, wxWindow* aCaller );
+
+/**
+ * Function Invoke3DShapeLibsDownloaderWizard
+ * Runs the downloader wizard for easy 3D shape libraries download from
+ * the official Kicad Github repository of *.3Dshape libraries.
+ *
+ * @param aCaller is the wxWindow which is invoking the dialog.
+ */
+void Invoke3DShapeLibsDownloaderWizard( wxWindow* aCaller );
+
 
 /**
  * Function InvokePluginOptionsEditor
@@ -76,37 +89,19 @@ int InvokePcbLibTableEditor( wxTopLevelWindow* aCaller, FP_LIB_TABLE* aGlobal, F
  * @param aCaller is the wxTopLevelWindow which is invoking the dialog.
  * @param aNickname is the footprint library whose options are being edited.
  * @param aPluginType is something that will pass through IO_MGR::EnumFromStr().
- * @param aOptionsIn is the options string on calling into this function.
+ * @param aOptions is the options string on calling into this function.
  * @param aResult is where to put the result of the editing.
  */
-void InvokePluginOptionsEditor( wxTopLevelWindow* aCaller, const wxString& aNickname,
+void InvokePluginOptionsEditor( wxWindow* aCaller, const wxString& aNickname,
     const wxString& aPluginType, const wxString& aOptions, wxString* aResult );
 
 /**
- * Function InvokeDXFDialogBoardImport
- * shows the modal DIALOG_DXF_IMPORT for importing a DXF file to a board.
-
- * @param aCaller is the wxTopLevelWindow which is invoking the dialog.
- * @return true if the import was made.
- */
-bool InvokeDXFDialogBoardImport( PCB_BASE_FRAME* aCaller );
-
-/**
- * Function InvokeDXFDialogModuleImport
- * shows the modal DIALOG_DXF_IMPORT for importing a DXF file.to a module.
- *
- * @param aCaller is the wxTopLevelWindow which is invoking the dialog.
- * @return true if the import was made.
- */
-bool InvokeDXFDialogModuleImport( PCB_BASE_FRAME* aCaller, MODULE* aModule );
-
-/**
- * Function InvokeLayerSetup
- * shows the layer setup dialog
+ * Function InvokeExportSVG
+ * shows the Export SVG dialog
+ * @param aCaller is the PCB_BASE_FRAME which is invoking the dialog.
+ * @param aBoard is the currently edited board.
  * @return bool - true if user pressed OK (did not abort), else false.
  */
-bool InvokeLayerSetup( wxTopLevelWindow* aCaller, BOARD* aBoard );
-
-bool InvokeSVGPrint( wxTopLevelWindow* aCaller, BOARD* aBoard, PCB_PLOT_PARAMS* aSettings );
+bool InvokeExportSVG( PCB_BASE_FRAME* aCaller, BOARD* aBoard );
 
 #endif  // INVOKE_A_DIALOG_H_

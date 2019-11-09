@@ -2,7 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2019 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2019 CERN
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,14 +23,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file lib_arc.h
- */
+#ifndef LIB_ARC_H
+#define LIB_ARC_H
 
-#ifndef _LIB_ARC_H_
-#define _LIB_ARC_H_
-
-#include <lib_draw_item.h>
+#include <lib_item.h>
 
 
 class TRANSFORM;
@@ -51,37 +48,10 @@ class LIB_ARC : public LIB_ITEM
     wxPoint  m_ArcEnd;          /* Arc end position. */
     wxPoint  m_Pos;             /* Radius center point. */
     int      m_Width;           /* Line width */
-    double   m_editCenterDistance;
-    SELECT_T m_editSelectPoint;
     int      m_editState;
-    int      m_editDirection;
-    int      m_lastEditState;
 
-    /**
-     * Draws the arc.
-     */
-    void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
-                      const TRANSFORM& aTransform );
-
-    /**
-     * Draw the graphics when the arc is being edited.
-     */
-    void drawEditGraphics( EDA_RECT* aClipBox, wxDC* aDC, EDA_COLOR_T aColor );
-
-    /**
-     * Calculates the center, radius, and angles at \a aPosition when the arc is being edited.
-     *
-     * Note: The center may not necessarily be on the grid.
-     *
-     * @param aPosition - The current mouse position in drawing coordinates.
-     */
-    void calcEdit( const wxPoint& aPosition );
-
-    /**
-     * Calculate the radius and angle of an arc using the start, end, and center points.
-     */
-    void calcRadiusAngles();
+    void print( wxDC* aDC, const wxPoint& aOffset, void* aData,
+                const TRANSFORM& aTransform ) override;
 
 public:
     LIB_ARC( LIB_PART * aParent );
@@ -90,58 +60,73 @@ public:
 
     ~LIB_ARC() { }
 
-    wxString GetClass() const
+    wxString GetClass() const override
     {
         return wxT( "LIB_ARC" );
     }
 
+    wxString GetTypeName() override
+    {
+        return _( "Arc" );
+    }
 
-    bool Save( OUTPUTFORMATTER& aFormatter );
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override;
+    bool HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy = 0 ) const override;
 
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg );
+    const EDA_RECT GetBoundingBox() const override;
 
-    bool HitTest( const wxPoint& aPosition ) const;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    bool HitTest( const wxPoint& aPosition, int aThreshold, const TRANSFORM& aTransform ) const;
+    int GetPenSize() const override;
 
-    const EDA_RECT GetBoundingBox() const;  // Virtual
+    void BeginEdit( const wxPoint aStartPoint ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
+    void SetEditState( int aState ) { m_editState = aState; }
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    void Offset( const wxPoint& aOffset ) override;
 
-    int GetPenSize() const;
+    bool Inside( EDA_RECT& aRect ) const override;
 
-    void BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aStartPoint = wxPoint( 0, 0 ) );
+    void MoveTo( const wxPoint& aPosition ) override;
 
-    bool ContinueEdit( const wxPoint aNextPoint );
+    wxPoint GetPosition() const override { return m_Pos; }
 
-    void EndEdit( const wxPoint& aPosition, bool aAbort = false );
-
-    void SetOffset( const wxPoint& aOffset );
-
-    bool Inside( EDA_RECT& aRect ) const;
-
-    void Move( const wxPoint& aPosition );
-
-    wxPoint GetPosition() const { return m_Pos; }
-
-    void MirrorHorizontal( const wxPoint& aCenter );
-
-    void MirrorVertical( const wxPoint& aCenter );
-
-    void Rotate( const wxPoint& aCenter, bool aRotateCCW = true );
+    void MirrorHorizontal( const wxPoint& aCenter ) override;
+    void MirrorVertical( const wxPoint& aCenter ) override;
+    void Rotate( const wxPoint& aCenter, bool aRotateCCW = true ) override;
 
     void Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
-               const TRANSFORM& aTransform );
+               const TRANSFORM& aTransform ) override;
 
-    int GetWidth() const { return m_Width; }
+    int GetWidth() const override { return m_Width; }
+    void SetWidth( int aWidth ) override { m_Width = aWidth; }
 
-    void SetWidth( int aWidth ) { m_Width = aWidth; }
+    void SetRadius( int aRadius ) { m_Radius = aRadius; }
+    int GetRadius() const { return m_Radius; }
 
-    wxString GetSelectMenuText() const;
+    void SetFirstRadiusAngle( int aAngle ) { m_t1 = aAngle; }
+    int GetFirstRadiusAngle() const { return m_t1; }
 
-    BITMAP_DEF GetMenuImage() const { return  add_arc_xpm; }
+    void SetSecondRadiusAngle( int aAngle ) { m_t2 = aAngle; }
+    int GetSecondRadiusAngle() const { return m_t2; }
 
-    EDA_ITEM* Clone() const;
+    wxPoint GetStart() const { return m_ArcStart; }
+    void SetStart( const wxPoint& aPoint ) { m_ArcStart = aPoint; }
+
+    wxPoint GetEnd() const { return m_ArcEnd; }
+    void SetEnd( const wxPoint& aPoint ) { m_ArcEnd = aPoint; }
+
+    /**
+     * Calculate the radius and angle of an arc using the start, end, and center points.
+     */
+    void CalcRadiusAngles();
+
+
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
+
+    BITMAP_DEF GetMenuImage() const override;
+
+    EDA_ITEM* Clone() const override;
 
 private:
 
@@ -154,8 +139,8 @@ private:
      *      - Arc start angle.
      *      - Arc end angle.
      */
-    int compare( const LIB_ITEM& aOther ) const;
+    int compare( const LIB_ITEM& aOther ) const override;
 };
 
 
-#endif    // _LIB_ARC_H_
+#endif    // LIB_ARC_H

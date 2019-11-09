@@ -25,7 +25,12 @@
 #ifndef PCB_EDITOR_CONTROL_H
 #define PCB_EDITOR_CONTROL_H
 
-#include <tool/tool_interactive.h>
+#include <tools/pcb_tool_base.h>
+#include <tool/tool_menu.h>
+
+namespace KIGFX {
+    class ORIGIN_VIEWITEM;
+}
 
 class PCB_EDIT_FRAME;
 
@@ -34,34 +39,97 @@ class PCB_EDIT_FRAME;
  *
  * Handles actions specific to the board editor in pcbnew.
  */
-class PCB_EDITOR_CONTROL : public TOOL_INTERACTIVE
+class PCB_EDITOR_CONTROL : public PCB_TOOL_BASE
 {
 public:
     PCB_EDITOR_CONTROL();
+    ~PCB_EDITOR_CONTROL();
 
     /// @copydoc TOOL_INTERACTIVE::Reset()
-    void Reset( RESET_REASON aReason );
+    void Reset( RESET_REASON aReason ) override;
 
     /// @copydoc TOOL_INTERACTIVE::Init()
-    bool Init();
+    bool Init() override;
+
+    int New( const TOOL_EVENT& aEvent );
+    int Open( const TOOL_EVENT& aEvent );
+    int Save( const TOOL_EVENT& aEvent );
+    int SaveAs( const TOOL_EVENT& aEvent );
+    int SaveCopyAs( const TOOL_EVENT& aEvent );
+    int PageSettings( const TOOL_EVENT& aEvent );
+    int Plot( const TOOL_EVENT& aEvent );
+    
+    int BoardSetup( const TOOL_EVENT& aEvent );
+    int ImportNetlist( const TOOL_EVENT& aEvent );
+    int ImportSpecctraSession( const TOOL_EVENT& aEvent );
+    int ExportSpecctraDSN( const TOOL_EVENT& aEvent );
+    int GenerateDrillFiles( const TOOL_EVENT& aEvent );
+    int GeneratePosFile( const TOOL_EVENT& aEvent );
+    int GenerateFabFiles( const TOOL_EVENT& aEvent );
+
+    int UpdatePCBFromSchematic( const TOOL_EVENT& aEvent );
+    int ShowEeschema( const TOOL_EVENT& aEvent );
+    int ToggleLayersManager( const TOOL_EVENT& aEvent );
+    int ToggleMicrowaveToolbar( const TOOL_EVENT& aEvent );
+    int TogglePythonConsole( const TOOL_EVENT& aEvent );
 
     // Track & via size control
-    int TrackWidthInc( TOOL_EVENT& aEvent );
-    int TrackWidthDec( TOOL_EVENT& aEvent );
-    int ViaSizeInc( TOOL_EVENT& aEvent );
-    int ViaSizeDec( TOOL_EVENT& aEvent );
+    int TrackWidthInc( const TOOL_EVENT& aEvent );
+    int TrackWidthDec( const TOOL_EVENT& aEvent );
+    int ViaSizeInc( const TOOL_EVENT& aEvent );
+    int ViaSizeDec( const TOOL_EVENT& aEvent );
 
     // Zone actions
-    int ZoneFill( TOOL_EVENT& aEvent );
-    int ZoneFillAll( TOOL_EVENT& aEvent );
-    int ZoneUnfill( TOOL_EVENT& aEvent );
+    int ZoneMerge( const TOOL_EVENT& aEvent );
+
+    ///> Duplicates a zone onto a layer (prompts for new layer)
+    int ZoneDuplicate( const TOOL_EVENT& aEvent );
+
+    /**
+     * Function PlaceTarget()
+     * Allows user to place a layer alignment target.
+     */
+    int PlaceTarget( const TOOL_EVENT& aEvent );
+
+    /**
+     * Function PlaceModule()
+     * Displays a dialog to select a module to be added and allows the user to set its position.
+     */
+    int PlaceModule( const TOOL_EVENT& aEvent );
+
+    ///> Toggles 'lock' property for selected items.
+    int ToggleLockSelected( const TOOL_EVENT& aEvent );
+
+    ///> Locks selected items.
+    int LockSelected( const TOOL_EVENT& aEvent );
+
+    ///> Unlocks selected items.
+    int UnlockSelected( const TOOL_EVENT& aEvent );
+
+    ///> Runs the drill origin tool for setting the origin for drill and pick-and-place files.
+    int DrillOrigin( const TOOL_EVENT& aEvent );
+
+    ///> Low-level access (below undo) to setting the drill origin
+    static void DoSetDrillOrigin( KIGFX::VIEW* aView, PCB_BASE_FRAME* aFrame,
+                                  BOARD_ITEM* aItem, const VECTOR2D& aPoint );
+
+    int FlipPcbView( const TOOL_EVENT& aEvent );
 
 private:
-    ///> Sets up handlers for various events.
-    void setTransitions();
+    ///> How to modify a property for selected items.
+    enum MODIFY_MODE { ON, OFF, TOGGLE };
 
-    ///> Pointer to the currently used edit frame.
-    PCB_EDIT_FRAME* m_frame;
+    int modifyLockSelected( MODIFY_MODE aMode );
+
+    ///> Sets up handlers for various events.
+    void setTransitions() override;
+
+private:
+    PCB_EDIT_FRAME* m_frame;     ///> Pointer to the currently used edit frame.
+
+    std::unique_ptr<KIGFX::ORIGIN_VIEWITEM> m_placeOrigin;    ///> Place & drill origin marker
+
+    static const int WIDTH_STEP; ///> How does line width change after one -/+ key press.
 };
 
 #endif

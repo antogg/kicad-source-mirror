@@ -1,12 +1,8 @@
-/**
- * @file pagelayout_editor/menubar.cpp
- * @brief (Re)Create the main menubar for Pl_Editor
- */
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2016-2019 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2013-2019 CERN
  * @author Jean-Pierre Charras, jp.charras at wanadoo.fr
  *
  * This program is free software; you can redistribute it and/or
@@ -27,148 +23,170 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <fctsys.h>
-
-#include <pgm_base.h>
 #include <kiface_i.h>
-#include <pl_editor_frame.h>
-#include <pl_editor_id.h>
-#include <hotkeys.h>
 #include <menus_helpers.h>
+#include <pgm_base.h>
+#include <tool/conditional_menu.h>
+#include <tool/tool_manager.h>
+#include <tool/selection.h>
+#include <tools/pl_actions.h>
+#include <tools/pl_selection_tool.h>
+#include "pl_editor_frame.h"
+#include "pl_editor_id.h"
 
 
 void PL_EDITOR_FRAME::ReCreateMenuBar()
 {
-    // Create and try to get the current menubar
-    wxMenuBar* menuBar = GetMenuBar();
+    PL_SELECTION_TOOL* selTool = m_toolManager->GetTool<PL_SELECTION_TOOL>();
+    // wxWidgets handles the Mac Application menu behind the scenes, but that means
+    // we always have to start from scratch with a new wxMenuBar.
+    wxMenuBar*  oldMenuBar = GetMenuBar();
+    wxMenuBar*  menuBar = new wxMenuBar();
 
-    if( !menuBar )
-        menuBar = new wxMenuBar();
+    auto modifiedDocumentCondition = [ this ] ( const SELECTION& sel ) {
+        return GetScreen() && GetScreen()->IsModify();
+    };
 
-    // Delete all existing menus so they can be rebuilt.
-    // This allows language changes of the menu text on the fly.
-    menuBar->Freeze();
+    static ACTION_MENU* openRecentMenu;  // Open Recent submenu, static to remember this menu
 
-    while( menuBar->GetMenuCount() )
-        delete menuBar->Remove( 0 );
-
-    // Recreate all menus:
-
-    // Menu File:
-    wxMenu* fileMenu = new wxMenu;
-
-    // Load
-    AddMenuItem( fileMenu, wxID_NEW,
-                 _( "&New Page Layout Design" ),
-                 wxEmptyString, KiBitmap( pagelayout_new_xpm ) );
-    AddMenuItem( fileMenu, wxID_OPEN,
-                 _( "Load &Page Layout File" ),
-                 wxEmptyString, KiBitmap(  pagelayout_load_xpm ) );
-    AddMenuItem( fileMenu, ID_LOAD_DEFAULT_PAGE_LAYOUT,
-                 _( "Load &Default Page Layout" ),
-                 wxEmptyString, KiBitmap(  pagelayout_load_default_xpm ) );
-
-    // Recent gerber files
-    static wxMenu* openRecentMenu;
-
-    // Add this menu to list menu managed by m_fileHistory
+    // Before deleting, remove the menus managed by m_fileHistory
     // (the file history will be updated when adding/removing files in history
     if( openRecentMenu )
         Kiface().GetFileHistory().RemoveMenu( openRecentMenu );
 
-    openRecentMenu = new wxMenu();
+    //-- File menu -------------------------------------------------------
+    //
+    CONDITIONAL_MENU* fileMenu = new CONDITIONAL_MENU( false, selTool );
+
+    openRecentMenu = new ACTION_MENU( false );
+    openRecentMenu->SetTool( selTool );
+    openRecentMenu->SetTitle( _( "Open Recent" ) );
+    openRecentMenu->SetIcon( recent_xpm );
 
     Kiface().GetFileHistory().UseMenu( openRecentMenu );
     Kiface().GetFileHistory().AddFilesToMenu();
 
-    AddMenuItem( fileMenu, openRecentMenu,
-                 wxID_ANY, _( "Open &Recent Page Layout File" ),
-                 wxEmptyString, KiBitmap(  pagelayout_recent_xpm ) );
+    fileMenu->AddItem( ACTIONS::doNew,         SELECTION_CONDITIONS::ShowAlways );
+    fileMenu->AddItem( ACTIONS::open,          SELECTION_CONDITIONS::ShowAlways );
+    fileMenu->AddMenu( openRecentMenu,         SELECTION_CONDITIONS::ShowAlways );
 
-     fileMenu->AppendSeparator();
-    // Save current sheet
-    AddMenuItem( fileMenu, wxID_SAVE,
-                 _( "&Save Page Layout Design" ),
-                 wxEmptyString, KiBitmap( save_xpm ) );
+    fileMenu->AddSeparator();
+    fileMenu->AddItem( ACTIONS::save,          modifiedDocumentCondition );
+    fileMenu->AddItem( ACTIONS::saveAs,        SELECTION_CONDITIONS::ShowAlways );
 
-    // Save current sheet as
-    AddMenuItem( fileMenu, wxID_SAVEAS,
-                 _( "Save Page Layout Design &As" ),
-                 wxEmptyString, KiBitmap( save_as_xpm ) );
+    fileMenu->AddSeparator();
+    fileMenu->AddItem( ACTIONS::print,         SELECTION_CONDITIONS::ShowAlways );
 
-    // Print
-    fileMenu->AppendSeparator();
-    AddMenuItem( fileMenu, wxID_PRINT, _( "&Print" ),
-                 wxEmptyString, KiBitmap( print_button_xpm ) );
-    AddMenuItem( fileMenu, wxID_PREVIEW, _( "Print Pre&view" ),
-                 wxEmptyString, KiBitmap( print_button_xpm ) );
+    fileMenu->AddSeparator();
+    fileMenu->AddQuitOrClose( &Kiface(), _( "Page Layout Editor" ) );
 
-    // Separator
-    fileMenu->AppendSeparator();
+    fileMenu->Resolve();
 
-    // Exit
-    AddMenuItem( fileMenu, wxID_EXIT,
-                 _( "E&xit" ),
-                 _( "Quit Pl_Editor" ),
-                 KiBitmap( exit_xpm ) );
+    //-- Edit menu -------------------------------------------------------
+    //
+    CONDITIONAL_MENU* editMenu = new CONDITIONAL_MENU( false, selTool );
 
-    // Menu for preferences
-    wxMenu* preferencesMenu = new wxMenu;
+    auto enableUndoCondition = [ this ] ( const SELECTION& sel ) {
+        return GetScreen() && GetScreen()->GetUndoCommandCount() != 0;
+    };
+    auto enableRedoCondition = [ this ] ( const SELECTION& sel ) {
+        return GetScreen() && GetScreen()->GetRedoCommandCount() != 0;
+    };
+    auto idleCondition = [] ( const SELECTION& sel ) {
+        return !sel.Front() || sel.Front()->GetEditFlags() == 0;
+    };
 
-    AddMenuItem( preferencesMenu,
-                 ID_MENU_SWITCH_BGCOLOR,
-                 GetDrawBgColor() == WHITE ?
-                 _( "&BackGround Black" ) : _( "&BackGround White" ),
-                 wxEmptyString, KiBitmap( palette_xpm ) );
+    editMenu->AddItem( ACTIONS::undo,         enableUndoCondition );
+    editMenu->AddItem( ACTIONS::redo,         enableRedoCondition );
 
-    AddMenuItem( preferencesMenu,
-                 ID_MENU_GRID_ONOFF,
-                 IsGridVisible() ? _( "Hide &Grid" ) :  _( "Show &Grid" ),
-                 wxEmptyString, KiBitmap( grid_xpm ) );
+    editMenu->AddSeparator();
+    editMenu->AddItem( ACTIONS::cut,          SELECTION_CONDITIONS::MoreThan( 0 ) );
+    editMenu->AddItem( ACTIONS::copy,         SELECTION_CONDITIONS::MoreThan( 0 ) );
+    editMenu->AddItem( ACTIONS::paste,        idleCondition );
+    editMenu->AddItem( ACTIONS::doDelete,     SELECTION_CONDITIONS::MoreThan( 0 ) );
 
-    // Text editor selection
-    AddMenuItem( preferencesMenu,
-                 ID_MENU_PL_EDITOR_SELECT_PREFERED_EDITOR,
-                 _( "&Text Editor" ),
-                 _( "Select your preferred text editor" ),
-                 KiBitmap( editor_xpm ) );
+    editMenu->Resolve();
+
+    //-- View menu -------------------------------------------------------
+    //
+    CONDITIONAL_MENU* viewMenu = new CONDITIONAL_MENU( false, selTool );
+
+    auto whiteBackgroundCondition = [ this ] ( const SELECTION& aSel ) {
+        return GetDrawBgColor() == WHITE;
+    };
+    auto gridShownCondition = [ this ] ( const SELECTION& aSel ) {
+        return IsGridVisible();
+    };
+    auto fullCrosshairCondition = [ this ] ( const SELECTION& aSel ) {
+        return GetGalDisplayOptions().m_fullscreenCursor;
+    };
+
+    viewMenu->AddSeparator();
+    viewMenu->AddItem( ACTIONS::zoomInCenter,                SELECTION_CONDITIONS::ShowAlways );
+    viewMenu->AddItem( ACTIONS::zoomOutCenter,               SELECTION_CONDITIONS::ShowAlways );
+    viewMenu->AddItem( ACTIONS::zoomFitScreen,               SELECTION_CONDITIONS::ShowAlways );
+    viewMenu->AddItem( ACTIONS::zoomTool,                    SELECTION_CONDITIONS::ShowAlways );
+    viewMenu->AddItem( ACTIONS::zoomRedraw,                  SELECTION_CONDITIONS::ShowAlways );
+
+    viewMenu->AddSeparator();
+    viewMenu->AddCheckItem( PL_ACTIONS::toggleBackground,    whiteBackgroundCondition );
+    viewMenu->AddCheckItem( ACTIONS::toggleGrid,             gridShownCondition );
+    viewMenu->AddCheckItem( ACTIONS::toggleCursorStyle,      fullCrosshairCondition );
+
+    viewMenu->AddSeparator();
+    viewMenu->AddItem( PL_ACTIONS::previewSettings,          SELECTION_CONDITIONS::ShowAlways );
+
+#ifdef __APPLE__
+    viewMenu->AddSeparator();
+#endif
+
+    viewMenu->Resolve();
+
+    //-- Place menu -------------------------------------------------------
+    //
+    CONDITIONAL_MENU* placeMenu = new CONDITIONAL_MENU( false, selTool );
+
+    placeMenu->AddItem( PL_ACTIONS::drawLine,                SELECTION_CONDITIONS::ShowAlways );
+    placeMenu->AddItem( PL_ACTIONS::drawRectangle,           SELECTION_CONDITIONS::ShowAlways );
+    placeMenu->AddItem( PL_ACTIONS::placeText,               SELECTION_CONDITIONS::ShowAlways );
+    placeMenu->AddItem( PL_ACTIONS::placeImage,              SELECTION_CONDITIONS::ShowAlways );
+
+    placeMenu->AddSeparator();
+    placeMenu->AddItem( PL_ACTIONS::appendImportedWorksheet, SELECTION_CONDITIONS::ShowAlways );
+
+    placeMenu->Resolve();
+
+    //-- Inspector menu -------------------------------------------------------
+    //
+    CONDITIONAL_MENU* inspectorMenu = new CONDITIONAL_MENU( false, selTool );
+    inspectorMenu->AddItem( PL_ACTIONS::showInspector,       SELECTION_CONDITIONS::ShowAlways );
+
+    inspectorMenu->Resolve();
+
+    //-- Preferences menu --------------------------------------------------
+    //
+    CONDITIONAL_MENU* preferencesMenu = new CONDITIONAL_MENU( false, selTool );
+
+    preferencesMenu->AddItem( wxID_PREFERENCES,
+                              _( "Preferences...\tCTRL+," ),
+                              _( "Show preferences for all open tools" ),
+                              preference_xpm,                SELECTION_CONDITIONS::ShowAlways );
 
     // Language submenu
-    Pgm().AddMenuLanguageList( preferencesMenu );
+    AddMenuLanguageList( preferencesMenu, selTool );
 
-    // Hotkey submenu
-    AddHotkeyConfigMenu( preferencesMenu );
+    preferencesMenu->Resolve();
 
-    // Menu Help
-    wxMenu* helpMenu = new wxMenu;
-
-    // Version info
-    AddHelpVersionInfoMenuEntry( helpMenu );
-
-    // Contents
-    AddMenuItem( helpMenu,
-                 wxID_HELP,
-                 _( "&Contents" ),
-                 _( "Open the GerbView handbook" ),
-                 KiBitmap( help_xpm ) );
-
-    // About GerbView
-    AddMenuItem( helpMenu,
-                 wxID_ABOUT,
-                 _( "&About Pl_Editor" ),
-                 _( "About page layout description editor" ),
-                 KiBitmap( online_help_xpm ) );
-
-    // Append menus to the menubar
+    //-- Menubar -----------------------------------------------------------
+    //
     menuBar->Append( fileMenu, _( "&File" ) );
-    menuBar->Append( preferencesMenu, _( "&Preferences" ) );
-    menuBar->Append( helpMenu, _( "&Help" ) );
+    menuBar->Append( editMenu, _( "&Edit" ) );
+    menuBar->Append( viewMenu, _( "&View" ) );
+    menuBar->Append( placeMenu, _( "&Place" ) );
+    menuBar->Append( inspectorMenu, _( "&Inspect" ) );
+    menuBar->Append( preferencesMenu, _( "P&references" ) );
+    AddStandardHelpMenu( menuBar );
 
-    menuBar->Thaw();
-
-    // Associate the menu bar with the frame, if no previous menubar
-    if( GetMenuBar() == NULL )
-        SetMenuBar( menuBar );
-    else
-        menuBar->Refresh();
+    SetMenuBar( menuBar );
+    delete oldMenuBar;
 }

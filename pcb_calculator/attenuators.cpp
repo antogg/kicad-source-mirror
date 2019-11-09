@@ -5,8 +5,8 @@
 /*
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
- * Copyright (C) 12011 jean-pierre.charras
- * Copyright (C) 2011 Kicad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2015 jean-pierre.charras
+ * Copyright (C) 2015 Kicad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,7 +28,8 @@
 #include <wx/wx.h>
 
 #include <pcb_calculator.h>
-#include <attenuator_classes.h>
+#include <dialog_helpers.h>
+
 
 extern double DoubleFromString( const wxString& TextValue );
 
@@ -44,9 +45,10 @@ void PCB_CALCULATOR_FRAME::SetAttenuator( unsigned aIdx )
 {
     if( aIdx >=m_attenuator_list.size() )
         aIdx = m_attenuator_list.size() - 1;
+
     m_currAttenuator = m_attenuator_list[aIdx];
     TransfAttenuatorDataToPanel();
-    m_Attenuator_Messages->Clear();
+    m_Attenuator_Messages->SetPage( wxEmptyString );
     m_Att_R1_Value->SetValue( wxEmptyString );
     m_Att_R2_Value->SetValue( wxEmptyString );
     m_Att_R3_Value->SetValue( wxEmptyString );
@@ -83,14 +85,30 @@ void PCB_CALCULATOR_FRAME::TransfAttenuatorDataToPanel()
     m_AttValueCtrl->Enable( m_currAttenuator->m_Attenuation_Enable );
 
     m_ZinValueCtrl->Enable( m_currAttenuator->m_Zin_Enable );
+
     if( m_currAttenuator->m_Zin_Enable )
         msg.Printf( wxT( "%g" ), m_currAttenuator->m_Zin );
     else
-        msg.Clear();;
+        msg.Clear();
+
     m_ZinValueCtrl->SetValue( msg );
 
     msg.Printf( wxT( "%g" ), m_currAttenuator->m_Zout );
     m_ZoutValueCtrl->SetValue( msg );
+
+    if( m_currAttenuator->m_FormulaName )
+    {
+        if( m_currAttenuator->m_FormulaName->StartsWith( "<!" ) )
+            m_panelAttFormula->SetPage( *m_currAttenuator->m_FormulaName );
+        else
+        {
+            wxString html_txt;
+            ConvertMarkdown2Html( wxGetTranslation( *m_currAttenuator->m_FormulaName ), html_txt );
+            m_panelAttFormula->SetPage( html_txt );
+        }
+    }
+    else
+        m_panelAttFormula->SetPage( wxEmptyString );
 }
 
 
@@ -98,13 +116,17 @@ void PCB_CALCULATOR_FRAME::TransfAttenuatorResultsToPanel()
 {
     wxString msg;
 
-    m_Attenuator_Messages->Clear();
+    m_Attenuator_Messages->SetPage( wxEmptyString );
 
     if( m_currAttenuator->m_Error )
     {
-        msg.Printf( _( "Error!\nSet attenuation more than %f dB" ),
+        msg.Printf( _( "Attenuation more than %f dB" ),
                     m_currAttenuator->m_MinimumATT );
-        m_Attenuator_Messages->AppendText( msg );
+        m_Attenuator_Messages->AppendToPage( wxT( "<br><b>Error!</b></br><br><em>" ) );
+        m_Attenuator_Messages->AppendToPage( msg );
+        m_Attenuator_Messages->AppendToPage( wxT( "</em></br>" ) );
+
+        // Display -- as resistor values:
         msg = wxT( "--" );
         m_Att_R1_Value->SetValue( msg );
         m_Att_R2_Value->SetValue( msg );
@@ -138,22 +160,6 @@ void PCB_CALCULATOR_FRAME::OnPaintAttenuatorPanel( wxPaintEvent& event )
         size.x -= m_currAttenuator->m_SchBitMap->GetWidth();
         size.y -= m_currAttenuator->m_SchBitMap->GetHeight();
         dc.DrawBitmap( *m_currAttenuator->m_SchBitMap, size.x / 2, size.y / 2 );
-    }
-
-    event.Skip();
-}
-
-
-void PCB_CALCULATOR_FRAME::OnPaintAttFormulaPanel( wxPaintEvent& event )
-{
-    wxPaintDC dc( m_panelAttFormula );
-
-    if( m_currAttenuator && m_currAttenuator->m_FormulaBitMap )
-    {
-        wxSize size = m_panelAttFormula->GetSize();
-        size.x -= m_currAttenuator->m_FormulaBitMap->GetWidth();
-        size.y -= m_currAttenuator->m_FormulaBitMap->GetHeight();
-        dc.DrawBitmap( *m_currAttenuator->m_FormulaBitMap, size.x / 2, size.y / 2 );
     }
 
     event.Skip();

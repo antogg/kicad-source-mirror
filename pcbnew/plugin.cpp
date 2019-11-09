@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2011-2012 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2016-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -23,8 +23,10 @@
  */
 
 #include <io_mgr.h>
+#include <properties.h>
 
-#define FMT_UNIMPLEMENTED   _( "Plugin '%s' does not implement the '%s' function." )
+
+#define FMT_UNIMPLEMENTED   _( "Plugin \"%s\" does not implement the \"%s\" function." )
 
 /**
  * Function not_implemented
@@ -36,9 +38,8 @@
 static void not_implemented( PLUGIN* aPlugin, const char* aCaller )
 {
     THROW_IO_ERROR( wxString::Format( FMT_UNIMPLEMENTED,
-            aPlugin->PluginName().GetData(),
-            wxString::FromUTF8( aCaller ).GetData() )
-            );
+                                      aPlugin->PluginName().GetData(),
+                                      wxString::FromUTF8( aCaller ).GetData() ) );
 }
 
 
@@ -56,16 +57,40 @@ void PLUGIN::Save( const wxString& aFileName, BOARD* aBoard, const PROPERTIES* a
 }
 
 
-wxArrayString PLUGIN::FootprintEnumerate( const wxString& aLibraryPath, const PROPERTIES* aProperties )
+void PLUGIN::FootprintEnumerate( wxArrayString& aFootprintNames, const wxString& aLibraryPath,
+                                 bool aBestEfforts, const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the PLUGIN interface.
     not_implemented( this, __FUNCTION__ );
-    return wxArrayString();
+}
+
+
+void PLUGIN::PrefetchLib( const wxString& aLibraryPath, const PROPERTIES* aProperties )
+{
+    (void) aLibraryPath;
+    (void) aProperties;
+}
+
+
+const MODULE* PLUGIN::GetEnumeratedFootprint( const wxString& aLibraryPath,
+                                              const wxString& aFootprintName,
+                                              const PROPERTIES* aProperties )
+{
+    // default implementation
+    return FootprintLoad( aLibraryPath, aFootprintName, aProperties );
+}
+
+
+bool PLUGIN::FootprintExists( const wxString& aLibraryPath, const wxString& aFootprintName,
+                              const PROPERTIES* aProperties )
+{
+    // default implementation
+    return FootprintLoad( aLibraryPath, aFootprintName, aProperties ) != nullptr;
 }
 
 
 MODULE* PLUGIN::FootprintLoad( const wxString& aLibraryPath, const wxString& aFootprintName,
-                                    const PROPERTIES* aProperties )
+                               const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the PLUGIN interface.
     not_implemented( this, __FUNCTION__ );
@@ -73,14 +98,16 @@ MODULE* PLUGIN::FootprintLoad( const wxString& aLibraryPath, const wxString& aFo
 }
 
 
-void PLUGIN::FootprintSave( const wxString& aLibraryPath, const MODULE* aFootprint, const PROPERTIES* aProperties )
+void PLUGIN::FootprintSave( const wxString& aLibraryPath, const MODULE* aFootprint,
+                            const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the PLUGIN interface.
     not_implemented( this, __FUNCTION__ );
 }
 
 
-void PLUGIN::FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName, const PROPERTIES* aProperties )
+void PLUGIN::FootprintDelete( const wxString& aLibraryPath, const wxString& aFootprintName,
+                              const PROPERTIES* aProperties )
 {
     // not pure virtual so that plugins only have to implement subset of the PLUGIN interface.
     not_implemented( this, __FUNCTION__ );

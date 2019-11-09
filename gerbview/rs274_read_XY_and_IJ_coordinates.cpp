@@ -1,13 +1,31 @@
-/**********************************************/
-/**** rs274_read_XY_and_IJ_coordinates.cpp ****/
-/**********************************************/
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2010-2014 Jean-Pierre Charras  jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2014 KiCad Developers, see change_log.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
 
 #include <fctsys.h>
 #include <common.h>
 
-#include <gerbview.h>
-#include <macros.h>
-#include <class_GERBER.h>
+#include <gerber_file_image.h>
 #include <base_units.h>
 
 
@@ -45,17 +63,17 @@ int scaletoIU( double aCoord, bool isMetric )
     if( isMetric )  // gerber are units in mm
         ret = KiROUND( aCoord * IU_PER_MM );
     else            // gerber are units in inches
-        ret = KiROUND( aCoord * IU_PER_MILS * 1000.0);
+        ret = KiROUND( aCoord * IU_PER_MILS * 1000.0 );
 
     return ret;
 }
 
 
-wxPoint GERBER_IMAGE::ReadXYCoord( char*& Text )
+wxPoint GERBER_FILE_IMAGE::ReadXYCoord( char*& Text, bool aExcellonMode )
 {
     wxPoint pos;
     int     type_coord = 0, current_coord, nbdigits;
-    bool    is_float   = m_DecimalFormat;
+    bool    is_float   = false;
     char*   text;
     char    line[256];
 
@@ -71,7 +89,7 @@ wxPoint GERBER_IMAGE::ReadXYCoord( char*& Text )
     text = line;
     while( *Text )
     {
-        if( (*Text == 'X') || (*Text == 'Y') )
+        if( (*Text == 'X') || (*Text == 'Y') || (*Text == 'A') )
         {
             type_coord = *Text;
             Text++;
@@ -93,7 +111,7 @@ wxPoint GERBER_IMAGE::ReadXYCoord( char*& Text )
 
             if( is_float )
             {
-                // When X or Y values are float numbers, they are given in mm or inches
+                // When X or Y (or A) values are float numbers, they are given in mm or inches
                 if( m_GerbMetric )  // units are mm
                     current_coord = KiROUND( atof( line ) * IU_PER_MILS / 0.0254 );
                 else    // units are inches
@@ -105,12 +123,25 @@ wxPoint GERBER_IMAGE::ReadXYCoord( char*& Text )
 
                 if( m_NoTrailingZeros )
                 {
-                    int min_digit =
-                        (type_coord == 'X') ? m_FmtLen.x : m_FmtLen.y;
-                    while( nbdigits < min_digit )
+                    // no trailing zero format, we need to add missing zeros.
+                    int digit_count = (type_coord == 'X') ? m_FmtLen.x : m_FmtLen.y;
+
+                    while( nbdigits < digit_count )
                     {
                         *(text++) = '0';
                         nbdigits++;
+                    }
+
+                    if( aExcellonMode )
+                    {
+                        // Truncate the extra digits if the len is more than expected
+                        // because the conversion to internal units expect exactly
+                        // digit_count digits
+                        while( nbdigits > digit_count )
+                        {
+                            *(text--) = 0;
+                            nbdigits--;
+                        }
                     }
 
                     *text = 0;
@@ -129,6 +160,11 @@ wxPoint GERBER_IMAGE::ReadXYCoord( char*& Text )
                 pos.x = current_coord;
             else if( type_coord == 'Y' )
                 pos.y = current_coord;
+            else if( type_coord == 'A' )
+            {
+                m_ArcRadius = current_coord;
+                m_LastArcDataType = ARC_INFO_TYPE_RADIUS;
+            }
 
             continue;
         }
@@ -151,7 +187,7 @@ wxPoint GERBER_IMAGE::ReadXYCoord( char*& Text )
  * These coordinates are relative, so if coordinate is absent, it's value
  * defaults to 0
  */
-wxPoint GERBER_IMAGE::ReadIJCoord( char*& Text )
+wxPoint GERBER_FILE_IMAGE::ReadIJCoord( char*& Text )
 {
     wxPoint pos( 0, 0 );
 
@@ -232,6 +268,9 @@ wxPoint GERBER_IMAGE::ReadIJCoord( char*& Text )
     }
 
     m_IJPos = pos;
+    m_LastArcDataType = ARC_INFO_TYPE_CENTER;
+    m_LastCoordIsIJPos = true;
+
     return pos;
 }
 
@@ -249,7 +288,18 @@ wxPoint GERBER_IMAGE::ReadIJCoord( char*& Text )
  */
 int ReadInt( char*& text, bool aSkipSeparator = true )
 {
-    int ret = (int) strtol( text, &text, 10 );
+    int ret;
+
+    // For strtol, a string starting by 0X or 0x is a valid number in hexadecimal or octal.
+    // However, 'X'  is a separator in Gerber strings with numbers.
+    // We need to detect that
+    if( strncasecmp( text, "0X", 2 ) == 0 )
+    {
+        text++;
+        ret = 0;
+    }
+    else
+        ret = (int) strtol( text, &text, 10 );
 
     if( *text == ',' || isspace( *text ) )
     {
@@ -272,7 +322,18 @@ int ReadInt( char*& text, bool aSkipSeparator = true )
  */
 double ReadDouble( char*& text, bool aSkipSeparator = true )
 {
-    double ret = strtod( text, &text );
+    double ret;
+
+    // For strtod, a string starting by 0X or 0x is a valid number in hexadecimal or octal.
+    // However, 'X'  is a separator in Gerber strings with numbers.
+    // We need to detect that
+    if( strncasecmp( text, "0X", 2 ) == 0 )
+    {
+        text++;
+        ret = 0.0;
+    }
+    else
+        ret = strtod( text, &text );
 
     if( *text == ',' || isspace( *text ) )
     {

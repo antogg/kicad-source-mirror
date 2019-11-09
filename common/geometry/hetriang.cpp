@@ -4,21 +4,21 @@
  * Copyright (C) 2013 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
- * Contact information: E-mail: tor.dokken@sintef.no                      
- * SINTEF ICT, Department of Applied Mathematics,                         
- * P.O. Box 124 Blindern,                                                 
- * 0314 Oslo, Norway.                                                     
+ * Contact information: E-mail: tor.dokken@sintef.no
+ * SINTEF ICT, Department of Applied Mathematics,
+ * P.O. Box 124 Blindern,
+ * 0314 Oslo, Norway.
  *
  * This file is part of TTL.
  *
  * TTL is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
  * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version. 
+ * License, or (at your option) any later version.
  *
- * TTL is distributed in the hope that it will be useful,        
- * but WITHOUT ANY WARRANTY; without even the implied warranty of         
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          
+ * TTL is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public
@@ -36,7 +36,7 @@
  * disclosing the source code of your own applications.
  *
  * This file may be used in accordance with the terms contained in a
- * written agreement between you and SINTEF ICT. 
+ * written agreement between you and SINTEF ICT.
  */
 
 #include <ttl/halfedge/hetriang.h>
@@ -45,14 +45,14 @@
 #include <algorithm>
 #include <fstream>
 #include <limits>
-#include <boost/foreach.hpp>
-#include <boost/make_shared.hpp>
+#include <memory>
 
 using namespace hed;
 
 #ifdef TTL_USE_NODE_ID
   int NODE::id_count = 0;
 #endif
+
 
 
 //#define DEBUG_HE
@@ -117,22 +117,22 @@ EDGE_PTR TRIANGULATION::InitTwoEnclosingTriangles( NODES_CONTAINER::iterator aFi
     double dx = ( xmax - xmin ) / fac;
     double dy = ( ymax - ymin ) / fac;
 
-    NODE_PTR n1 = boost::make_shared<NODE>( xmin - dx, ymin - dy );
-    NODE_PTR n2 = boost::make_shared<NODE>( xmax + dx, ymin - dy );
-    NODE_PTR n3 = boost::make_shared<NODE>( xmax + dx, ymax + dy );
-    NODE_PTR n4 = boost::make_shared<NODE>( xmin - dx, ymax + dy );
+    NODE_PTR n1 = std::make_shared<NODE>( xmin - dx, ymin - dy );
+    NODE_PTR n2 = std::make_shared<NODE>( xmax + dx, ymin - dy );
+    NODE_PTR n3 = std::make_shared<NODE>( xmax + dx, ymax + dy );
+    NODE_PTR n4 = std::make_shared<NODE>( xmin - dx, ymax + dy );
 
     // diagonal
-    EDGE_PTR e1d = boost::make_shared<EDGE>();
-    EDGE_PTR e2d = boost::make_shared<EDGE>();
+    EDGE_PTR e1d = std::make_shared<EDGE>();
+    EDGE_PTR e2d = std::make_shared<EDGE>();
 
     // lower triangle
-    EDGE_PTR e11 = boost::make_shared<EDGE>();
-    EDGE_PTR e12 = boost::make_shared<EDGE>();
+    EDGE_PTR e11 = std::make_shared<EDGE>();
+    EDGE_PTR e12 = std::make_shared<EDGE>();
 
     // upper triangle
-    EDGE_PTR e21 = boost::make_shared<EDGE>();
-    EDGE_PTR e22 = boost::make_shared<EDGE>();
+    EDGE_PTR e21 = std::make_shared<EDGE>();
+    EDGE_PTR e22 = std::make_shared<EDGE>();
 
     // lower triangle
     e1d->SetSourceNode( n3 );
@@ -170,6 +170,7 @@ TRIANGULATION::TRIANGULATION()
 
 TRIANGULATION::TRIANGULATION( const TRIANGULATION& aTriangulation )
 {
+    m_helper = 0;   // make coverity and static analysers quiet.
     // Triangulation: Copy constructor not present
     assert( false );
 }
@@ -318,7 +319,7 @@ bool TRIANGULATION::removeLeadingEdgeFromList( EDGE_PTR& aLeadingEdge )
 
 void TRIANGULATION::cleanAll()
 {
-    BOOST_FOREACH( EDGE_PTR& edge, m_leadingEdges )
+    for( EDGE_PTR& edge : m_leadingEdges )
         edge->SetNextEdgeInFace( EDGE_PTR() );
 }
 
@@ -392,12 +393,11 @@ std::list<NODE_PTR>* TRIANGULATION::GetNodes() const
 #endif
 
 
-std::list<EDGE_PTR>* TRIANGULATION::GetEdges( bool aSkipBoundaryEdges ) const
+void TRIANGULATION::GetEdges( std::list<EDGE_PTR>& aEdges, bool aSkipBoundaryEdges  ) const
 {
     // collect all arcs (one half edge for each arc)
     // (boundary edges are also collected).
     std::list<EDGE_PTR>::const_iterator it;
-    std::list<EDGE_PTR>* elist = new std::list<EDGE_PTR>;
 
     for( it = m_leadingEdges.begin(); it != m_leadingEdges.end(); ++it )
     {
@@ -409,13 +409,13 @@ std::list<EDGE_PTR>* TRIANGULATION::GetEdges( bool aSkipBoundaryEdges ) const
 
             if( ( !twinedge && !aSkipBoundaryEdges )
                     || ( twinedge && ( (size_t) edge.get() > (size_t) twinedge.get() ) ) )
-                elist->push_front( edge );
+                {
+                    aEdges.push_front( edge );
+                }
 
             edge = edge->GetNextEdgeInFace();
         }
     }
-
-    return elist;
 }
 
 
@@ -442,12 +442,12 @@ EDGE_PTR TRIANGULATION::SplitTriangle( EDGE_PTR& aEdge, const NODE_PTR& aPoint )
     EDGE_PTR e3( e2->GetNextEdgeInFace() );
     NODE_PTR n3( e3->GetSourceNode() );
 
-    EDGE_PTR e1_n = boost::make_shared<EDGE>();
-    EDGE_PTR e11_n = boost::make_shared<EDGE>();
-    EDGE_PTR e2_n = boost::make_shared<EDGE>();
-    EDGE_PTR e22_n = boost::make_shared<EDGE>();
-    EDGE_PTR e3_n = boost::make_shared<EDGE>();
-    EDGE_PTR e33_n = boost::make_shared<EDGE>();
+    EDGE_PTR e1_n = std::make_shared<EDGE>();
+    EDGE_PTR e11_n = std::make_shared<EDGE>();
+    EDGE_PTR e2_n = std::make_shared<EDGE>();
+    EDGE_PTR e22_n = std::make_shared<EDGE>();
+    EDGE_PTR e3_n = std::make_shared<EDGE>();
+    EDGE_PTR e33_n = std::make_shared<EDGE>();
 
     e1_n->SetSourceNode( n1 );
     e11_n->SetSourceNode( aPoint );
@@ -603,7 +603,8 @@ void TRIANGULATION::OptimizeDelaunay()
 
     // Collect all interior edges (one half edge for each arc)
     bool skip_boundary_edges = true;
-    std::list<EDGE_PTR>* elist = GetEdges( skip_boundary_edges );
+    std::list<EDGE_PTR> elist;
+    GetEdges( elist, skip_boundary_edges );
 
     // Assumes that elist has only one half-edge for each arc.
     bool cycling_check = true;
@@ -614,7 +615,7 @@ void TRIANGULATION::OptimizeDelaunay()
     {
         optimal = true;
 
-        for( it = elist->begin(); it != elist->end(); ++it )
+        for( it = elist.begin(); it != elist.end(); ++it )
         {
             EDGE_PTR edge = *it;
 
@@ -627,8 +628,6 @@ void TRIANGULATION::OptimizeDelaunay()
             }
         }
     }
-
-    delete elist;
 }
 
 
@@ -636,7 +635,7 @@ EDGE_PTR TRIANGULATION::GetInteriorNode() const
 {
     const std::list<EDGE_PTR>& leadingEdges = GetLeadingEdges();
     std::list<EDGE_PTR>::const_iterator it;
-    
+
     for( it = leadingEdges.begin(); it != leadingEdges.end(); ++it )
     {
         EDGE_PTR edge = *it;

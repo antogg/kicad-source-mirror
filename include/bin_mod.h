@@ -1,6 +1,3 @@
-#ifndef BIN_MOD_H_
-#define BIN_MOD_H_
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
@@ -24,6 +21,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#ifndef BIN_MOD_H_
+#define BIN_MOD_H_
+
 #if 0
  #include <wx/filehistory.h>    // wx 3.0:
 #else
@@ -33,8 +33,10 @@
 #include <wx/string.h>
 
 #include <search_stack.h>
+#include <memory>
 
 class wxConfigBase;
+class FILE_HISTORY;
 
 /**
  * Struct BIN_MOD
@@ -54,8 +56,8 @@ struct BIN_MOD
 
     const char*         m_name;             ///< name of this binary module, static C string.
 
-    wxConfigBase*       m_config;           ///< maybe from $HOME/.${m_name}
-    wxFileHistory       m_history;
+    std::unique_ptr<wxConfigBase> m_config; ///< maybe from $HOME/.${m_name}
+    FILE_HISTORY*       m_history;
     wxString            m_help_file;
 
     SEARCH_STACK        m_search;

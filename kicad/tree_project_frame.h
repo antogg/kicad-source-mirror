@@ -1,7 +1,3 @@
-/**
- * @file tree_project_frame.h
- */
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
@@ -26,16 +22,24 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+/**
+ * @file tree_project_frame.h
+ */
+
+
 #ifndef TREEPRJ_FRAME_H
 #define TREEPRJ_FRAME_H
 
-#include <kicad.h>
-
-#ifdef KICAD_USE_FILES_WATCHER
 #include <wx/fswatcher.h>
-#endif
+#include <wx/laywin.h>
+#include <wx/treebase.h>
 
+#include "kicad_manager_frame.h"
+
+
+class KICAD_MANAGER_FRAME;
 class TREEPROJECT_ITEM;
+class TREEPROJECTFILES;
 
 /** class TREE_PROJECT_FRAME
  * Window to display the tree files
@@ -50,10 +54,7 @@ public:
 private:
     wxTreeItemId            m_root;
     std::vector<wxString>   m_filters;
-
-#ifdef KICAD_USE_FILES_WATCHER
     wxFileSystemWatcher*    m_watcher; // file system watcher (since wxWidgets 2.9.2)
-#endif
 
 public:
     TREE_PROJECT_FRAME( KICAD_MANAGER_FRAME* parent );
@@ -64,7 +65,6 @@ public:
      */
     void ReCreateTreePrj();
 
-#ifdef KICAD_USE_FILES_WATCHER
     /**
      * Reinit the watched paths
      * Should be called after opening a new project to
@@ -72,11 +72,9 @@ public:
      * Should be called *atfer* the main loop event handler is started
      */
     void FileWatcherReset();
-#endif
 
 protected:
-    static wxString                 GetFileExt( TreeFileType type );
-    static wxString                 GetFileWildcard( TreeFileType type );
+    static wxString GetFileExt( TreeFileType type );
 
     /**
      * Function GetSelectedData
@@ -84,7 +82,7 @@ protected:
      * Note this is not necessary the "clicked" item,
      * because when expanding, collapsing an item this item is not selected
      */
-    TREEPROJECT_ITEM*               GetSelectedData();
+    TREEPROJECT_ITEM* GetSelectedData();
 
     /**
      * Function GetItemIdData
@@ -92,66 +90,66 @@ protected:
      * @param  aId = the wxTreeItemId identifier.
      * @return a TREEPROJECT_ITEM pointer correspondinfg to item id aId
      */
-    TREEPROJECT_ITEM*               GetItemIdData( wxTreeItemId aId );
+    TREEPROJECT_ITEM* GetItemIdData( wxTreeItemId aId );
 
 private:
     /**
      * Called on a double click on an item
      */
-    void                            OnSelect( wxTreeEvent& Event );
+    void OnSelect( wxTreeEvent& Event );
 
     /**
      * Called on a click on the + or - button of an item with children
      */
-    void                            OnExpand( wxTreeEvent& Event );
+    void OnExpand( wxTreeEvent& Event );
 
     /**
      * Called on a right click on an item
      */
-    void                            OnRight( wxTreeEvent& Event );
+    void OnRight( wxTreeEvent& Event );
 
     /**
      * Function OnOpenSelectedFileWithTextEditor
-     * Called via the popup menu, when right clicking on a file name
-     * Call the text editor to open the selected file
-     * in the tree project
+     * Call the text editor to open the selected file in the tree project
      */
-    void                            OnOpenSelectedFileWithTextEditor( wxCommandEvent& event );
+    void OnOpenSelectedFileWithTextEditor( wxCommandEvent& event );
 
     /**
      * Function OnDeleteFile
-     * Called via the popup menu, when right clicking on a file name
-     * or a directory name to delete the selected file or directory
-     * in the tree project
+     * Delete the selected file or directory in the tree project
      */
-    void                            OnDeleteFile( wxCommandEvent& event );
+    void OnDeleteFile( wxCommandEvent& event );
+
+    /**
+     * Function OnDeleteFile
+     * Print the selected file or directory in the tree project
+     */
+    void OnPrintFile( wxCommandEvent& event );
 
     /**
      * Function OnRenameFile
-     * Called via the popup menu, when right clicking on a file name
-     * or a directory name to rename the selected file or directory
-     * in the tree project
+     * Rename the selected file or directory in the tree project
      */
-    void                            OnRenameFile( wxCommandEvent& event );
+    void OnRenameFile( wxCommandEvent& event );
+
+    /**
+     * Function OnOpenDirectory
+     * Handles the right-click menu for opening a directory in the current system file browser
+     */
+    void OnOpenDirectory( wxCommandEvent& event );
 
     /**
      * Function OnCreateNewDirectory
-     * Creates a new subdirectory inside the current kicad project directory
-     * the user is prompted to enter a directory name
+     * Creates a new subdirectory inside the current kicad project directory the user is
+     * prompted to enter a directory name
      */
-    void                            OnCreateNewDirectory( wxCommandEvent& event );
+    void OnCreateNewDirectory( wxCommandEvent& event );
 
-    void                            ClearFilters()
-    {
-        m_filters.clear();
-    }
-
-    const std::vector<wxString>&    GetFilters()
-    {
-        return m_filters;
-    }
-
-    void                            RemoveFilter( const wxString& filter );
+    /**
+     * Switch to a other project selected from the tree project (by selecting an other .pro
+     * file inside the current project folder)
+     */
+    void OnSwitchToSelectedProject( wxCommandEvent& event );
 
     /**
      * Function AddItemToTreeProject
@@ -162,30 +160,23 @@ private:
      *                   false to stop file add.
      * @return true if the file (or directory) is added.
      */
-    bool                            AddItemToTreeProject( const wxString& aName,
-                                                          wxTreeItemId& aRoot,
-                                                          bool aRecurse = true );
+    bool AddItemToTreeProject( const wxString& aName, wxTreeItemId& aRoot, bool aRecurse = true );
 
     /**
      * Function findSubdirTreeItem
-     * searches for the item in tree project which is the
-     * node of the subdirectory aSubDir
+     * searches for the item in tree project which is the node of the subdirectory aSubDir
      * @param aSubDir = the directory to find in tree
-     * @return the opaque reference to the tree item.
-     * if not found, return an invalid tree item.
-     * therefore wxTreeItemId::IsOk should be used to test
-     * the returned value
+     * @return the opaque reference to the tree item; if not found, return an invalid tree item
+     *         so that wxTreeItemId::IsOk() can be used to test the returned value
      */
     wxTreeItemId findSubdirTreeItem( const wxString& aSubDir );
 
-#ifdef KICAD_USE_FILES_WATCHER
     /**
      * called when a file or directory is modified/created/deleted
-     * The tree project is modified when a file or directory
-     * is created/deleted/renamed to reflect the file change
+     * The tree project is modified when a file or directory is created/deleted/renamed to
+     * reflect the file change
      */
     void OnFileSystemEvent( wxFileSystemWatcherEvent& event );
-#endif
 
     DECLARE_EVENT_TABLE()
 };

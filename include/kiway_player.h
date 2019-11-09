@@ -1,11 +1,8 @@
-#ifndef KIWAY_PLAYER_H_
-#define KIWAY_PLAYER_H_
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2014 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,75 +22,23 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#ifndef KIWAY_PLAYER_H_
+#define KIWAY_PLAYER_H_
+
 #include <wx/frame.h>
 #include <vector>
-#include <wxstruct.h>
+#include <kiway_holder.h>
+#include <eda_base_frame.h>
 
 
 class KIWAY;
 class PROJECT;
 struct KIFACE;
 class KIFACE_I;
-
-#define VTBL_ENTRY          virtual
-
-
-/**
- * Class KIWAY_HOLDER
- * is a mix in class which holds the location of a wxWindow's KIWAY.  It allows
- * calls to Kiway() and SetKiway().
- *
- * Known to be used in at least DIALOG_SHIM and KIWAY_PLAYER classes.
- */
-class KIWAY_HOLDER
-{
-public:
-    KIWAY_HOLDER( KIWAY* aKiway ) :
-        m_kiway( aKiway )
-    {}
-
-    /**
-     * Function Kiway
-     * returns a reference to the KIWAY that this object has an opportunity
-     * to participate in.  A KIWAY_HOLDER is not necessarily a KIWAY_PLAYER.
-     */
-    KIWAY& Kiway() const
-    {
-        wxASSERT( m_kiway );    // smoke out bugs in Debug build, then Release runs fine.
-        return *m_kiway;
-    }
-
-    /**
-     * Function Prj
-     * returns a reference to the PROJECT "associated with" this KIWAY.
-     */
-    PROJECT& Prj() const;
-
-    /**
-     * Function SetKiway
-     *
-     * @param aDest is the recipient of aKiway pointer.
-     *  It is only used for debugging, since "this" is not a wxWindow*.  "this" is
-     *  a KIWAY_HOLDER mix-in.
-     *
-     * @param aKiway is often from a parent window, or from KIFACE::CreateWindow().
-     */
-    void SetKiway( wxWindow* aDest, KIWAY* aKiway );
-
-private:
-    // private, all setting is done through SetKiway().
-    KIWAY*          m_kiway;            // no ownership.
-};
-
-
+class TOOL_MANAGER;
 class KIWAY_EXPRESS;
 
-#if wxCHECK_VERSION( 2, 9, 4 )
- #define WX_EVENT_LOOP      wxGUIEventLoop
-#else
- #define WX_EVENT_LOOP      wxEventLoop
-#endif
-
+#define WX_EVENT_LOOP      wxGUIEventLoop
 class WX_EVENT_LOOP;
 
 
@@ -108,7 +53,11 @@ class WX_EVENT_LOOP;
  * EDA_BASE_FRAME would not have sufficed because BM2CMP_FRAME_BASE is not
  * derived from it.
  */
-class KIWAY_PLAYER : public EDA_BASE_FRAME, public KIWAY_HOLDER
+#ifdef SWIG
+class KIWAY_PLAYER : public wxFrame, public KIWAY_HOLDER
+#else
+class KIWAY_PLAYER : public EDA_BASE_FRAME
+#endif
 {
 public:
     KIWAY_PLAYER( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType,
@@ -121,7 +70,7 @@ public:
             const wxPoint& aPos, const wxSize& aSize, long aStyle,
             const wxString& aWdoName = wxFrameNameStr );
 
-    ~KIWAY_PLAYER();
+    ~KIWAY_PLAYER() throw();
 
     //----<Cross Module API>-----------------------------------------------------
 
@@ -166,7 +115,7 @@ public:
      *
      * @return bool - true if all requested files were opened OK, else false.
      */
-    VTBL_ENTRY bool OpenProjectFiles( const std::vector<wxString>& aFileList, int aCtl = 0 )
+    virtual bool OpenProjectFiles( const std::vector<wxString>& aFileList, int aCtl = 0 )
     {
         // overload me for your wxFrame type.
 
@@ -177,6 +126,7 @@ public:
 
         return false;
     }
+
 
     /**
      * Function ShowModal
@@ -193,7 +143,7 @@ public:
      * @return bool - true if frame implementation called KIWAY_PLAYER::DismissModal()
      *  with aRetVal of true.
      */
-    VTBL_ENTRY bool ShowModal( wxString* aResult = NULL, wxWindow* aResultantFocusWindow = NULL );
+    virtual bool ShowModal( wxString* aResult = NULL, wxWindow* aResultantFocusWindow = NULL );
 
     //----</Cross Module API>----------------------------------------------------
 
@@ -208,12 +158,10 @@ public:
     /**
      * Our version of Destroy() which is virtual from wxWidgets
      */
-    bool Destroy();
-
-protected:
+    bool Destroy() override;
 
     bool IsModal()                      { return m_modal; }
-    void SetModal( bool IsModal )       { m_modal = IsModal; }
+    void SetModal( bool aIsModal )      { m_modal = aIsModal; }
 
     /**
      * Function IsDismissed
@@ -224,6 +172,8 @@ protected:
     bool IsDismissed();
 
     void DismissModal( bool aRetVal, const wxString& aResult = wxEmptyString );
+
+protected:
 
     /// event handler, routes to derivative specific virtual KiwayMailIn()
     void kiway_express( KIWAY_EXPRESS& aEvent );
@@ -241,7 +191,9 @@ protected:
     wxString        m_modal_string;
     bool            m_modal_ret_val;    // true if a selection was made
 
+#ifndef SWIG
     DECLARE_EVENT_TABLE()
+#endif
 };
 
 

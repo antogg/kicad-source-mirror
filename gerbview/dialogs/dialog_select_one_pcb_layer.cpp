@@ -1,3 +1,27 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2012-2014 Jean-Pierre Charras  jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2014 KiCad Developers, see change_log.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 /**
  * @file dialog_select_one_pcb_layer.cpp
  * @brief Set up a dialog to choose a PCB Layer.
@@ -7,7 +31,7 @@
 #include <gerbview_frame.h>
 #include <select_layers_to_pcb.h>
 
-#define NB_PCB_LAYERS LAYER_ID_COUNT
+#define NB_PCB_LAYERS PCB_LAYER_ID_COUNT
 #define FIRST_COPPER_LAYER 0
 #define LAST_COPPER_LAYER 31
 
@@ -113,8 +137,11 @@ SELECT_LAYER_DIALOG::SELECT_LAYER_DIALOG( GERBVIEW_FRAME* parent,
     }
 
     // Build the layer list; build non copper layers list
-    for( ; ii < NB_PCB_LAYERS; ++ii )
+    for( ; ; ++ii )
     {
+        if( GetPCBDefaultLayerName( ii ) == "" )    // End of list
+            break;
+
         layerList.Add( GetPCBDefaultLayerName( ii ) );
 
         if( ii == aDefaultLayer )
@@ -178,7 +205,7 @@ void SELECT_LAYER_DIALOG::OnCancelClick( wxCommandEvent& event )
 }
 
 // This function is a duplicate of
-// const wxChar* LSET::Name( LAYER_ID aLayerId )
+// const wxChar* LSET::Name( PCB_LAYER_ID aLayerId )
 // However it avoids a dependency to Pcbnew code.
 const wxString GetPCBDefaultLayerName( int aLayerId )
 {
@@ -236,17 +263,11 @@ const wxString GetPCBDefaultLayerName( int aLayerId )
     case Eco1_User:         txt = wxT( "Eco1.User" );       break;
     case Eco2_User:         txt = wxT( "Eco2.User" );       break;
     case Edge_Cuts:         txt = wxT( "Edge.Cuts" );       break;
-    case Margin:            txt = wxT( "Margin" );          break;
 
-    // Footprint
-    case F_CrtYd:           txt = wxT( "F.CrtYd" );         break;
-    case B_CrtYd:           txt = wxT( "B.CrtYd" );         break;
-    case F_Fab:             txt = wxT( "F.Fab" );           break;
-    case B_Fab:             txt = wxT( "B.Fab" );           break;
+    // Pcbnew konws some oter layers. But any other layer is not suitable for export.
 
-    default:
-        wxASSERT_MSG( 0, wxT( "aLayerId out of range" ) );
-                            txt = wxT( "BAD INDEX!" );      break;
+    default:    // Sentinel
+        txt = wxT( "" ); break;
     }
 
     return wxString( txt );

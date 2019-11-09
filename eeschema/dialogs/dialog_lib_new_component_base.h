@@ -1,8 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Nov  5 2013)
+// C++ code generated with wxFormBuilder (version Dec 30 2017)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #ifndef __DIALOG_LIB_NEW_COMPONENT_BASE_H__
@@ -11,8 +11,6 @@
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class DIALOG_SHIM;
-
 #include "dialog_shim.h"
 #include <wx/string.h>
 #include <wx/stattext.h>
@@ -37,17 +35,15 @@ class DIALOG_LIB_NEW_COMPONENT_BASE : public DIALOG_SHIM
 	private:
 	
 	protected:
-		wxStaticText* m_staticText8;
-		wxStaticText* m_staticText2;
+		wxStaticText* m_staticTextName;
 		wxTextCtrl* m_textName;
-		wxStaticText* m_staticText9;
+		wxStaticText* m_staticTextDes;
 		wxTextCtrl* m_textReference;
-		wxStaticText* m_staticText10;
+		wxStaticText* m_staticTextUnits;
 		wxSpinCtrl* m_spinPartCount;
+		wxCheckBox* m_checkLockItems;
 		wxCheckBox* m_checkHasConversion;
 		wxCheckBox* m_checkIsPowerSymbol;
-		wxCheckBox* m_checkLockItems;
-		wxStaticText* m_staticText11;
 		wxStaticText* m_staticText12;
 		wxSpinCtrl* m_spinPinTextPosition;
 		wxCheckBox* m_checkShowPinNumber;
@@ -59,7 +55,7 @@ class DIALOG_LIB_NEW_COMPONENT_BASE : public DIALOG_SHIM
 	
 	public:
 		
-		DIALOG_LIB_NEW_COMPONENT_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Component Properties"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize, long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
+		DIALOG_LIB_NEW_COMPONENT_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("New Symbol"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize, long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
 		~DIALOG_LIB_NEW_COMPONENT_BASE();
 	
 };

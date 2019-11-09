@@ -5,7 +5,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2012 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2015 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,83 +28,42 @@
 #ifndef _DIALOG_NETLIST_H_
 #define _DIALOG_NETLIST_H_
 
-#include <dialog_netlist_fbp.h>
+#include <dialog_netlist_base.h>
 
 
 class MODULE;
 class NETLIST;
 
 
-class DIALOG_NETLIST : public DIALOG_NETLIST_FBP
+class DIALOG_NETLIST : public DIALOG_NETLIST_BASE
 {
 private:
     PCB_EDIT_FRAME* m_parent;
-    wxDC*           m_dc;
-    bool            m_silentMode;   // if true, do not display warning message about undo
-    bool            m_reportAll;    // If true report all messages,
-                                    // false, report only warnings or errors
-    wxConfigBase*       m_config;
+    wxString&       m_netlistPath;
+    wxConfigBase*   m_config;
+    bool            m_initialized;
+    bool            m_runDragCommand;
 
 public:
-    DIALOG_NETLIST( PCB_EDIT_FRAME* aParent, wxDC* aDC, const wxString & aNetlistFullFilename );
+    DIALOG_NETLIST( PCB_EDIT_FRAME* aParent, wxString& aNetlistFullFilename );
     ~DIALOG_NETLIST();
 
-    // return true if the user choice is to use the .cmp file
-    // created by CvPcb to know footprint names associated to components
-    // and false to use the netlist only
-    bool UseCmpFileForFpNames()
-    {
-        return m_cmpNameSourceOpt->GetSelection() == 1;
-    }
-
 private:
-    /**
-     * Function verifyFootprints
-     * compares the netlist to the board and builds a list of duplicate, missing, and
-     * extra footprints.
-     *
-     * @param aNetlistFilename the netlist filename.
-     * @param aCmpFilename the component link filename.
-     * @param aDuplicate the list of duplicate modules to populate
-     * @param aMissing the list of missing module references and values to populate. For
-     *                 each missing item, the first string is the reference designator and
-     *                 the second is the value.
-     * @param aNotInNetlist is the list of component footprint found in the netlist but not on
-     *                      the board.
-     * @return true if no errors occurred while reading the netlist. Otherwise false.
-     */
-    bool verifyFootprints( const wxString&         aNetlistFilename,
-                           const wxString&         aCmpFilename,
-                           std::vector< MODULE* >& aDuplicate,
-                           wxArrayString&          aMissing,
-                           std::vector< MODULE* >& aNotInNetlist );
+    void onFilenameChanged();
 
-    /**
-     * Function loadFootprints
-     * loads the footprints for each #COMPONENT in \a aNetlist from the list of libraries.
-     *
-     * @param aNetlist is the netlist of components to load the footprints into.
-     */
-    void loadFootprints( NETLIST& aNetlist );
+    void loadNetlist( bool aDryRun );
+
+
 
     // Virtual event handlers:
-    void OnOpenNetlistClick( wxCommandEvent& event );
-    void OnReadNetlistFileClick( wxCommandEvent& event );
-    void OnTestFootprintsClick( wxCommandEvent& event );
-    void OnCompileRatsnestClick( wxCommandEvent& event );
-    void OnCancelClick( wxCommandEvent& event );
-    void OnSaveMessagesToFile( wxCommandEvent& aEvent );
-    void OnClickSilentMode( wxCommandEvent& event )
-    {
-        m_silentMode = m_checkBoxSilentMode->GetValue();
-    }
-    void OnClickFullMessages( wxCommandEvent& event )
-    {
-        m_reportAll = m_checkBoxFullMessages->GetValue();
-    }
-
-    void OnUpdateUISaveMessagesToFile( wxUpdateUIEvent& aEvent );
-    void OnUpdateUIValidNetlistFile( wxUpdateUIEvent& aEvent );
+    void OnOpenNetlistClick( wxCommandEvent& event ) override;
+    void OnUpdatePCB( wxCommandEvent& event ) override;
+    void OnFilenameKillFocus( wxFocusEvent& event ) override;
+    void OnMatchChanged( wxCommandEvent& event ) override;
+    void OnOptionChanged( wxCommandEvent& event ) override;
+    void OnTestFootprintsClick( wxCommandEvent& event ) override;
+    void OnCompileRatsnestClick( wxCommandEvent& event ) override;
+    void OnUpdateUIValidNetlistFile( wxUpdateUIEvent& aEvent ) override;
 };
 
 

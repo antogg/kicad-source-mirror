@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,15 +22,11 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file sch_junction.h
- */
-
 #ifndef _SCH_JUNCTION_H_
 #define _SCH_JUNCTION_H_
 
 
-#include <sch_item_struct.h>
+#include <sch_item.h>
 class NETLIST_OBJECT_LIST;
 
 class SCH_JUNCTION : public SCH_ITEM
@@ -45,7 +41,12 @@ public:
 
     ~SCH_JUNCTION() { }
 
-    wxString GetClass() const
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && SCH_JUNCTION_T == aItem->Type();
+    }
+
+    wxString GetClass() const override
     {
         return wxT( "SCH_JUNCTION" );
     }
@@ -53,60 +54,65 @@ public:
     static int GetSymbolSize() { return m_symbolSize; }
     static void SetSymbolSize( int aSize ) { m_symbolSize = aSize; }
 
-    void SwapData( SCH_ITEM* aItem );
+    // Return the size the symbol should be drawn at.  This is GetSymbolSize() clamped to be
+    // no less than the current wire width.
+    static int GetEffectiveSymbolSize();
 
-    const EDA_RECT GetBoundingBox() const;    // Virtual
+    void SwapData( SCH_ITEM* aItem ) override;
 
-    void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-               GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor = UNSPECIFIED_COLOR );
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
-    bool Save( FILE* aFile ) const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg );
+    void Print( wxDC* aDC, const wxPoint& aOffset ) override;
 
-    void Move( const wxPoint& aMoveVector )
+    void Move( const wxPoint& aMoveVector ) override
     {
         m_pos += aMoveVector;
     }
 
-    void MirrorY( int aYaxis_position );
+    void MirrorY( int aYaxis_position ) override;
+    void MirrorX( int aXaxis_position ) override;
+    void Rotate( wxPoint aPosition ) override;
 
-    void MirrorX( int aXaxis_position );
+    void GetEndPoints( std::vector <DANGLING_END_ITEM>& aItemList ) override;
 
-    void Rotate( wxPoint aPosition );
+    bool IsConnectable() const override { return true; }
 
-    void GetEndPoints( std::vector <DANGLING_END_ITEM>& aItemList );
+    void GetConnectionPoints( std::vector< wxPoint >& aPoints ) const override;
 
-    bool IsSelectStateChanged( const wxRect& aRect );
+    bool CanConnect( const SCH_ITEM* aItem ) const override
+    {
+        return ( aItem->Type() == SCH_LINE_T &&
+                ( aItem->GetLayer() == LAYER_WIRE || aItem->GetLayer() == LAYER_BUS ) ) ||
+                aItem->Type() == SCH_COMPONENT_T;
+    }
 
-    bool IsConnectable() const { return true; }
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override
+    {
+        return wxString( _( "Junction" ) );
+    }
 
-    void GetConnectionPoints( std::vector< wxPoint >& aPoints ) const;
+    BITMAP_DEF GetMenuImage() const override;
 
-    wxString GetSelectMenuText() const { return wxString( _( "Junction" ) ); }
+    void GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems, SCH_SHEET_PATH* aSheetPath ) override;
 
-    BITMAP_DEF GetMenuImage() const { return  add_junction_xpm; }
+    wxPoint GetPosition() const override { return m_pos; }
+    void SetPosition( const wxPoint& aPosition ) override { m_pos = aPosition; }
 
-    void GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems, SCH_SHEET_PATH* aSheetPath );
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override;
+    bool HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy = 0 ) const override;
 
-    wxPoint GetPosition() const { return m_pos; }
+    void Plot( PLOTTER* aPlotter ) override;
 
-    void SetPosition( const wxPoint& aPosition ) { m_pos = aPosition; }
-
-    bool HitTest( const wxPoint& aPosition, int aAccuracy ) const;
-
-    bool HitTest( const EDA_RECT& aRect, bool aContained = false,
-                          int aAccuracy = 0 ) const;
-    void Plot( PLOTTER* aPlotter );
-
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 #if defined(DEBUG)
-    void Show( int nestLevel, std::ostream& os ) const;     // override
+    void Show( int nestLevel, std::ostream& os ) const override;
 #endif
 
 private:
-    bool doIsConnected( const wxPoint& aPosition ) const;
+    bool doIsConnected( const wxPoint& aPosition ) const override;
 };
 
 

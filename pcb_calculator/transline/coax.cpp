@@ -40,7 +40,18 @@
 
 COAX::COAX() : TRANSLINE()
 {
-    m_name = "Coax";
+    m_Name = "Coax";
+
+    // Initialize these variables mainly to avoid warnings from a static analyzer
+    mur = 0.0;              // magnetic permeability of substrate
+    din = 0.0;              // Inner diameter of cable
+    dout = 0.0;             // Outer diameter of cable
+    l = 0.0;                // Length of cable
+    Z0 = 0.0;               // characteristic impedance
+    ang_l = 0.0;            // Electrical length in angle
+    atten_dielectric = 0.0; // Loss in dielectric (dB)
+    atten_cond = 0.0;       // Loss in conductors (dB)
+    fc = 0.0;               // Cutoff frequency for higher order modes
 }
 
 
@@ -52,9 +63,9 @@ void COAX::get_coax_sub()
 {
     er    = getProperty( EPSILONR_PRM );
     mur   = getProperty( MUR_PRM );
-    murC  = getProperty( MURC_PRM );
-    tand  = getProperty( TAND_PRM );
-    sigma = 1.0 / getProperty( RHO_PRM );
+    m_murC  = getProperty( MURC_PRM );
+    m_tand  = getProperty( TAND_PRM );
+    m_sigma = 1.0 / getProperty( RHO_PRM );
 }
 
 
@@ -64,7 +75,7 @@ void COAX::get_coax_sub()
  */
 void COAX::get_coax_comp()
 {
-    f = getProperty( FREQUENCY_PRM );
+    m_freq = getProperty( FREQUENCY_PRM );
 }
 
 
@@ -95,7 +106,7 @@ double COAX::alphad_coax()
 {
     double ad;
 
-    ad = (M_PI / C0) * f * sqrt( er ) * tand;
+    ad = (M_PI / C0) * m_freq * sqrt( er ) * m_tand;
     ad = ad * 20.0 / log( 10.0 );
     return ad;
 }
@@ -105,7 +116,7 @@ double COAX::alphac_coax()
 {
     double ac, Rs;
 
-    Rs = sqrt( M_PI * f * murC * MU0 / sigma );
+    Rs = sqrt( M_PI * m_freq * m_murC * MU0 / m_sigma );
     ac = sqrt( er ) * ( ( (1 / din) + (1 / dout) ) / log( dout / din ) ) * (Rs / ZF0);
     ac = ac * 20.0 / log( 10.0 );
     return ac;
@@ -133,7 +144,7 @@ void COAX::analyze()
         Z0 = ( ZF0 / 2 / M_PI / sqrt( er ) ) * log( dout / din );
     }
 
-    lambda_g = ( C0 / (f) ) / sqrt( er * mur );
+    lambda_g = ( C0 / (m_freq) ) / sqrt( er * mur );
     /* calculate electrical angle */
     ang_l = (2.0 * M_PI * l) / lambda_g; /* in radians */
 
@@ -176,7 +187,7 @@ void COAX::synthesize()
         setProperty( PHYS_DIAM_OUT_PRM, dout );
     }
 
-    lambda_g = ( C0 / (f) ) / sqrt( er * mur );
+    lambda_g = ( C0 / (m_freq) ) / sqrt( er * mur );
     /* calculate physical length */
     l = (lambda_g * ang_l) / (2.0 * M_PI); /* in m */
     setProperty( PHYS_LEN_PRM, l );
@@ -190,8 +201,7 @@ void COAX::synthesize()
  */
 void COAX::show_results()
 {
-    double fc;
-    short  m, n;
+    int  m, n;
     char   text[256], txt[256];
 
     atten_dielectric = alphad_coax() * l;
@@ -203,14 +213,14 @@ void COAX::show_results()
 
     n  = 1;
     fc = C0 / (M_PI * (dout + din) / (double) n);
-    if( fc > f )
+    if( fc > m_freq )
         strcpy( text, "none" );
     else
     {
         strcpy( text, "H(1,1) " );
         m  = 2;
         fc = C0 / ( 2 * (dout - din) / (double) (m - 1) );
-        while( (fc <= f) && (m<10) )
+        while( (fc <= m_freq) && ( m < 10 ) )
         {
             sprintf( txt, "H(n,%d) ", m );
             strcat( text, txt );
@@ -222,12 +232,12 @@ void COAX::show_results()
 
     m  = 1;
     fc = C0 / (2 * (dout - din) / (double) m);
-    if( fc > f )
+    if( fc > m_freq )
         strcpy( text, "none" );
     else
     {
         strcpy( text, "" );
-        while( (fc <= f) && (m<10) )
+        while( (fc <= m_freq) && ( m < 10 ) )
         {
             sprintf( txt, "E(n,%d) ", m );
             strcat( text, txt );

@@ -1,11 +1,7 @@
-/**
- * @file trigo.h
- */
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -25,11 +21,16 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-
 #ifndef TRIGO_H
 #define TRIGO_H
+
+/**
+ * @file trigo.h
+ */
+
 #include <math.h>
 #include <wx/gdicmn.h> // For wxPoint
+#include <math/vector2d.h>
 
 /**
  * Function IsPointOnSegment
@@ -51,11 +52,13 @@ bool IsPointOnSegment( const wxPoint& aSegStart, const wxPoint& aSegEnd,
  * @param a_p2_l1 The second point of the first line.
  * @param a_p1_l2 The first point of the second line.
  * @param a_p2_l2 The second point of the second line.
+ * @param aIntersectionPoint is filled with the intersection point if it exists
  * @return bool - true if the two segments defined by four points intersect.
  * (i.e. if the 2 segments have at least a common point)
  */
 bool SegmentIntersectsSegment( const wxPoint &a_p1_l1, const wxPoint &a_p2_l1,
-                               const wxPoint &a_p1_l2, const wxPoint &a_p2_l2 );
+                               const wxPoint &a_p1_l2, const wxPoint &a_p2_l2,
+                               wxPoint* aIntersectionPoint = nullptr );
 
 /*
  * Calculate the new point of coord coord pX, pY,
@@ -78,6 +81,13 @@ inline void RotatePoint( wxPoint* point, double angle )
     RotatePoint( &point->x, &point->y, angle );
 }
 
+inline void RotatePoint( VECTOR2I& point, double angle )
+{
+    RotatePoint( &point.x, &point.y, angle );
+}
+
+void RotatePoint( VECTOR2I& point, const VECTOR2I& centre, double angle );
+
 /*
  * Calculates the new coord point point
  * for a center rotation center and angle in (1 / 10 degree)
@@ -87,6 +97,15 @@ void RotatePoint( wxPoint *point, const wxPoint & centre, double angle );
 void RotatePoint( double *pX, double *pY, double angle );
 
 void RotatePoint( double *pX, double *pY, double cx, double cy, double angle );
+
+/**
+ * Determine the center of an arc/circle, given three points on its circumference
+ * @param aStart The starting point of the circle (equivalent to aEnd)
+ * @param aMid The point on the arc, half-way between aStart and aEnd
+ * @param aEnd The ending point of the circle (equivalent to aStart)
+ * @return The center of the circle
+ */
+const VECTOR2I GetArcCenter( const VECTOR2I& aStart, const VECTOR2I& aMid, const VECTOR2I& aEnd );
 
 /* Return the arc tangent of 0.1 degrees coord vector dx, dy
  * between -1800 and 1800
@@ -198,22 +217,80 @@ inline double RAD2DECIDEG( double rad ) { return rad * 1800.0 / M_PI; }
 /* These are templated over T (and not simply double) because eeschema
    is still using int for angles in some place */
 
-/// Normalize angle to be in the -360.0 .. 360.0:
-template <class T> inline void NORMALIZE_ANGLE_360( T &Angle )
+/// Normalize angle to be  >=-360.0 and <= 360.0
+/// Angle can be equal to -360 or +360
+template <class T> inline T NormalizeAngle360Max( T Angle )
 {
     while( Angle < -3600 )
         Angle += 3600;
     while( Angle > 3600 )
         Angle -= 3600;
+    return Angle;
+}
+
+/// Normalize angle to be > -360.0 and < 360.0
+/// Angle equal to -360 or +360 are set to 0
+template <class T> inline T NormalizeAngle360Min( T Angle )
+{
+    while( Angle <= -3600 )
+        Angle += 3600;
+    while( Angle >= 3600 )
+        Angle -= 3600;
+    return Angle;
 }
 
 /// Normalize angle to be in the 0.0 .. 360.0 range:
-template <class T> inline void NORMALIZE_ANGLE_POS( T &Angle )
+/// angle is in 1/10 degees
+template <class T> inline T NormalizeAnglePos( T Angle )
 {
     while( Angle < 0 )
         Angle += 3600;
     while( Angle >= 3600 )
         Angle -= 3600;
+    return Angle;
+}
+template <class T> inline void NORMALIZE_ANGLE_POS( T& Angle )
+{
+    Angle = NormalizeAnglePos( Angle );
+}
+
+
+/// Normalize angle to be in the 0.0 .. 360.0 range:
+/// angle is in degrees
+inline double NormalizeAngleDegreesPos( double Angle )
+{
+    while( Angle < 0 )
+        Angle += 360.0;
+    while( Angle >= 360.0 )
+        Angle -= 360.0;
+    return Angle;
+}
+
+
+inline void NORMALIZE_ANGLE_DEGREES_POS( double& Angle )
+{
+    Angle = NormalizeAngleDegreesPos( Angle );
+}
+
+
+inline double NormalizeAngleRadiansPos( double Angle )
+{
+    while( Angle < 0 )
+        Angle += (2 * M_PI );
+    while( Angle >= ( 2 * M_PI ) )
+        Angle -= ( 2 * M_PI );
+    return Angle;
+}
+
+/// Normalize angle to be aMin < angle <= aMax
+/// angle is in degrees
+inline double NormalizeAngleDegrees( double Angle, double aMin, double aMax )
+{
+    while( Angle < aMin )
+        Angle += 360.0;
+    while( Angle >= aMax )
+        Angle -= 360.0;
+    return Angle;
 }
 
 /// Add two angles (keeping the result normalized). T2 is here
@@ -226,32 +303,51 @@ template <class T, class T2> inline T AddAngles( T a1, T2 a2 )
     return a1;
 }
 
-template <class T> inline void NEGATE_AND_NORMALIZE_ANGLE_POS( T &Angle )
+
+template <class T> inline T NegateAndNormalizeAnglePos( T Angle )
 {
     Angle = -Angle;
     while( Angle < 0 )
         Angle += 3600;
     while( Angle >= 3600 )
         Angle -= 3600;
+    return Angle;
+}
+template <class T> inline void NEGATE_AND_NORMALIZE_ANGLE_POS( T& Angle )
+{
+    Angle = NegateAndNormalizeAnglePos( Angle );
 }
 
+
 /// Normalize angle to be in the -90.0 .. 90.0 range
-template <class T> inline void NORMALIZE_ANGLE_90( T &Angle )
+template <class T> inline T NormalizeAngle90( T Angle )
 {
     while( Angle < -900 )
         Angle += 1800;
     while( Angle > 900 )
         Angle -= 1800;
+    return Angle;
+}
+template <class T> inline void NORMALIZE_ANGLE_90( T& Angle )
+{
+    Angle = NormalizeAngle90( Angle );
 }
 
+
 /// Normalize angle to be in the -180.0 .. 180.0 range
-template <class T> inline void NORMALIZE_ANGLE_180( T &Angle )
+template <class T> inline T NormalizeAngle180( T Angle )
 {
     while( Angle <= -1800 )
         Angle += 3600;
     while( Angle > 1800 )
         Angle -= 3600;
+    return Angle;
 }
+template <class T> inline void NORMALIZE_ANGLE_180( T& Angle )
+{
+    Angle = NormalizeAngle180( Angle );
+}
+
 
 /**
  * Circle generation utility: computes r * sin(a)

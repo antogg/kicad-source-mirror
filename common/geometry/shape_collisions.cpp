@@ -26,10 +26,12 @@
 #include <math.h>
 
 #include <geometry/shape.h>
+#include <geometry/shape_arc.h>
 #include <geometry/shape_line_chain.h>
 #include <geometry/shape_circle.h>
 #include <geometry/shape_rect.h>
 #include <geometry/shape_segment.h>
+#include "../../include/geometry/shape_simple.h"
 
 typedef VECTOR2I::extended_type ecoord;
 
@@ -120,14 +122,26 @@ static inline bool Collide( const SHAPE_RECT& aA, const SHAPE_CIRCLE& aB, int aC
 
 static VECTOR2I pushoutForce( const SHAPE_CIRCLE& aA, const SEG& aB, int aClearance )
 {
-    VECTOR2I nearest = aB.NearestPoint( aA.GetCenter() );
-    VECTOR2I f (0, 0);
+    VECTOR2I f( 0, 0 );
 
-    int dist = ( nearest - aA.GetCenter() ).EuclideanNorm();
-    int min_dist = aClearance + aA.GetRadius();
+    const VECTOR2I c = aA.GetCenter();
+    const VECTOR2I nearest = aB.NearestPoint( c );
+
+    const int r = aA.GetRadius();
+
+    int dist = ( nearest - c ).EuclideanNorm();
+    int min_dist = aClearance + r;
 
     if( dist < min_dist )
-        f = ( aA.GetCenter() - nearest ).Resize ( min_dist - dist + 10 );
+    {
+        for( int corr = 0; corr < 5; corr++ )
+        {
+            f = ( aA.GetCenter() - nearest ).Resize( min_dist - dist + corr );
+
+            if( aB.Distance( c + f ) >= min_dist )
+                break;
+        }
+    }
 
     return f;
 }
@@ -137,12 +151,9 @@ static inline bool Collide( const SHAPE_CIRCLE& aA, const SHAPE_LINE_CHAIN& aB, 
                             bool aNeedMTV, VECTOR2I& aMTV )
 {
     bool found = false;
-    VECTOR2I::extended_type clSq = (VECTOR2I::extended_type) aClearance * aClearance;
-
 
     for( int s = 0; s < aB.SegmentCount(); s++ )
     {
-
         if( aA.Collide( aB.CSegment( s ), aClearance ) )
         {
             found = true;
@@ -168,14 +179,40 @@ static inline bool Collide( const SHAPE_CIRCLE& aA, const SHAPE_LINE_CHAIN& aB, 
 }
 
 
+static inline bool Collide( const SHAPE_CIRCLE& aA, const SHAPE_SIMPLE& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    bool found;
+    const SHAPE_LINE_CHAIN& lc( aB.Vertices() );
+
+    found = lc.Distance( aA.GetCenter() ) <= aClearance + aA.GetRadius();
+
+    if( !aNeedMTV || !found )
+        return found;
+
+    SHAPE_CIRCLE cmoved( aA );
+    VECTOR2I f_total( 0, 0 );
+
+    for( int s = 0; s < lc.SegmentCount(); s++ )
+    {
+        VECTOR2I f = pushoutForce( cmoved, lc.CSegment( s ), aClearance );
+        cmoved.SetCenter( cmoved.GetCenter() + f );
+        f_total += f;
+    }
+
+    aMTV = f_total;
+    return found;
+}
+
+
 static inline bool Collide( const SHAPE_CIRCLE& aA, const SHAPE_SEGMENT& aSeg, int aClearance,
                             bool aNeedMTV, VECTOR2I& aMTV )
 {
-	bool col = aA.Collide( aSeg.GetSeg(), aClearance + aSeg.GetWidth() / 2);
+    bool col = aA.Collide( aSeg.GetSeg(), aClearance + aSeg.GetWidth() / 2);
 
     if( col && aNeedMTV )
     {
-        aMTV = pushoutForce( aA, aSeg.GetSeg(), aClearance + aSeg.GetWidth() / 2);
+        aMTV = -pushoutForce( aA, aSeg.GetSeg(), aClearance + aSeg.GetWidth() / 2);
     }
     return col;
 }
@@ -189,6 +226,20 @@ static inline bool Collide( const SHAPE_LINE_CHAIN& aA, const SHAPE_LINE_CHAIN& 
             return true;
 
     return false;
+}
+
+
+static inline bool Collide( const SHAPE_LINE_CHAIN& aA, const SHAPE_SIMPLE& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    return Collide( aA, aB.Vertices(), aClearance, aNeedMTV, aMTV );
+}
+
+
+static inline bool Collide( const SHAPE_SIMPLE& aA, const SHAPE_SIMPLE& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    return Collide( aA.Vertices(), aB.Vertices(), aClearance, aNeedMTV, aMTV );
 }
 
 
@@ -207,136 +258,329 @@ static inline bool Collide( const SHAPE_RECT& aA, const SHAPE_LINE_CHAIN& aB, in
 }
 
 
+static inline bool Collide( const SHAPE_RECT& aA, const SHAPE_SIMPLE& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    return Collide( aA, aB.Vertices(), aClearance, aNeedMTV, aMTV );
+}
+
+
 static inline bool Collide( const SHAPE_RECT& aA, const SHAPE_SEGMENT& aSeg, int aClearance,
                             bool aNeedMTV, VECTOR2I& aMTV )
 {
-	return aA.Collide( aSeg.GetSeg(), aClearance + aSeg.GetWidth() / 2 );
+    return aA.Collide( aSeg.GetSeg(), aClearance + aSeg.GetWidth() / 2 );
 }
 
 
 static inline bool Collide( const SHAPE_SEGMENT& aA, const SHAPE_SEGMENT& aB, int aClearance,
                             bool aNeedMTV, VECTOR2I& aMTV )
 {
-	return aA.Collide( aB.GetSeg(), aClearance + aB.GetWidth() / 2 );
+    return aA.Collide( aB.GetSeg(), aClearance + aB.GetWidth() / 2 );
 }
 
 
 static inline bool Collide( const SHAPE_LINE_CHAIN& aA, const SHAPE_SEGMENT& aB, int aClearance,
                             bool aNeedMTV, VECTOR2I& aMTV )
 {
-	if( aA.Collide( aB.GetSeg(), aClearance + aB.GetWidth() / 2 ) )
-		return true;
+    if( aA.Collide( aB.GetSeg(), aClearance + aB.GetWidth() / 2 ) )
+        return true;
 
-	return false;
+    return false;
 }
 
 
-template<class ShapeAType, class ShapeBType> bool
-CollCase( const SHAPE* aA, const SHAPE* aB, int aClearance, bool aNeedMTV, VECTOR2I& aMTV )
+static inline bool Collide( const SHAPE_SIMPLE& aA, const SHAPE_SEGMENT& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
 {
-	return Collide (*static_cast<const ShapeAType*>( aA ),
-					*static_cast<const ShapeBType*>( aB ),
-					aClearance, aNeedMTV, aMTV);
+    return Collide( aA.Vertices(), aB, aClearance, aNeedMTV, aMTV );
 }
+
+static inline bool Collide( const SHAPE_RECT& aA, const SHAPE_RECT& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    return Collide( aA.Outline(), aB.Outline(), aClearance, aNeedMTV, aMTV );
+}
+
+static inline bool Collide( const SHAPE_ARC& aA, const SHAPE_RECT& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    const auto lc = aA.ConvertToPolyline();
+    return Collide( lc, aB.Outline(), aClearance, aNeedMTV, aMTV );
+}
+
+static inline bool Collide( const SHAPE_ARC& aA, const SHAPE_CIRCLE& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    const auto lc = aA.ConvertToPolyline();
+    bool rv = Collide( aB, lc, aClearance, aNeedMTV, aMTV );
+
+    if( rv && aNeedMTV )
+        aMTV = -aMTV;
+
+    return rv;
+}
+
+static inline bool Collide( const SHAPE_ARC& aA, const SHAPE_LINE_CHAIN& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    const auto lc = aA.ConvertToPolyline();
+    return Collide( lc, aB, aClearance, aNeedMTV, aMTV );
+}
+
+static inline bool Collide( const SHAPE_ARC& aA, const SHAPE_SEGMENT& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    const auto lc = aA.ConvertToPolyline();
+    return Collide( lc, aB, aClearance, aNeedMTV, aMTV );
+}
+
+static inline bool Collide( const SHAPE_ARC& aA, const SHAPE_SIMPLE& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    const auto lc = aA.ConvertToPolyline();
+    return Collide( lc, aB.Vertices(), aClearance, aNeedMTV, aMTV );
+}
+
+static inline bool Collide( const SHAPE_ARC& aA, const SHAPE_ARC& aB, int aClearance,
+                            bool aNeedMTV, VECTOR2I& aMTV )
+{
+    const auto lcA = aA.ConvertToPolyline();
+    const auto lcB = aB.ConvertToPolyline();
+    return Collide( lcA, lcB, aClearance, aNeedMTV, aMTV );
+}
+
+template<class ShapeAType, class ShapeBType>
+inline bool CollCase( const SHAPE* aA, const SHAPE* aB, int aClearance, bool aNeedMTV, VECTOR2I& aMTV )
+{
+    return Collide (*static_cast<const ShapeAType*>( aA ),
+                    *static_cast<const ShapeBType*>( aB ),
+                    aClearance, aNeedMTV, aMTV);
+}
+
+template<class ShapeAType, class ShapeBType>
+inline bool CollCaseReversed ( const SHAPE* aA, const SHAPE* aB, int aClearance, bool aNeedMTV, VECTOR2I& aMTV )
+{
+    bool rv = Collide (*static_cast<const ShapeBType*>( aB ),
+                       *static_cast<const ShapeAType*>( aA ),
+                        aClearance, aNeedMTV, aMTV);
+    if(rv && aNeedMTV)
+        aMTV = -aMTV;
+    return rv;
+}
+
 
 bool CollideShapes( const SHAPE* aA, const SHAPE* aB, int aClearance, bool aNeedMTV, VECTOR2I& aMTV )
 {
-	switch( aA->Type() )
-	{
-		case SH_RECT:
-			switch( aB->Type() )
-			{
-				case SH_CIRCLE:
-					return CollCase<SHAPE_RECT, SHAPE_CIRCLE>( aA, aB, aClearance, aNeedMTV, aMTV );
+    switch( aA->Type() )
+    {
+        case SH_RECT:
+            switch( aB->Type() )
+            {
+                case SH_RECT:
+                    return CollCase<SHAPE_RECT, SHAPE_RECT>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_LINE_CHAIN:
-					return CollCase<SHAPE_RECT, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
+                case SH_CIRCLE:
+                    return CollCase<SHAPE_RECT, SHAPE_CIRCLE>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_SEGMENT:
-					return CollCase<SHAPE_RECT, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
+                case SH_LINE_CHAIN:
+                    return CollCase<SHAPE_RECT, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				default:
-					break;
-			}
+                case SH_SEGMENT:
+                    return CollCase<SHAPE_RECT, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-		case SH_CIRCLE:
-			switch( aB->Type() )
-			{
-				case SH_RECT:
-					return CollCase<SHAPE_RECT, SHAPE_CIRCLE>( aB, aA, aClearance, aNeedMTV, aMTV );
+                case SH_SIMPLE:
+                    return CollCase<SHAPE_RECT, SHAPE_SIMPLE>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_CIRCLE:
-					return CollCase<SHAPE_CIRCLE, SHAPE_CIRCLE>( aA, aB, aClearance, aNeedMTV, aMTV );
+                case SH_ARC:
+                    return CollCaseReversed<SHAPE_RECT, SHAPE_ARC>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_LINE_CHAIN:
-					return CollCase<SHAPE_CIRCLE, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
+                default:
+                    break;
+            }
+            break;
 
-				case SH_SEGMENT:
-					return CollCase<SHAPE_CIRCLE, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
-				default:
-					break;
-			}
+        case SH_CIRCLE:
+            switch( aB->Type() )
+            {
+                case SH_RECT:
+                    return CollCaseReversed<SHAPE_CIRCLE, SHAPE_RECT>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-		case SH_LINE_CHAIN:
-			switch( aB->Type() )
-			{
-				case SH_RECT:
-					return CollCase<SHAPE_RECT, SHAPE_LINE_CHAIN>( aB, aA, aClearance, aNeedMTV, aMTV );
+                case SH_CIRCLE:
+                    return CollCase<SHAPE_CIRCLE, SHAPE_CIRCLE>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_CIRCLE:
-					return CollCase<SHAPE_CIRCLE, SHAPE_LINE_CHAIN>( aB, aA, aClearance, aNeedMTV, aMTV );
+                case SH_LINE_CHAIN:
+                    return CollCase<SHAPE_CIRCLE, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_LINE_CHAIN:
-					return CollCase<SHAPE_LINE_CHAIN, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
+                case SH_SEGMENT:
+                    return CollCase<SHAPE_CIRCLE, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				case SH_SEGMENT:
-					return CollCase<SHAPE_LINE_CHAIN, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
+                case SH_SIMPLE:
+                    return CollCase<SHAPE_CIRCLE, SHAPE_SIMPLE>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				default:
-					break;
-			}
+                case SH_ARC:
+                    return CollCaseReversed<SHAPE_CIRCLE, SHAPE_ARC>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-		case SH_SEGMENT:
-			switch( aB->Type() )
-			{
-				case SH_RECT:
-					return CollCase<SHAPE_RECT, SHAPE_SEGMENT>( aB, aA, aClearance, aNeedMTV, aMTV );
+                default:
+                    break;
+            }
+            break;
 
-				case SH_CIRCLE:
-					return CollCase<SHAPE_CIRCLE, SHAPE_SEGMENT>( aB, aA, aClearance, aNeedMTV, aMTV );
+        case SH_LINE_CHAIN:
+            switch( aB->Type() )
+            {
+                case SH_RECT:
+                    return CollCase<SHAPE_RECT, SHAPE_LINE_CHAIN>( aB, aA, aClearance, aNeedMTV, aMTV );
 
-				case SH_LINE_CHAIN:
-					return CollCase<SHAPE_LINE_CHAIN, SHAPE_SEGMENT>( aB, aA, aClearance, aNeedMTV, aMTV );
+                case SH_CIRCLE:
+                    return CollCase<SHAPE_CIRCLE, SHAPE_LINE_CHAIN>( aB, aA, aClearance, aNeedMTV, aMTV );
 
-				case SH_SEGMENT:
-					return CollCase<SHAPE_SEGMENT, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
+                case SH_LINE_CHAIN:
+                    return CollCase<SHAPE_LINE_CHAIN, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-				default:
-					break;
-			}
+                case SH_SEGMENT:
+                    return CollCase<SHAPE_LINE_CHAIN, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-		default:
-			break;
-	}
+                case SH_SIMPLE:
+                    return CollCase<SHAPE_LINE_CHAIN, SHAPE_SIMPLE>( aA, aB, aClearance, aNeedMTV, aMTV );
 
-	bool unsupported_collision = true;
+                case SH_ARC:
+                    return CollCaseReversed<SHAPE_LINE_CHAIN, SHAPE_ARC>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                default:
+                    break;
+            }
+            break;
+
+        case SH_SEGMENT:
+            switch( aB->Type() )
+            {
+                case SH_RECT:
+                    return CollCase<SHAPE_RECT, SHAPE_SEGMENT>( aB, aA, aClearance, aNeedMTV, aMTV );
+
+                case SH_CIRCLE:
+                    return CollCaseReversed<SHAPE_SEGMENT, SHAPE_CIRCLE>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_LINE_CHAIN:
+                    return CollCase<SHAPE_LINE_CHAIN, SHAPE_SEGMENT>( aB, aA, aClearance, aNeedMTV, aMTV );
+
+                case SH_SEGMENT:
+                    return CollCase<SHAPE_SEGMENT, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_SIMPLE:
+                    return CollCase<SHAPE_SIMPLE, SHAPE_SEGMENT>( aB, aA, aClearance, aNeedMTV, aMTV );
+
+                case SH_ARC:
+                    return CollCaseReversed<SHAPE_SEGMENT, SHAPE_ARC>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                default:
+                    break;
+            }
+            break;
+
+        case SH_SIMPLE:
+            switch( aB->Type() )
+            {
+                case SH_RECT:
+                    return CollCase<SHAPE_RECT, SHAPE_SIMPLE>( aB, aA, aClearance, aNeedMTV, aMTV );
+
+                case SH_CIRCLE:
+                    return CollCase<SHAPE_CIRCLE, SHAPE_SIMPLE>( aB, aA, aClearance, aNeedMTV, aMTV );
+
+                case SH_LINE_CHAIN:
+                    return CollCase<SHAPE_LINE_CHAIN, SHAPE_SIMPLE>( aB, aA, aClearance, aNeedMTV, aMTV );
+
+                case SH_SEGMENT:
+                    return CollCase<SHAPE_SIMPLE, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_SIMPLE:
+                    return CollCase<SHAPE_SIMPLE, SHAPE_SIMPLE>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_ARC:
+                    return CollCaseReversed<SHAPE_SIMPLE, SHAPE_ARC>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                default:
+                    break;
+            }
+            break;
+
+        case SH_ARC:
+            switch( aB->Type() )
+            {
+                case SH_RECT:
+                    return CollCase<SHAPE_ARC, SHAPE_RECT>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_CIRCLE:
+                    return CollCase<SHAPE_ARC, SHAPE_CIRCLE>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_LINE_CHAIN:
+                    return CollCase<SHAPE_ARC, SHAPE_LINE_CHAIN>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_SEGMENT:
+                    return CollCase<SHAPE_ARC, SHAPE_SEGMENT>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_SIMPLE:
+                    return CollCase<SHAPE_ARC, SHAPE_SIMPLE>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                case SH_ARC:
+                    return CollCase<SHAPE_ARC, SHAPE_ARC>( aA, aB, aClearance, aNeedMTV, aMTV );
+
+                default:
+                    break;
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    bool unsupported_collision = true;
     (void) unsupported_collision;   // make gcc quiet
 
-	assert( unsupported_collision == false );
+    assert( unsupported_collision == false );
 
-	return false;
+    return false;
 }
 
 
-bool SHAPE::Collide( const SHAPE* aShape, int aClerance, VECTOR2I& aMTV ) const
+bool SHAPE::Collide( const SHAPE* aShape, int aClearance, VECTOR2I& aMTV ) const
 {
-    return CollideShapes( this, aShape, aClerance, true, aMTV );
+    return CollideShapes( this, aShape, aClearance, true, aMTV );
 }
 
 
-bool SHAPE::Collide( const SHAPE* aShape, int aClerance ) const
+bool SHAPE::Collide( const SHAPE* aShape, int aClearance ) const
 {
     VECTOR2I dummy;
 
-    return CollideShapes( this, aShape, aClerance, false, dummy );
+    return CollideShapes( this, aShape, aClearance, false, dummy );
+}
+
+
+bool SHAPE_RECT::Collide( const SEG& aSeg, int aClearance ) const
+{
+    //VECTOR2I pmin = VECTOR2I( std::min( aSeg.a.x, aSeg.b.x ), std::min( aSeg.a.y, aSeg.b.y ) );
+    //VECTOR2I pmax = VECTOR2I( std::max( aSeg.a.x, aSeg.b.x ), std::max( aSeg.a.y, aSeg.b.y ));
+    //BOX2I r( pmin, VECTOR2I( pmax.x - pmin.x, pmax.y - pmin.y ) );
+
+    //if( BBox( 0 ).SquaredDistance( r ) > aClearance * aClearance )
+    //    return false;
+
+    if( BBox( 0 ).Contains( aSeg.A ) || BBox( 0 ).Contains( aSeg.B ) )
+        return true;
+
+    VECTOR2I vts[] = { VECTOR2I( m_p0.x, m_p0.y ),
+                        VECTOR2I( m_p0.x, m_p0.y + m_h ),
+                        VECTOR2I( m_p0.x + m_w, m_p0.y + m_h ),
+                        VECTOR2I( m_p0.x + m_w, m_p0.y ),
+                        VECTOR2I( m_p0.x, m_p0.y ) };
+
+    for( int i = 0; i < 4; i++ )
+    {
+        SEG s( vts[i], vts[i + 1], i );
+
+        if( s.Distance( aSeg ) < aClearance )
+            return true;
+    }
+
+    return false;
 }

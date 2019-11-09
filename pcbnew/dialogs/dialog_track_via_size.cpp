@@ -23,71 +23,62 @@
  */
 
 #include "dialog_track_via_size.h"
-#include <router/pns_routing_settings.h>
 #include <base_units.h>
 #include <confirm.h>
-#include <boost/optional.hpp>
+#include <widgets/text_ctrl_eval.h>
+#include <core/optional.h>
+#include <eda_draw_frame.h>
 
-DIALOG_TRACK_VIA_SIZE::DIALOG_TRACK_VIA_SIZE( wxWindow* aParent, PNS_ROUTING_SETTINGS& aSettings ) :
+#include "board_design_settings.h"
+
+const int minSize = (int)( 0.01 * IU_PER_MM );
+
+DIALOG_TRACK_VIA_SIZE::DIALOG_TRACK_VIA_SIZE( EDA_DRAW_FRAME* aParent,
+                                              BOARD_DESIGN_SETTINGS& aSettings ) :
     DIALOG_TRACK_VIA_SIZE_BASE( aParent ),
+    m_trackWidth( aParent, m_trackWidthLabel, m_trackWidthText, m_trackWidthUnits, false, minSize ),
+    m_viaDiameter( aParent, m_viaDiameterLabel, m_viaDiameterText, m_viaDiameterUnits, false, minSize ),
+    m_viaDrill( aParent, m_viaDrillLabel, m_viaDrillText, m_viaDrillUnits, false, minSize ),
     m_settings( aSettings )
 {
-    // Load router settings to dialog fields
-    m_trackWidth->SetValue( To_User_Unit( m_trackWidth->GetUnits(), m_settings.GetTrackWidth() ) );
-    m_viaDiameter->SetValue( To_User_Unit( m_viaDiameter->GetUnits(), m_settings.GetViaDiameter() ) );
-    m_viaDrill->SetValue( To_User_Unit( m_viaDrill->GetUnits(), m_settings.GetViaDrill() ) );
+    m_stdButtonsOK->SetDefault();
 
-    m_trackWidth->SetFocus();
-    GetSizer()->SetSizeHints( this );
-
-    // Pressing ENTER when any of the text input fields is active applies changes
-    #if wxCHECK_VERSION( 3, 0, 0 )
-        Connect( wxEVT_TEXT_ENTER, wxCommandEventHandler( DIALOG_TRACK_VIA_SIZE::onOkClick ), NULL, this );
-    #else
-        Connect( wxEVT_COMMAND_TEXT_ENTER, wxCommandEventHandler( DIALOG_TRACK_VIA_SIZE::onOkClick ), NULL, this );
-    #endif
+    // Now all widgets have the size fixed, call FinishDialogSettings
+    FinishDialogSettings();
 }
 
 
-bool DIALOG_TRACK_VIA_SIZE::check()
+bool DIALOG_TRACK_VIA_SIZE::TransferDataFromWindow()
 {
-    // Wrong input
-    if( !m_trackWidth->GetValue() || !m_viaDiameter->GetValue() || !m_viaDrill->GetValue() )
+    if( !wxDialog::TransferDataFromWindow() )
         return false;
 
-    // Via drill should be smaller than via diameter
-    if( *m_viaDrill->GetValue() >= m_viaDiameter->GetValue() )
+    if( m_viaDrill.GetValue() >= m_viaDiameter.GetValue() )
+    {
+        DisplayError( GetParent(), _( "Via drill size has to be smaller than via diameter" ) );
+        m_viaDrillText->SetFocus();
         return false;
+    }
+
+    // Store dialog values to the router settings
+    m_settings.SetCustomTrackWidth( m_trackWidth.GetValue() );
+    m_settings.SetCustomViaSize( m_viaDiameter.GetValue() );
+    m_settings.SetCustomViaDrill( m_viaDrill.GetValue() );
 
     return true;
 }
 
 
-void DIALOG_TRACK_VIA_SIZE::onClose( wxCloseEvent& aEvent )
+bool DIALOG_TRACK_VIA_SIZE::TransferDataToWindow()
 {
-    EndModal( 0 );
+    if( !wxDialog::TransferDataToWindow() )
+        return false;
+
+    // Load router settings to dialog fields
+    m_trackWidth.SetValue( m_settings.GetCustomTrackWidth() );
+    m_viaDiameter.SetValue( m_settings.GetCustomViaSize() );
+    m_viaDrill.SetValue( m_settings.GetCustomViaDrill() );
+
+    return true;
 }
 
-
-void DIALOG_TRACK_VIA_SIZE::onOkClick( wxCommandEvent& aEvent )
-{
-    if( check() )
-    {
-        // Store dialog values to the router settings
-        m_settings.SetTrackWidth( From_User_Unit( m_trackWidth->GetUnits(), *m_trackWidth->GetValue() ) );
-        m_settings.SetViaDiameter( From_User_Unit( m_viaDiameter->GetUnits(), *m_viaDiameter->GetValue() ) );
-        m_settings.SetViaDrill( From_User_Unit( m_viaDrill->GetUnits(), *m_viaDrill->GetValue() ) );
-        EndModal( 1 );
-    }
-    else
-    {
-        DisplayError( GetParent(), _( "Settings are incorrect" ) );
-        m_trackWidth->SetFocus();
-    }
-}
-
-
-void DIALOG_TRACK_VIA_SIZE::onCancelClick( wxCommandEvent& aEvent )
-{
-    EndModal( 0 );
-}

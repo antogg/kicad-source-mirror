@@ -1,17 +1,40 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2014 CERN
+ * Copyright (C) 2014-2018 KiCad Developers, see CHANGELOG.TXT for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
 
 #include <macros.h>
 #include <search_stack.h>
+#include <trace_helpers.h>
 #include <wx/tokenzr.h>
 
-
 #if defined(__MINGW32__)
- #define PATH_SEPS          wxT(";\r\n")
+ #define PATH_SEPS          wxT( ";\r\n" )
 #else
- #define PATH_SEPS          wxT(":;\r\n")       // unix == linux | mac
+ #define PATH_SEPS          wxT( ":;\r\n" )       // unix == linux | mac
 #endif
 
 
-int SEARCH_STACK::Split( wxArrayString* aResult, const wxString aPathString )
+int SEARCH_STACK::Split( wxArrayString* aResult, const wxString& aPathString )
 {
     wxStringTokenizer   tokenizer( aPathString, PATH_SEPS, wxTOKEN_STRTOK );
 
@@ -175,12 +198,13 @@ const wxString SEARCH_STACK::LastVisitedPath( const wxString& aSubPathToSearch )
 
 
 #if defined(DEBUG)
-void SEARCH_STACK::Show( const char* aPrefix ) const
+void SEARCH_STACK::Show( const wxString& aPrefix ) const
 {
-    printf( "%s SEARCH_STACK:\n", aPrefix );
+    wxLogTrace( tracePathsAndFiles, "%s SEARCH_STACK:", aPrefix );
+
     for( unsigned i=0;  i<GetCount();  ++i )
     {
-        printf( "  [%2i]:%s\n", i, TO_UTF8( (*this)[i] ) );
+        wxLogTrace( tracePathsAndFiles, "  [%2u]:%s", i, TO_UTF8( (*this)[i] ) );
     }
 }
 #endif

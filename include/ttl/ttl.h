@@ -2,21 +2,24 @@
  * Copyright (C) 1998, 2000-2007, 2010, 2011, 2012, 2013 SINTEF ICT,
  * Applied Mathematics, Norway.
  *
- * Contact information: E-mail: tor.dokken@sintef.no                      
- * SINTEF ICT, Department of Applied Mathematics,                         
- * P.O. Box 124 Blindern,                                                 
- * 0314 Oslo, Norway.                                                     
+ * Contact information: E-mail: tor.dokken@sintef.no
+ * SINTEF ICT, Department of Applied Mathematics,
+ * P.O. Box 124 Blindern,
+ * 0314 Oslo, Norway.
  *
  * This file is part of TTL.
+ *
+ * see https://www.sintef.no/projectweb/geometry-toolkits/ttl/
+ * and https://github.com/SINTEF-Geometry/TTL
  *
  * TTL is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
  * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version. 
+ * License, or (at your option) any later version.
  *
- * TTL is distributed in the hope that it will be useful,        
- * but WITHOUT ANY WARRANTY; without even the implied warranty of         
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          
+ * TTL is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public
@@ -34,7 +37,7 @@
  * disclosing the source code of your own applications.
  *
  * This file may be used in accordance with the terms contained in a
- * written agreement between you and SINTEF ICT. 
+ * written agreement between you and SINTEF ICT.
  */
 
 #ifndef _TTL_H_
@@ -145,9 +148,6 @@ public:
 
     template <class TRAITS_TYPE, class POINT_TYPE, class DART_TYPE>
     static bool LocateTriangle( const POINT_TYPE& aPoint, DART_TYPE& aDart );
-
-    template <class TRAITS_TYPE, class POINT_TYPE, class DART_TYPE>
-    static bool InTriangleSimplest( const POINT_TYPE& aPoint, const DART_TYPE& aDart );
 
     template <class TRAITS_TYPE, class POINT_TYPE, class DART_TYPE>
     static bool InTriangle( const POINT_TYPE& aPoint, const DART_TYPE& aDart );
@@ -275,10 +275,10 @@ private:
  * If \e point is outside the triangulation, or the input dart is not valid,
  * \c false is returned.
  *
- * \require
+ * \b require
  *  - \ref hed::TTLtraits::splitTriangle "TRAITS_TYPE::splitTriangle" (DART_TYPE&, const POINT_TYPE&)
  *
- * \using
+ * \a using
  * - locateTriangle
  * - RecSwapDelaunay
  *
@@ -292,7 +292,7 @@ template <class TRAITS_TYPE, class DART_TYPE, class POINT_TYPE>
 bool TRIANGULATION_HELPER::InsertNode( DART_TYPE& aDart, POINT_TYPE& aPoint )
 {
     bool found = LocateTriangle<TRAITS_TYPE>( aPoint, aDart );
-    
+
     if( !found )
     {
 #ifdef DEBUG_TTL
@@ -367,11 +367,11 @@ void TRIANGULATION_HELPER::insertNodes( FORWARD_ITERATOR aFirst, FORWARD_ITERATO
  *   The four nodes at the corners will be removed and the resulting triangulation
  *   will have a convex boundary and be Delaunay.
  *
- *   \param dart
+ *   \param aDart
  *   A CCW dart at the boundary of the triangulation\n
  *   Output: A CCW dart at the new boundary
  *
- *   \using
+ *   \a using
  *   - RemoveBoundaryNode
  *
  *   \note
@@ -398,7 +398,7 @@ void TRIANGULATION_HELPER::RemoveRectangularBoundary( DART_TYPE& aDart )
 /** Removes the node associated with \e dart and
  *   updates the triangulation to be Delaunay.
  *
- *   \using
+ *   \a using
  *   - RemoveBoundaryNode if \e dart represents a node at the boundary
  *   - RemoveInteriorNode if \e dart represents an interior node
  *
@@ -419,11 +419,11 @@ void TRIANGULATION_HELPER::RemoveNode( DART_TYPE& aDart )
 /** Removes the boundary node associated with \e dart and
  *   updates the triangulation to be Delaunay.
  *
- *   \using
+ *   \a using
  *   - SwapEdgesAwayFromBoundaryNode
  *   - OptimizeDelaunay
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::removeBoundaryTriangle "TRAITS_TYPE::removeBoundaryTriangle" (Dart&)
  */
 template <class TRAITS_TYPE, class DART_TYPE>
@@ -481,11 +481,11 @@ void TRIANGULATION_HELPER::RemoveBoundaryNode( DART_TYPE& aDart )
 /** Removes the interior node associated with \e dart and
  *   updates the triangulation to be Delaunay.
  *
- *   \using
+ *   \a using
  *   - SwapEdgesAwayFromInteriorNode
  *   - OptimizeDelaunay
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::reverse_splitTriangle "TRAITS_TYPE::reverse_splitTriangle" (Dart&)
  *
  *   \note
@@ -546,7 +546,7 @@ bool TRIANGULATION_HELPER::isMemberOfFace( const TOPOLOGY_ELEMENT_TYPE& aTopolog
     // - DART_TYPE::isMember(TOPOLOGY_ELEMENT_TYPE)
 
     DART_TYPE dart_iter = aDart;
-    
+
     do
     {
         if( dart_iter.isMember( aTopologyElement ) )
@@ -600,7 +600,7 @@ bool TRIANGULATION_HELPER::locateFaceWithNode( const NODE_TYPE& aNode, DART_TYPE
  *   \retval bool
  *   \c true if a face is found; \c false if not.
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::Orient2D "TRAITS_TYPE::Orient2D" (DART_TYPE&, DART_TYPE&, POINT_TYPE&)
  *
  *   \note
@@ -666,10 +666,10 @@ bool TRIANGULATION_HELPER::LocateFaceSimplest( const POINT_TYPE& aPoint, DART_TY
  *   This function deals with degeneracy to some extent, but round-off errors may still
  *   lead to a wrong result if triangles are degenerate.
  *
- *   \param point
+ *   \param aPoint
  *   A point to be located
  *
- *   \param dart
+ *   \param aDart
  *   An arbitrary CCW dart in the triangulation\n
  *   Output: A CCW dart in the located triangle
  *
@@ -678,7 +678,7 @@ bool TRIANGULATION_HELPER::LocateFaceSimplest( const POINT_TYPE& aPoint, DART_TY
  *   If \e point is outside the m_triangulation, in which case \c false is returned,
  *   then the edge associated with \e dart will be at the boundary of the m_triangulation.
  *
- *   \using
+ *   \a using
  *   - LocateFaceSimplest
  *   - InTriangle
  */
@@ -708,7 +708,7 @@ bool TRIANGULATION_HELPER::LocateTriangle( const POINT_TYPE& aPoint, DART_TYPE& 
     // - CrossProduct2D, ScalarProduct2D etc., see functions called
 
     bool status = LocateFaceSimplest<TRAITS_TYPE>( aPoint, aDart );
-    
+
     if( status == false )
         return status;
 
@@ -721,50 +721,6 @@ bool TRIANGULATION_HELPER::LocateTriangle( const POINT_TYPE& aPoint, DART_TYPE& 
     return InTriangle<TRAITS_TYPE>( aPoint, aDart );
 }
 
-//------------------------------------------------------------------------------------------------
-/** Checks if \e point is inside the triangle associated with \e dart.
- *   A fast and simple function that does not deal with degeneracy.
- *
- *   \param aDart
- *   A CCW dart in the triangle
- *
- *   \require
- *   - \ref hed::TTLtraits::Orient2D "TRAITS_TYPE::Orient2D" (DART_TYPE&, DART_TYPE&, POINT_TYPE&)
- *
- *   \see
- *   InTriangle for a more robust function
- */
-template <class TRAITS_TYPE, class POINT_TYPE, class DART_TYPE>
-bool TRIANGULATION_HELPER::InTriangleSimplest( const POINT_TYPE& aPoint, const DART_TYPE& aDart )
-{
-    // Fast and simple: Do not deal with degenerate faces, i.e., if there is
-    // degeneracy, true will be returned if the point is on the extension of the
-    // edges of a degenerate triangle
-
-    DART_TYPE d_iter = aDart;
-    DART_TYPE d0 = d_iter;
-    d0.Alpha0();
-    
-    if( !TRAITS_TYPE::Orient2D( d_iter, d0, aPoint ) >= 0 )
-        return false;
-
-    d_iter.Alpha0().Alpha1();
-    d0 = d_iter;
-    d0.Alpha0();
-    
-    if( !TRAITS_TYPE::Orient2D( d_iter, d0, aPoint ) >= 0 )
-        return false;
-
-    d_iter.Alpha0().Alpha1();
-    d0 = d_iter;
-    d0.Alpha0();
-    
-    if( !TRAITS_TYPE::Orient2D( d_iter, d0, aPoint ) >= 0 )
-        return false;
-
-    return true;
-}
-
 /** Checks if \e point is inside the triangle associated with \e dart.
  *   This function deals with degeneracy to some extent, but round-off errors may still
  *   lead to wrong result if the triangle is degenerate.
@@ -772,7 +728,7 @@ bool TRIANGULATION_HELPER::InTriangleSimplest( const POINT_TYPE& aPoint, const D
  *   \param aDart
  *   A CCW dart in the triangle
  *
- *   \require
+ *   \b require
  *    - \ref hed::TTLtraits::CrossProduct2D "TRAITS_TYPE::CrossProduct2D" (DART_TYPE&, POINT_TYPE&)
  *    - \ref hed::TTLtraits::ScalarProduct2D "TRAITS_TYPE::ScalarProduct2D" (DART_TYPE&, POINT_TYPE&)
  *
@@ -835,7 +791,7 @@ bool TRIANGULATION_HELPER::InTriangle( const POINT_TYPE& aPoint, const DART_TYPE
     dart_tmp = dart_iter.Alpha0().Alpha1();
     sc1 = TRAITS_TYPE::ScalarProduct2D( dart_tmp, aPoint );
     sc2 = TRAITS_TYPE::ScalarProduct2D( dart_tmp.Alpha0(), aPoint );
-    
+
     if( sc1 >= 0 && sc2 >= 0 )
     {
         // test for degenerate edge
@@ -846,7 +802,7 @@ bool TRIANGULATION_HELPER::InTriangle( const POINT_TYPE& aPoint, const DART_TYPE
     dart_tmp = dart_iter.Alpha1();
     sc1 = TRAITS_TYPE::ScalarProduct2D( dart_tmp, aPoint );
     sc2 = TRAITS_TYPE::ScalarProduct2D( dart_tmp.Alpha0(), aPoint );
-    
+
     if( sc1 >= 0 && sc2 >= 0 )
     {
         // test for degenerate edge
@@ -911,7 +867,7 @@ void TRIANGULATION_HELPER::getAdjacentTriangles( const DART_TYPE& aDart, DART_TY
  *   \param aBoundary
  *   A sequence of darts, where the associated edges are the boundary edges
  *
- *   \require
+ *   \b require
  *   - DART_LIST_TYPE::push_back (DART_TYPE&)
  */
 template <class DART_TYPE, class DART_LIST_TYPE>
@@ -948,7 +904,7 @@ template <class DART_TYPE>
 bool TRIANGULATION_HELPER::IsBoundaryEdge( const DART_TYPE& aDart )
 {
     DART_TYPE dart_iter = aDart;
-    
+
     if( dart_iter.Alpha2() == aDart )
         return true;
     else
@@ -1142,7 +1098,7 @@ void TRIANGULATION_HELPER::getNeighborNodes( const DART_TYPE& aDart,
  *   orientation (CCW or CW) as \e dart, and \e dart is the first element
  *   in the sequence.
  *
- *   \require
+ *   \b require
  *   - DART_LIST_TYPE::push_back (DART_TYPE&)
  *
  *   \see
@@ -1172,7 +1128,7 @@ void TRIANGULATION_HELPER::Get0OrbitInterior( const DART_TYPE& aDart, DART_LIST_
  *   have the same orientation (CCW or CW) as \e dart, and \e dart is the first element
  *   in the sequence.
  *
- *   \require
+ *   \b require
  *   - DART_LIST_TYPE::push_back (DART_TYPE&)
  *
  *   \note
@@ -1186,7 +1142,7 @@ void TRIANGULATION_HELPER::Get0OrbitBoundary( const DART_TYPE& aDart, DART_LIST_
 {
     DART_TYPE dart_prev;
     DART_TYPE d_iter = aDart;
-    
+
     do
     {
         aOrbit.push_back( d_iter );
@@ -1251,7 +1207,7 @@ template <class DART_TYPE>
 bool TRIANGULATION_HELPER::Same1Orbit( const DART_TYPE& aD1, const DART_TYPE& aD2 )
 {
     DART_TYPE d_iter = aD2;
-    
+
     // (Also works at the boundary)
     return ( d_iter == aD1 || d_iter.Alpha0() == aD1 ||
              d_iter.Alpha2() == aD1 || d_iter.Alpha0() == aD1 );
@@ -1266,7 +1222,7 @@ template <class DART_TYPE>
 bool TRIANGULATION_HELPER::Same2Orbit( const DART_TYPE& aD1, const DART_TYPE& aD2 )
 {
     DART_TYPE d_iter = aD2;
-    
+
     return ( d_iter == aD1 || d_iter.Alpha0() == aD1 || d_iter.Alpha1() == aD1 ||
             d_iter.Alpha0() == aD1 || d_iter.Alpha1() == aD1 || d_iter.Alpha0() == aD1 );
 }
@@ -1281,7 +1237,7 @@ bool TRIANGULATION_HELPER::degenerateTriangle( const DART_TYPE& aDart )
     DART_TYPE d1 = aDart;
     DART_TYPE d2 = d1;
     d2.Alpha1();
-    
+
     return ( TRAITS_TYPE::CrossProduct2D( d1, d2 ) == 0 );
 }
 
@@ -1293,7 +1249,7 @@ bool TRIANGULATION_HELPER::degenerateTriangle( const DART_TYPE& aDart )
  *   indicate that the quadrilateral is convex only, and not necessarily strictly
  *   convex.
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::CrossProduct2D "TRAITS_TYPE::CrossProduct2D" (Dart&, Dart&)
  */
 template <class TRAITS_TYPE, class DART_TYPE>
@@ -1372,10 +1328,10 @@ void TRIANGULATION_HELPER::PositionAtNextBoundaryEdge( DART_TYPE& aDart )
 
 /** Checks if the boundary of a triangulation is convex.
  *
- *   \param dart
+ *   \param aDart
  *   A CCW dart at the boundary of the m_triangulation
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::CrossProduct2D "TRAITS_TYPE::CrossProduct2D" (const Dart&, const Dart&)
  */
 template <class TRAITS_TYPE, class DART_TYPE>
@@ -1437,12 +1393,12 @@ bool TRIANGULATION_HELPER::ConvexBoundary( const DART_TYPE& aDart )
  *   \param aElist
  *   The sequence of edges
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::swapEdge "TRAITS_TYPE::swapEdge" (DART_TYPE& \e dart)\n
  *     \b Note: Must be implemented such that \e dart is delivered back in a position as
  *     seen if it was glued to the edge when swapping (rotating) the edge CCW
  *
- *   \using
+ *   \a using
  *   - swapTestDelaunay
  */
 template <class TRAITS_TYPE, class DART_TYPE, class DART_LIST_TYPE>
@@ -1523,7 +1479,7 @@ void TRIANGULATION_HELPER::OptimizeDelaunay( DART_LIST_TYPE& aElist,
  *   e.g., OptimizeDelaunay. This will avoid cycling and infinite loops in nearly
  *   neutral cases.
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::ScalarProduct2D "TRAITS_TYPE::ScalarProduct2D" (DART_TYPE&, DART_TYPE&)
  *   - \ref hed::TTLtraits::CrossProduct2D "TRAITS_TYPE::CrossProduct2D" (DART_TYPE&, DART_TYPE&)
  */
@@ -1639,12 +1595,12 @@ bool TRIANGULATION_HELPER::SwapTestDelaunay( const DART_TYPE& aDart, bool aCycli
  *   \param aDiagonal
  *   A CCW dart representing the edge where the recursion starts from.
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::swapEdge "TRAITS_TYPE::swapEdge" (DART_TYPE&)\n
  *     \b Note: Must be implemented such that the darts outside the quadrilateral
  *     are not affected by the swap.
  *
- *   \using
+ *   \a using
  *   - Calls itself recursively
  */
 template <class TRAITS_TYPE, class DART_TYPE>
@@ -1701,7 +1657,7 @@ void TRIANGULATION_HELPER::RecSwapDelaunay( DART_TYPE& aDiagonal )
  *   - The node associated with \e dart is interior to the
  *     triangulation.
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::swapEdge "TRAITS_TYPE::swapEdge" (DART_TYPE& \e dart)\n
  *     \b Note: Must be implemented such that \e dart is delivered back in a position as
  *     seen if it was glued to the edge when swapping (rotating) the edge CCW
@@ -1719,7 +1675,7 @@ void TRIANGULATION_HELPER::SwapEdgesAwayFromInteriorNode( DART_TYPE& aDart,
                                                           LIST_TYPE& aSwappedEdges )
 {
 
-    // Same iteration as in fixEdgesAtCorner, but not boundary    
+    // Same iteration as in fixEdgesAtCorner, but not boundary
     DART_TYPE dnext = aDart;
 
     // Allow degeneracy, otherwise we might end up with degree=4.
@@ -1765,7 +1721,7 @@ void TRIANGULATION_HELPER::SwapEdgesAwayFromInteriorNode( DART_TYPE& aDart,
  *   \retval dart
  *   A CCW dart incident with the node
  *
- *   \require
+ *   \b require
  *   - \ref hed::TTLtraits::swapEdge "TRAITS_TYPE::swapEdge" (DART_TYPE& \e dart)\n
  *     \b Note: Must be implemented such that \e dart is delivered back in a position as
  *     seen if it was glued to the edge when swapping (rotating) the edge CCW

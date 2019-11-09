@@ -2,7 +2,7 @@
  * TRANSLINE.cpp - base for a transmission line implementation
  *
  * Copyright (C) 2005 Stefan Jahn <stefan@lkcc.org>
- * Modified for Kicad: 2011 jean-pierre.charras
+ * Modified for Kicad: 2018 jean-pierre.charras
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -21,6 +21,7 @@
  *
  */
 
+#include <cmath>
 #include <limits>
 #include <transline.h>
 #include <units.h>
@@ -60,8 +61,15 @@ bool   IsSelectedInDialog( enum PRMS_ID aPrmId );
 /* Constructor creates a transmission line instance. */
 TRANSLINE::TRANSLINE()
 {
-    murC = 1.0;
-    m_name = (const char*) 0;
+    m_murC = 1.0;
+    m_Name = nullptr;
+
+    // Initialize these variables mainly to avoid warnings from a static analyzer
+    m_freq = 0.0;       // Frequency of operation
+    er = 0.0;           // dielectric constant
+    m_tand = 0.0;       // Dielectric Loss Tangent
+    m_sigma = 0.0;      // Conductivity of the metal
+    m_skindepth = 0.0;  // Skin depth
 }
 
 
@@ -114,7 +122,7 @@ double TRANSLINE::getProperty( enum PRMS_ID aPrmId )
 double TRANSLINE::skin_depth()
 {
     double depth;
-    depth = 1.0 / sqrt( M_PI * f * murC * MU0 * sigma );
+    depth = 1.0 / sqrt( M_PI * m_freq * m_murC * MU0 * m_sigma );
     return depth;
 }
 
@@ -129,7 +137,8 @@ double TRANSLINE::skin_depth()
 
 /* The function computes the complete elliptic integral of first kind
  *  K() and the second kind E() using the arithmetic-geometric mean
- *  algorithm (AGM) by Abramowitz and Stegun. */
+ *  algorithm (AGM) by Abramowitz and Stegun.
+ */
 void TRANSLINE::ellipke( double arg, double& k, double& e )
 {
     int iMax = 16;
@@ -146,7 +155,7 @@ void TRANSLINE::ellipke( double arg, double& k, double& e )
     }
     else
     {
-        double a, b, c, f, s, fk = 1, fe = 1, t, da = arg;
+        double a, b, c, fr, s, fk = 1, fe = 1, t, da = arg;
         int    i;
         if( arg < 0 )
         {
@@ -157,16 +166,16 @@ void TRANSLINE::ellipke( double arg, double& k, double& e )
         a = 1;
         b = sqrt( 1 - da );
         c = sqrt( da );
-        f = 0.5;
-        s = f * c * c;
+        fr = 0.5;
+        s = fr * c * c;
         for( i = 0; i < iMax; i++ )
         {
             t  = (a + b) / 2;
             c  = (a - b) / 2;
             b  = sqrt( a * b );
             a  = t;
-            f *= 2;
-            s += f * c * c;
+            fr *= 2;
+            s += fr * c * c;
             if( c / a < NR_EPSI )
                 break;
         }

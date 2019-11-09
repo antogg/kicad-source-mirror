@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -25,63 +26,209 @@
 
 #include "pns_item.h"
 
+namespace PNS {
+
 /**
- * Class PNS_ITEMSET
+ * Class ITEM_SET
  *
  * Holds a list of board items, that can be filtered against net, kinds,
  * layers, etc.
  **/
+class LINE;
 
-class PNS_ITEMSET
+class ITEM_SET
 {
 public:
-    typedef std::vector<PNS_ITEM*> ITEM_VECTOR;
+    struct ENTRY {
 
-    PNS_ITEMSET( PNS_ITEM* aInitialItem = NULL );
+        ENTRY( ITEM* aItem, bool aOwned = false ) :
+            item( aItem ),
+            owned( aOwned )
+        {}
 
-    PNS_ITEMSET( const PNS_ITEMSET& aOther )
+        ENTRY( const ENTRY& aOther )
+        {
+            owned = aOther.owned;
+
+            if( aOther.owned )
+                item = aOther.item->Clone();
+            else
+                item = aOther.item;
+        }
+
+        ~ENTRY()
+        {
+            if( owned )
+                delete item;
+        }
+
+        bool operator== ( const ENTRY& b ) const
+        {
+            return item == b.item;
+        }
+
+        bool operator< ( const ENTRY& b ) const
+        {
+            return item < b.item;
+        }
+
+        ENTRY& operator= ( const ENTRY& aOther )
+        {
+            owned = aOther.owned;
+
+            if( aOther.owned )
+                item = aOther.item->Clone();
+            else
+                item = aOther.item;
+
+            return *this;
+        }
+
+        operator ITEM* () const
+        {
+            return item;
+        }
+
+        ITEM *item;
+        bool owned;
+    };
+
+    typedef std::vector<ENTRY> ENTRIES;
+
+    ITEM_SET( ITEM* aInitialItem = NULL, bool aBecomeOwner = false )
     {
-        m_items = aOther.m_items;
-        m_ownedItems = ITEM_VECTOR();
+        if( aInitialItem )
+        {
+            m_items.push_back( ENTRY( aInitialItem, aBecomeOwner ) );
+        }
     }
-    
-    const PNS_ITEMSET& operator=( const PNS_ITEMSET& aOther )
+
+    ITEM_SET( const ITEM_SET& aOther )
     {
         m_items = aOther.m_items;
-        m_ownedItems = ITEM_VECTOR();
+    }
 
+    ~ITEM_SET();
+
+    ITEM_SET& operator=( const ITEM_SET& aOther )
+    {
+        m_items = aOther.m_items;
         return *this;
     }
 
-    ~PNS_ITEMSET();
-
-    ITEM_VECTOR& Items() { return m_items; }
-    const ITEM_VECTOR& CItems() const { return m_items; } 
-
-    PNS_ITEMSET& FilterLayers( int aStart, int aEnd = -1 );
-    PNS_ITEMSET& FilterKinds( int aKindMask );
-    PNS_ITEMSET& FilterNet( int aNet );
-
-    int Size() { return m_items.size(); }
-
-    void Add( PNS_ITEM* aItem )
+    int Count( int aKindMask = -1 ) const
     {
-        m_items.push_back( aItem );
+        int n = 0;
+
+        if( aKindMask == -1 || aKindMask == ITEM::ANY_T )
+            return m_items.size();
+
+        for( ITEM* item : m_items )
+        {
+            if( item->Kind() & aKindMask )
+                n++;
+        }
+
+        return n;
     }
 
-    PNS_ITEM* Get( int index ) const { return m_items[index]; }
-
-    void Clear();
-
-    void AddOwned( PNS_ITEM *aItem )
+    bool Empty() const
     {
-        m_items.push_back( aItem );
-        m_ownedItems.push_back( aItem );
+        return m_items.empty();
     }
-    
+
+    ENTRIES& Items() { return m_items; }
+    const ENTRIES& CItems() const { return m_items; }
+
+    ITEM_SET& FilterLayers( int aStart, int aEnd = -1, bool aInvert = false );
+    ITEM_SET& FilterKinds( int aKindMask, bool aInvert = false );
+    ITEM_SET& FilterNet( int aNet, bool aInvert = false );
+    ITEM_SET& FilterMarker( int aMarker, bool aInvert = false );
+
+    ITEM_SET& ExcludeLayers( int aStart, int aEnd = -1 )
+    {
+        return FilterLayers( aStart, aEnd, true );
+    }
+
+    ITEM_SET& ExcludeKinds( int aKindMask )
+    {
+        return FilterKinds( aKindMask, true );
+    }
+
+    ITEM_SET& ExcludeNet( int aNet )
+    {
+        return FilterNet( aNet, true );
+    }
+
+    ITEM_SET& ExcludeItem( const ITEM* aItem );
+
+    int Size() const
+    {
+        return m_items.size();
+    }
+
+    void Add( const LINE& aLine );
+    void Prepend( const LINE& aLine );
+
+    ITEM* operator[] ( int index ) const
+    {
+        return m_items[index].item;
+    }
+
+    void Add( ITEM* aItem, bool aBecomeOwner = false )
+    {
+        m_items.push_back( ENTRY( aItem, aBecomeOwner ) );
+    }
+
+    void Prepend( ITEM* aItem, bool aBecomeOwner = false )
+    {
+         m_items.insert( m_items.begin(), ENTRY( aItem, aBecomeOwner ) );
+    }
+
+    void Clear()
+    {
+        m_items.clear();
+    }
+
+    bool Contains( ITEM* aItem ) const
+    {
+        const ENTRY ent( aItem );
+        return std::find( m_items.begin(), m_items.end(), ent ) != m_items.end();
+    }
+
+    void Erase( ITEM* aItem )
+    {
+        ENTRY ent( aItem );
+        ENTRIES::iterator f = std::find( m_items.begin(), m_items.end(), ent );
+
+        if( f != m_items.end() )
+            m_items.erase( f );
+    }
+
+    template<class T>
+    T* FindByKind( ITEM::PnsKind kind, int index = 0 )
+    {
+        int n = 0;
+
+        for( const ITEM* item : m_items )
+        {
+            if( item->OfKind( kind ) )
+            {
+                if( index == n )
+                    return static_cast<T*>( item );
+                else
+                    n++;
+            }
+        }
+
+        return NULL;
+    }
+
 private:
-    ITEM_VECTOR m_items;
-    ITEM_VECTOR m_ownedItems;
+
+    ENTRIES m_items;
 };
+
+}
 
 #endif

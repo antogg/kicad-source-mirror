@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -23,8 +24,8 @@
 
 #include <layers_id_colors_and_visibility.h>
 #include <map>
+#include <unordered_set>
 
-#include <boost/foreach.hpp>
 #include <boost/range/adaptor/map.hpp>
 
 #include <list>
@@ -32,43 +33,46 @@
 
 #include "pns_item.h"
 
+namespace PNS {
+
+
 /**
- * Class PNS_INDEX
+ * Class INDEX
  *
  * Custom spatial index, holding our board items and allowing for very fast searches. Items
  * are assigned to separate R-Tree subindices depending on their type and spanned layers, reducing
  * overlap and improving search time.
  **/
-class PNS_INDEX
+class INDEX
 {
 public:
-    typedef std::list<PNS_ITEM*>            NET_ITEMS_LIST;
-    typedef SHAPE_INDEX<PNS_ITEM*>          ITEM_SHAPE_INDEX;
-    typedef boost::unordered_set<PNS_ITEM*> ITEM_SET;
+    typedef std::list<ITEM*>            NET_ITEMS_LIST;
+    typedef SHAPE_INDEX<ITEM*>          ITEM_SHAPE_INDEX;
+    typedef std::unordered_set<ITEM*>   ITEM_SET;
 
-    PNS_INDEX();
-    ~PNS_INDEX();
+    INDEX();
+    ~INDEX();
 
     /**
      * Function Add()
      *
      * Adds item to the spatial index.
      */
-    void Add( PNS_ITEM* aItem );
+    void Add( ITEM* aItem );
 
     /**
      * Function Remove()
      *
      * Removes an item from the spatial index.
      */
-    void Remove( PNS_ITEM* aItem );
+    void Remove( ITEM* aItem );
 
     /**
      * Function Add()
      *
      * Replaces one item with another.
      */
-    void Replace( PNS_ITEM* aOldItem, PNS_ITEM* aNewItem );
+    void Replace( ITEM* aOldItem, ITEM* aNewItem );
 
     /**
      * Function Query()
@@ -84,7 +88,7 @@ public:
      * @return number of items found.
      */
     template<class Visitor>
-    int Query( const PNS_ITEM* aItem, int aMinDistance, Visitor& aVisitor );
+    int Query( const ITEM* aItem, int aMinDistance, Visitor& aVisitor );
 
     /**
      * Function Query()
@@ -121,7 +125,7 @@ public:
      *
      * Returns true if item aItem exists in the index.
      */
-    bool Contains( PNS_ITEM* aItem ) const
+    bool Contains( ITEM* aItem ) const
     {
         return m_allItems.find( aItem ) != m_allItems.end();
     }
@@ -148,98 +152,16 @@ private:
     template <class Visitor>
     int querySingle( int index, const SHAPE* aShape, int aMinDistance, Visitor& aVisitor );
 
-    ITEM_SHAPE_INDEX* getSubindex( const PNS_ITEM* aItem );
+    ITEM_SHAPE_INDEX* getSubindex( const ITEM* aItem );
 
     ITEM_SHAPE_INDEX* m_subIndices[MaxSubIndices];
     std::map<int, NET_ITEMS_LIST> m_netMap;
     ITEM_SET m_allItems;
 };
 
-PNS_INDEX::PNS_INDEX()
-{
-    memset( m_subIndices, 0, sizeof( m_subIndices ) );
-}
-
-
-PNS_INDEX::ITEM_SHAPE_INDEX* PNS_INDEX::getSubindex( const PNS_ITEM* aItem )
-{
-    int idx_n = -1;
-
-    const PNS_LAYERSET l = aItem->Layers();
-
-    switch( aItem->Kind() )
-    {
-    case PNS_ITEM::VIA:
-        idx_n = SI_Multilayer;
-        break;
-
-    case PNS_ITEM::SOLID:
-        {
-            if( l.IsMultilayer() )
-                idx_n = SI_Multilayer;
-            else if( l.Start() == B_Cu ) // fixme: use kicad layer codes
-                idx_n = SI_PadsTop;
-            else if( l.Start() == F_Cu )
-                idx_n = SI_PadsBottom;
-        }
-        break;
-
-    case PNS_ITEM::SEGMENT:
-    case PNS_ITEM::LINE:
-        idx_n = SI_Traces + 2 * l.Start() + SI_SegStraight;
-        break;
-
-    default:
-        break;
-    }
-
-    assert( idx_n >= 0 && idx_n < MaxSubIndices );
-
-    if( !m_subIndices[idx_n] )
-        m_subIndices[idx_n] = new ITEM_SHAPE_INDEX;
-
-    return m_subIndices[idx_n];
-}
-
-
-void PNS_INDEX::Add( PNS_ITEM* aItem )
-{
-    ITEM_SHAPE_INDEX* idx = getSubindex( aItem );
-
-    idx->Add( aItem );
-    m_allItems.insert( aItem );
-    int net = aItem->Net();
-
-    if( net >= 0 )
-    {
-        m_netMap[net].push_back( aItem );
-    }
-}
-
-
-void PNS_INDEX::Remove( PNS_ITEM* aItem )
-{
-    ITEM_SHAPE_INDEX* idx = getSubindex( aItem );
-
-    idx->Remove( aItem );
-    m_allItems.erase( aItem );
-
-    int net = aItem->Net();
-
-    if( net >= 0 && m_netMap.find( net ) != m_netMap.end() )
-        m_netMap[net].remove( aItem );
-}
-
-
-void PNS_INDEX::Replace( PNS_ITEM* aOldItem, PNS_ITEM* aNewItem )
-{
-    Remove( aOldItem );
-    Add( aNewItem );
-}
-
 
 template<class Visitor>
-int PNS_INDEX::querySingle( int index, const SHAPE* aShape, int aMinDistance, Visitor& aVisitor )
+int INDEX::querySingle( int index, const SHAPE* aShape, int aMinDistance, Visitor& aVisitor )
 {
     if( !m_subIndices[index] )
         return 0;
@@ -247,16 +169,15 @@ int PNS_INDEX::querySingle( int index, const SHAPE* aShape, int aMinDistance, Vi
     return m_subIndices[index]->Query( aShape, aMinDistance, aVisitor, false );
 }
 
-
 template<class Visitor>
-int PNS_INDEX::Query( const PNS_ITEM* aItem, int aMinDistance, Visitor& aVisitor )
+int INDEX::Query( const ITEM* aItem, int aMinDistance, Visitor& aVisitor )
 {
     const SHAPE* shape = aItem->Shape();
     int total = 0;
 
     total += querySingle( SI_Multilayer, shape, aMinDistance, aVisitor );
 
-    const PNS_LAYERSET layers = aItem->Layers();
+    const LAYER_RANGE layers = aItem->Layers();
 
     if( layers.IsMultilayer() )
     {
@@ -281,9 +202,8 @@ int PNS_INDEX::Query( const PNS_ITEM* aItem, int aMinDistance, Visitor& aVisitor
     return total;
 }
 
-
 template<class Visitor>
-int PNS_INDEX::Query( const SHAPE* aShape, int aMinDistance, Visitor& aVisitor )
+int INDEX::Query( const SHAPE* aShape, int aMinDistance, Visitor& aVisitor )
 {
     int total = 0;
 
@@ -293,33 +213,6 @@ int PNS_INDEX::Query( const SHAPE* aShape, int aMinDistance, Visitor& aVisitor )
     return total;
 }
 
-
-void PNS_INDEX::Clear()
-{
-    for( int i = 0; i < MaxSubIndices; ++i )
-    {
-        ITEM_SHAPE_INDEX* idx = m_subIndices[i];
-
-        if( idx )
-            delete idx;
-
-        m_subIndices[i] = NULL;
-    }
-}
-
-
-PNS_INDEX::~PNS_INDEX()
-{
-    Clear();
-}
-
-
-PNS_INDEX::NET_ITEMS_LIST* PNS_INDEX::GetItemsForNet( int aNet )
-{
-    if( m_netMap.find( aNet ) == m_netMap.end() )
-        return NULL;
-
-    return &m_netMap[aNet];
-}
+};
 
 #endif

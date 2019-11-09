@@ -1,6 +1,35 @@
-/************/
-/* colors.h */
-/************/
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2007-2014 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2014 KiCad Developers, see AUTHORS.TXT for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
+/**
+ * NOTE: EDA_COLOR_T is deprecated and is kept around for compatibility with
+ *       legacy canvas.  Once there is no need for legacy support, the color
+ *       table g_ColorRefs in colors.cpp can be re-written in COLOR4D and this
+ *       file can go away.
+ *
+ *       Please use COLOR4D instead of including this file.
+ */
 
 #ifndef COLORS_H_
 #define COLORS_H_
@@ -117,7 +146,7 @@ struct StructColors
     unsigned char   m_Red;
     EDA_COLOR_T     m_Numcolor;
 
-    const wxChar*   m_Name;
+    const wxChar*   m_ColorName;
     EDA_COLOR_T     m_LightColor;
 };
 
@@ -143,7 +172,7 @@ EDA_COLOR_T ColorFindNearest( const wxColour &aColor );
  * Find the nearest color match
  * @param aR is the red component of the color to be matched (in range 0-255)
  * @param aG is the green component of the color to be matched (in range 0-255)
- * @param aG is the blue component of the color to be matched (in range 0-255)
+ * @param aB is the blue component of the color to be matched (in range 0-255)
  */
 EDA_COLOR_T ColorFindNearest( int aR, int aG, int aB );
 
@@ -157,7 +186,7 @@ inline const wxChar *ColorGetName( EDA_COLOR_T aColor )
 {
     EDA_COLOR_T base = ColorGetBase( aColor );
     wxASSERT( base > UNSPECIFIED_COLOR && base < NBCOLORS );
-    return g_ColorRefs[base].m_Name;
+    return g_ColorRefs[base].m_ColorName;
 }
 
 inline void ColorSetBrush( wxBrush *aBrush, EDA_COLOR_T aColor )
@@ -173,25 +202,20 @@ inline void ColorSetBrush( wxBrush *aBrush, EDA_COLOR_T aColor )
  * returns a wxWidgets wxColor from a KiCad color index with alpha value.
  * Note that alpha support is not available on every wxWidgets platform.  On
  * such platform the behavior is the same as for wxALPHA_OPAQUE and that
- * means the alpha value has no effect and will be ignored.  wxGtk 2.8.4 is
- * not supporting alpha.
+ * means the alpha value has no effect and will be ignored.
  * @return wxColour - given a KiCad color index with alpha value
  */
 inline wxColour MakeColour( EDA_COLOR_T aColor )
 {
-#if wxCHECK_VERSION(2,8,5)
     int alpha = GetAlpha( aColor );
     alpha = alpha ? alpha : wxALPHA_OPAQUE;
-#endif
     EDA_COLOR_T ndx = ColorGetBase( aColor );
     wxASSERT( ndx > UNSPECIFIED_COLOR && ndx < NBCOLORS );
 
     return wxColour( g_ColorRefs[ndx].m_Red,
                      g_ColorRefs[ndx].m_Green,
                      g_ColorRefs[ndx].m_Blue
-#if wxCHECK_VERSION(2,8,5)
                      ,(unsigned char) alpha
-#endif
         );
 }
 

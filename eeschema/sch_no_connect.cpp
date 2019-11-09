@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanoadoo.fr
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -30,25 +30,21 @@
 #include <fctsys.h>
 #include <gr_basic.h>
 #include <macros.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <common.h>
-#include <trigo.h>
-#include <richio.h>
-#include <plot_common.h>
+#include <plotter.h>
+#include <bitmaps.h>
 
 #include <general.h>
-#include <protos.h>
 #include <sch_no_connect.h>
-#include <class_netlist_object.h>
+#include <netlist_object.h>
 
 
 SCH_NO_CONNECT::SCH_NO_CONNECT( const wxPoint& pos ) :
     SCH_ITEM( NULL, SCH_NO_CONNECT_T )
 {
-#define DRAWNOCONNECT_SIZE 48       /* No symbol connection range. */
     m_pos    = pos;
-    m_size.x = m_size.y = DRAWNOCONNECT_SIZE;
-#undef DRAWNOCONNECT_SIZE
+    m_size   = 48;      ///< No-connect symbol size.
 
     SetLayer( LAYER_NOCONNECT );
 }
@@ -66,14 +62,14 @@ void SCH_NO_CONNECT::SwapData( SCH_ITEM* aItem )
                  wxT( "Cannot swap no connect data with invalid item." ) );
 
     SCH_NO_CONNECT* item = (SCH_NO_CONNECT*)aItem;
-    EXCHG( m_pos, item->m_pos );
-    EXCHG( m_size, item->m_size );
+    std::swap( m_pos, item->m_pos );
+    std::swap( m_size, item->m_size );
 }
 
 
 const EDA_RECT SCH_NO_CONNECT::GetBoundingBox() const
 {
-    int      delta = ( GetPenSize() + m_size.x ) / 2;
+    int      delta = ( GetPenSize() + GetSize() ) / 2;
     EDA_RECT box;
 
     box.SetOrigin( m_pos );
@@ -83,36 +79,18 @@ const EDA_RECT SCH_NO_CONNECT::GetBoundingBox() const
 }
 
 
-bool SCH_NO_CONNECT::Save( FILE* aFile ) const
+void SCH_NO_CONNECT::ViewGetLayers( int aLayers[], int& aCount ) const
 {
-    bool success = true;
-
-    if( fprintf( aFile, "NoConn ~ %-4d %-4d\n", m_pos.x, m_pos.y ) == EOF )
-    {
-        success = false;
-    }
-
-    return success;
+    aCount = 2;
+    aLayers[0] = LAYER_NOCONNECT;
+    aLayers[1] = LAYER_SELECTION_SHADOWS;
 }
 
 
-bool SCH_NO_CONNECT::Load( LINE_READER& aLine, wxString& aErrorMsg )
+void SCH_NO_CONNECT::GetEndPoints( std::vector< DANGLING_END_ITEM >& aItemList )
 {
-    char name[256];
-    char* line = (char*) aLine;
-
-    while( (*line != ' ' ) && *line )
-        line++;
-
-    if( sscanf( line, "%s %d %d", name, &m_pos.x, &m_pos.y ) != 3 )
-    {
-        aErrorMsg.Printf( wxT( "Eeschema file No Connect load error at line %d" ),
-                          aLine.LineNumber() );
-        aErrorMsg << wxT( "\n" ) << FROM_UTF8( ((char*)aLine) );
-        return false;
-    }
-
-    return true;
+    DANGLING_END_ITEM item( NO_CONNECT_END, this, m_pos );
+    aItemList.push_back( item );
 }
 
 
@@ -122,63 +100,35 @@ int SCH_NO_CONNECT::GetPenSize() const
 }
 
 
-void SCH_NO_CONNECT::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                           GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor )
+void SCH_NO_CONNECT::Print( wxDC* aDC, const wxPoint& aOffset )
 {
-    int pX, pY;
-    int delta = m_size.x / 2;
+    int half = GetSize() / 2;
     int width = GetDefaultLineThickness();
+    int pX = m_pos.x + aOffset.x;
+    int pY = m_pos.y + aOffset.y;
 
-    pX = m_pos.x + aOffset.x;
-    pY = m_pos.y + aOffset.y;
+    COLOR4D color = GetLayerColor( LAYER_NOCONNECT );
 
-    EDA_COLOR_T color;
-    if( aColor >= 0 )
-        color = aColor;
-    else
-        color = GetLayerColor( LAYER_NOCONNECT );
-
-    GRSetDrawMode( aDC, aDrawMode );
-
-    GRLine( aPanel->GetClipBox(), aDC, pX - delta, pY - delta, pX + delta, pY + delta,
-            width, color );
-    GRLine( aPanel->GetClipBox(), aDC, pX + delta, pY - delta, pX - delta, pY + delta,
-            width, color );
+    GRLine( nullptr, aDC, pX - half, pY - half, pX + half, pY + half, width, color );
+    GRLine( nullptr, aDC, pX + half, pY - half, pX - half, pY + half, width, color );
 }
 
 
 void SCH_NO_CONNECT::MirrorX( int aXaxis_position )
 {
-    m_pos.y -= aXaxis_position;
-    NEGATE(  m_pos.y );
-    m_pos.y += aXaxis_position;
+    MIRROR( m_pos.y, aXaxis_position );
 }
 
 
 void SCH_NO_CONNECT::MirrorY( int aYaxis_position )
 {
-    m_pos.x -= aYaxis_position;
-    NEGATE(  m_pos.x );
-    m_pos.x += aYaxis_position;
+    MIRROR( m_pos.x, aYaxis_position );
 }
 
 
 void SCH_NO_CONNECT::Rotate( wxPoint aPosition )
 {
     RotatePoint( &m_pos, aPosition, 900 );
-}
-
-
-bool SCH_NO_CONNECT::IsSelectStateChanged( const wxRect& aRect )
-{
-    bool previousState = IsSelected();
-
-    if( aRect.Contains( m_pos ) )
-        SetFlags( SELECTED );
-    else
-        ClearFlags( SELECTED );
-
-    return previousState != IsSelected();
 }
 
 
@@ -210,7 +160,7 @@ bool SCH_NO_CONNECT::doIsConnected( const wxPoint& aPosition ) const
 
 bool SCH_NO_CONNECT::HitTest( const wxPoint& aPosition, int aAccuracy ) const
 {
-    int delta = ( ( m_size.x + GetDefaultLineThickness() ) / 2 ) + aAccuracy;
+    int delta = ( ( GetSize() + GetDefaultLineThickness() ) / 2 ) + aAccuracy;
 
     wxPoint dist = aPosition - m_pos;
 
@@ -236,7 +186,7 @@ bool SCH_NO_CONNECT::HitTest( const EDA_RECT& aRect, bool aContained, int aAccur
 
 void SCH_NO_CONNECT::Plot( PLOTTER* aPlotter )
 {
-    int delta = m_size.x / 2;
+    int delta = GetSize() / 2;
     int pX, pY;
 
     pX = m_pos.x;
@@ -250,3 +200,8 @@ void SCH_NO_CONNECT::Plot( PLOTTER* aPlotter )
     aPlotter->FinishTo( wxPoint( pX - delta, pY + delta ) );
 }
 
+
+BITMAP_DEF SCH_NO_CONNECT::GetMenuImage() const
+{
+    return noconn_xpm;
+}

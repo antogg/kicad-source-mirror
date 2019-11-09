@@ -1,11 +1,7 @@
-/**
- * @file dialog_edit_component_in_lib.h
- */
-
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2013 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,7 +25,15 @@
 #ifndef _DIALOG_EDIT_COMPONENT_IN_LIB_H_
 #define _DIALOG_EDIT_COMPONENT_IN_LIB_H_
 
+#include <fields_grid_table.h>
+#include <class_library.h>
+#include <widgets/unit_binder.h>
 #include <dialog_edit_component_in_lib_base.h>
+
+
+class LIB_EDIT_FRAME;
+class LIB_PART;
+class WX_GRID;
 
 
 class DIALOG_EDIT_COMPONENT_IN_LIBRARY: public DIALOG_EDIT_COMPONENT_IN_LIBRARY_BASE
@@ -37,34 +41,67 @@ class DIALOG_EDIT_COMPONENT_IN_LIBRARY: public DIALOG_EDIT_COMPONENT_IN_LIBRARY_
     static int m_lastOpenedPage;    // To remember the last notebook selection
 
 public:
+    wxConfigBase*   m_config;
+
     LIB_EDIT_FRAME* m_Parent;
-    bool m_RecreateToolbar;
-    int m_AliasLocation;
+    LIB_PART*       m_libEntry;
+
+    FIELDS_GRID_TABLE<LIB_FIELD>* m_fields;
+
+    int             m_currentAlias;
+    LIB_ALIASES     m_aliasesBuffer;
+    UNIT_BINDER     m_pinNameOffset;
+
+    wxControl*      m_delayedFocusCtrl;
+    WX_GRID*        m_delayedFocusGrid;
+    int             m_delayedFocusRow;
+    int             m_delayedFocusColumn;
+    int             m_delayedFocusPage;
+    wxString        m_delayedErrorMessage;
+
+    wxString        m_shownColumns;
+    int             m_width;
+
+    bool TransferDataToWindow() override;
+    bool TransferDataFromWindow() override;
+
+    bool Validate() override;
 
 public:
     /// Constructors
-    DIALOG_EDIT_COMPONENT_IN_LIBRARY( LIB_EDIT_FRAME* parent);
+    DIALOG_EDIT_COMPONENT_IN_LIBRARY( LIB_EDIT_FRAME* parent, LIB_PART* aLibEntry );
     ~DIALOG_EDIT_COMPONENT_IN_LIBRARY();
 
 private:
-    void initDlg();
-    void InitPanelDoc();
-    void InitBasicPanel();
-    void OnCancelClick( wxCommandEvent& event );
-    void OnOkClick(wxCommandEvent& event);
-    void DeleteAllAliasOfPart(wxCommandEvent& event);
-    void DeleteAliasOfPart(wxCommandEvent& event);
-    void AddAliasOfPart(wxCommandEvent& event);
-    bool ChangeNbUnitsPerPackage(int newUnit);
-    bool SetUnsetConvert();
-    void CopyDocFromRootToAlias(wxCommandEvent& event);
-    void BrowseAndSelectDocFile(wxCommandEvent& event);
+    void transferAliasDataToBuffer();
 
-    void DeleteAllFootprintFilter(wxCommandEvent& event);
-    void DeleteOneFootprintFilter(wxCommandEvent& event);
-    void AddFootprintFilter(wxCommandEvent& event);
+    void OnAddField( wxCommandEvent& event ) override;
+    void OnDeleteField( wxCommandEvent& event ) override;
+    void OnMoveUp( wxCommandEvent& event ) override;
+    void OnMoveDown( wxCommandEvent& event ) override;
+    void OnSymbolNameKillFocus( wxFocusEvent& event ) override;
+    void OnSymbolNameText( wxCommandEvent& event ) override;
+    void OnSelectAlias( wxCommandEvent& event ) override;
+    void OnAddAlias( wxCommandEvent& event ) override;
+    void OnDeleteAlias( wxCommandEvent& event ) override;
+    void OnAddFootprintFilter( wxCommandEvent& event ) override;
+    void OnDeleteFootprintFilter( wxCommandEvent& event ) override;
+    void OnEditFootprintFilter( wxCommandEvent& event ) override;
+    void OnSizeGrid( wxSizeEvent& event ) override;
+    void OnSizeAliasGrid( wxSizeEvent& event ) override;
+    void OnGridCellChanging( wxGridEvent& event );
+    void OnAliasGridCellChanging( wxGridEvent& event );
+    void OnAliasNameKillFocus( wxFocusEvent& event ) override;
+    void OnAliasNameText( wxCommandEvent& event ) override;
+    void OnEditSpiceModel( wxCommandEvent& event ) override;
+    void OnUpdateUI( wxUpdateUIEvent& event ) override;
+    void OnFilterDClick( wxMouseEvent& event ) override;
+    void OnCancelButtonClick( wxCommandEvent& event ) override;
 
+    void updateAliasName( bool aFromGrid, const wxString& aName );
+    bool checkAliasName( const wxString& aName );
+    void adjustGridColumns( int aWidth );
+    void adjustAliasGridColumns( int aWidth );
 };
 
-#endif
-    // _DIALOG_EDIT_COMPONENT_IN_LIB_H_
+#endif // _DIALOG_EDIT_COMPONENT_IN_LIB_H_

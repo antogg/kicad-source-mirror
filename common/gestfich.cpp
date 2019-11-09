@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2008-2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2008-2017 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -28,79 +28,43 @@
  * @brief Functions for file management
  */
 
-// For compilers that support precompilation, includes "wx.h".
 #include <fctsys.h>
-#include <pgm_base.h>
-#include <confirm.h>
-
-#include <common.h>
-#include <macros.h>
-#include <gestfich.h>
-
 #include <wx/mimetype.h>
 #include <wx/filename.h>
 #include <wx/dir.h>
+#include <pgm_base.h>
+#include <confirm.h>
+#include <common.h>
+#include <macros.h>
 
+#include <gestfich.h>
 
 void AddDelimiterString( wxString& string )
 {
-    wxString text;
-
     if( !string.StartsWith( wxT( "\"" ) ) )
-        text = wxT( "\"" );
-
-    text += string;
-
-    if( (text.Last() != '"' ) || (text.length() <= 1) )
-        text += wxT( "\"" );
-
-    string = text;
-}
-
-
-bool EDA_DirectorySelector( const wxString& Title,
-                            wxString&       Path,
-                            int             flag,
-                            wxWindow*       Frame,
-                            const wxPoint&  Pos )
-{
-    int          ii;
-    bool         selected = false;
-
-    wxDirDialog* DirFrame = new wxDirDialog( Frame,
-                                             wxString( Title ),
-                                             Path,
-                                             flag,
-                                             Pos );
-
-    ii = DirFrame->ShowModal();
-
-    if( ii == wxID_OK )
     {
-        Path     = DirFrame->GetPath();
-        selected = true;
+        string.Prepend ( wxT( "\"" ) );
+        string.Append ( wxT( "\"" ) );
     }
-
-    DirFrame->Destroy();
-    return selected;
 }
 
 
-wxString EDA_FileSelector( const wxString& Title,
-                           const wxString& Path,
-                           const wxString& FileName,
-                           const wxString& Ext,
-                           const wxString& Mask,
-                           wxWindow*       Frame,
-                           int             flag,
-                           const bool      keep_working_directory,
-                           const wxPoint&  Pos )
+wxString EDA_FILE_SELECTOR( const wxString& aTitle,
+                            const wxString& aPath,
+                            const wxString& aFileName,
+                            const wxString& aExtension,
+                            const wxString& aWildcard,
+                            wxWindow*       aParent,
+                            int             aStyle,
+                            const bool      aKeepWorkingDirectory,
+                            const wxPoint&  aPosition,
+                            wxString*       aMruPath )
 {
     wxString fullfilename;
     wxString curr_cwd    = wxGetCwd();
-    wxString defaultname = FileName;
-    wxString defaultpath = Path;
-    wxString dotted_Ext = wxT(".") + Ext;
+    wxString defaultname = aFileName;
+    wxString defaultpath = aPath;
+    wxString dotted_Ext = wxT(".") + aExtension;
 
 #ifdef __WINDOWS__
     defaultname.Replace( wxT( "/" ), wxT( "\\" ) );
@@ -108,7 +72,12 @@ wxString EDA_FileSelector( const wxString& Title,
 #endif
 
     if( defaultpath.IsEmpty() )
-        defaultpath = wxGetCwd();
+    {
+        if( aMruPath == NULL )
+            defaultpath = wxGetCwd();
+        else
+            defaultpath = *aMruPath;
+    }
 
     wxSetWorkingDirectory( defaultpath );
 
@@ -116,23 +85,29 @@ wxString EDA_FileSelector( const wxString& Title,
     printf( "defaultpath=\"%s\" defaultname=\"%s\" Ext=\"%s\" Mask=\"%s\" flag=%d keep_working_directory=%d\n",
             TO_UTF8( defaultpath ),
             TO_UTF8( defaultname ),
-            TO_UTF8( Ext ),
-            TO_UTF8( Mask ),
-            flag,
-            keep_working_directory );
+            TO_UTF8( aExtension ),
+            TO_UTF8( aWildcard ),
+            aStyle,
+            aKeepWorkingDirectory );
 #endif
 
-    fullfilename = wxFileSelector( wxString( Title ),
+    fullfilename = wxFileSelector( aTitle,
                                    defaultpath,
                                    defaultname,
                                    dotted_Ext,
-                                   Mask,
-                                   flag, // open mode wxFD_OPEN, wxFD_SAVE ..
-                                   Frame,
-                                   Pos.x, Pos.y );
+                                   aWildcard,
+                                   aStyle,         // open mode wxFD_OPEN, wxFD_SAVE ..
+                                   aParent,
+                                   aPosition.x, aPosition.y );
 
-    if( keep_working_directory )
+    if( aKeepWorkingDirectory )
         wxSetWorkingDirectory( curr_cwd );
+
+    if( !fullfilename.IsEmpty() && aMruPath )
+    {
+        wxFileName fn = fullfilename;
+        *aMruPath = fn.GetPath();
+    }
 
     return fullfilename;
 }
@@ -142,8 +117,11 @@ wxString FindKicadFile( const wxString& shortname )
 {
     // Test the presence of the file in the directory shortname of
     // the KiCad binary path.
+#ifndef __WXMAC__
     wxString fullFileName = Pgm().GetExecutablePath() + shortname;
-
+#else
+    wxString fullFileName = Pgm().GetExecutablePath() + wxT( "Contents/MacOS/" ) + shortname;
+#endif
     if( wxFileExists( fullFileName ) )
         return fullFileName;
 
@@ -157,16 +135,21 @@ wxString FindKicadFile( const wxString& shortname )
             return fullFileName;
     }
 
-    // find binary file from possibilities list:
-    //  /usr/local/kicad/linux or c:/kicad/winexe
-
     // Path list for KiCad binary files
     const static wxChar* possibilities[] = {
-#ifdef __WINDOWS__
+#if defined( __WINDOWS__ )
         wxT( "c:/kicad/bin/" ),
         wxT( "d:/kicad/bin/" ),
         wxT( "c:/Program Files/kicad/bin/" ),
         wxT( "d:/Program Files/kicad/bin/" ),
+#elif defined( __WXMAC__ )
+        // all internal paths are relative to main bundle kicad.app
+        wxT( "Contents/Applications/pcbnew.app/Contents/MacOS/" ),
+        wxT( "Contents/Applications/eeschema.app/Contents/MacOS/" ),
+        wxT( "Contents/Applications/gerbview.app/Contents/MacOS/" ),
+        wxT( "Contents/Applications/bitmap2component.app/Contents/MacOS/" ),
+        wxT( "Contents/Applications/pcb_calculator.app/Contents/MacOS/" ),
+        wxT( "Contents/Applications/pl_editor.app/Contents/MacOS/" ),
 #else
         wxT( "/usr/bin/" ),
         wxT( "/usr/local/bin/" ),
@@ -174,9 +157,15 @@ wxString FindKicadFile( const wxString& shortname )
 #endif
     };
 
-    for( unsigned i=0;  i<DIM(possibilities);  ++i )
+    // find binary file from possibilities list:
+    for( unsigned i=0;  i<arrayDim(possibilities);  ++i )
     {
+#ifndef __WXMAC__
         fullFileName = possibilities[i] + shortname;
+#else
+        // make relative paths absolute
+        fullFileName = Pgm().GetExecutablePath() + possibilities[i] + shortname;
+#endif
 
         if( wxFileExists( fullFileName ) )
             return fullFileName;
@@ -189,23 +178,8 @@ wxString FindKicadFile( const wxString& shortname )
 int ExecuteFile( wxWindow* frame, const wxString& ExecFile, const wxString& param,
                  wxProcess *callback )
 {
-    wxString fullFileName;
+    wxString fullFileName = FindKicadFile( ExecFile );
 
-
-    fullFileName = FindKicadFile( ExecFile );
-
-#ifdef __WXMAC__
-    if( wxFileExists( fullFileName ) || wxDir::Exists( fullFileName ) )
-    {
-        return ProcessExecute( Pgm().GetExecutablePath() + wxT( "/" )
-                               + ExecFile + wxT( " " )
-                               + param, wxEXEC_ASYNC, callback );
-    }
-    else
-    {
-        return ProcessExecute( wxT( "/usr/bin/open " ) + param, wxEXEC_ASYNC, callback );
-    }
-#else
     if( wxFileExists( fullFileName ) )
     {
         if( !param.IsEmpty() )
@@ -213,111 +187,22 @@ int ExecuteFile( wxWindow* frame, const wxString& ExecFile, const wxString& para
 
         return ProcessExecute( fullFileName, wxEXEC_ASYNC, callback );
     }
-#endif
-    wxString msg;
-    msg.Printf( _( "Command <%s> could not found" ), GetChars( fullFileName ) );
-    DisplayError( frame, msg, 20 );
-    return -1;
-}
-
-
-wxString KicadDatasPath()
-{
-    bool     found = false;
-    wxString data_path;
-
-    if( Pgm().IsKicadEnvVariableDefined() ) // Path defined by the KICAD environment variable.
-    {
-        data_path = Pgm().GetKicadEnvVariable();
-        found = true;
-    }
-    else    // Path of executables.
-    {
-        wxString tmp = Pgm().GetExecutablePath();
-#ifdef __WINDOWS__
-        tmp.MakeLower();
-#endif
-        if( tmp.Contains( wxT( "kicad" ) ) )
-        {
-#ifdef __WINDOWS__
-            tmp = Pgm().GetExecutablePath();
-#endif
-            if( tmp.Last() == '/' )
-                tmp.RemoveLast();
-
-            data_path  = tmp.BeforeLast( '/' ); // id cd ../
-            data_path += UNIX_STRING_DIR_SEP;
-
-            // Old versions of KiCad use kicad/ as default for data
-            // and last versions kicad/share/
-            // So we search for kicad/share/ first
-            wxString old_path = data_path;
-            data_path += wxT( "share/" );
-
-            if( wxDirExists( data_path ) )
-            {
-                found = true;
-            }
-            else if( wxDirExists( old_path ) )
-            {
-                data_path = old_path;
-                found = true;
-            }
-        }
-    }
-
-    if( !found )
-    {
-        // find KiCad from possibilities list:
-        //  /usr/local/kicad/ or c:/kicad/
-
-        const static wxChar*  possibilities[] = {
-#ifdef __WINDOWS__
-            wxT( "c:/kicad/share/" ),
-            wxT( "d:/kicad/share/" ),
-            wxT( "c:/kicad/" ),
-            wxT( "d:/kicad/" ),
-            wxT( "c:/Program Files/kicad/share/" ),
-            wxT( "d:/Program Files/kicad/share/" ),
-            wxT( "c:/Program Files/kicad/" ),
-            wxT( "d:/Program Files/kicad/" ),
-#else
-            wxT( "/usr/share/kicad/" ),
-            wxT( "/usr/local/share/kicad/" ),
-            wxT( "/usr/local/kicad/share/" ),   // default data path for "universal
-                                                // tarballs" and build for a server
-                                                // (new)
-            wxT( "/usr/local/kicad/" ),         // default data path for "universal
-                                                // tarballs" and build for a server
-                                                // (old)
-#endif
-        };
-
-        for( unsigned i=0;  i<DIM(possibilities);  ++i )
-        {
-            data_path = possibilities[i];
-
-            if( wxDirExists( data_path ) )
-            {
-                found = true;
-                break;
-            }
-        }
-    }
-
-    if( found )
-    {
-        data_path.Replace( WIN_STRING_DIR_SEP, UNIX_STRING_DIR_SEP );
-
-        if( data_path.Last() != '/' )
-            data_path += UNIX_STRING_DIR_SEP;
-    }
+#ifdef __WXMAC__
     else
     {
-        data_path.Empty();
-    }
+        AddDelimiterString( fullFileName );
 
-    return data_path;
+        if( !param.IsEmpty() )
+            fullFileName += wxT( " " ) + param;
+
+        return ProcessExecute( wxT( "/usr/bin/open -a " ) + fullFileName, wxEXEC_ASYNC, callback );
+    }
+#endif
+
+    wxString msg;
+    msg.Printf( _( "Command \"%s\" could not found" ), GetChars( fullFileName ) );
+    DisplayError( frame, msg, 20 );
+    return -1;
 }
 
 
@@ -325,124 +210,152 @@ bool OpenPDF( const wxString& file )
 {
     wxString command;
     wxString filename = file;
-    wxString type;
-    bool     success = false;
 
     Pgm().ReadPdfBrowserInfos();
 
     if( !Pgm().UseSystemPdfBrowser() )    //  Run the preferred PDF Browser
     {
-        AddDelimiterString( filename );
-        command = Pgm().GetPdfBrowserName() + wxT( " " ) + filename;
+        command = Pgm().GetPdfBrowserName() + wxT( " '" ) + filename + wxT( "'" );
     }
     else
     {
-        wxFileType* filetype = NULL;
-        wxFileType::MessageParameters params( filename, type );
-        filetype = wxTheMimeTypesManager->GetFileTypeFromExtension( wxT( "pdf" ) );
+        if( wxLaunchDefaultApplication( filename ) )
+            return true;
 
-        if( filetype )
-            success = filetype->GetOpenCommand( &command, params );
-
-        delete filetype;
-
-#ifndef __WINDOWS__
-
-        // Bug ? under linux wxWidgets returns acroread as PDF viewer, even if
-        // it does not exist.
-        if( command.StartsWith( wxT( "acroread" ) ) ) // Workaround
-            success = false;
+#ifdef __WXMAC__
+        command = wxT( "/usr/bin/open -a '" ) + filename + wxT( "'" );
 #endif
-
-        if( success && !command.IsEmpty() )
-        {
-            success = ProcessExecute( command );
-
-            if( success )
-                return success;
-        }
-
-        success = false;
-        command.clear();
-
-        if( !success )
-        {
-#if !defined(__WINDOWS__)
-            AddDelimiterString( filename );
-
-            // here is a list of PDF viewers candidates
-            static const wxChar* tries[] =
-            {
-                wxT( "/usr/bin/evince" ),
-                wxT( "/usr/bin/okular" ),
-                wxT( "/usr/bin/gpdf" ),
-                wxT( "/usr/bin/konqueror" ),
-                wxT( "/usr/bin/kpdf" ),
-                wxT( "/usr/bin/xpdf" ),
-                wxT( "/usr/bin/open" ),     // BSD and OSX file & dir opener
-                wxT( "/usr/bin/xdg-open" ), // Freedesktop file & dir opener
-            };
-
-            for( unsigned ii = 0;  ii<DIM(tries);  ii++ )
-            {
-                if( wxFileExists( tries[ii] ) )
-                {
-                    command = tries[ii];
-                    command += wxT( ' ' );
-                    command += filename;
-                    break;
-                }
-            }
-#endif
-        }
+        // If launching the system default PDF viewer fails, fall through with empty command
+        // string so the error message is displayed.
     }
 
     if( !command.IsEmpty() )
     {
-        success = ProcessExecute( command );
-
-        if( !success )
+        if( ProcessExecute( command ) != -1 )
+        {
+            return true;
+        }
+        else
         {
             wxString msg;
-            msg.Printf( _( "Problem while running the PDF viewer\nCommand is '%s'" ),
-                        GetChars( command ) );
+            msg.Printf( _( "Problem while running the PDF viewer\nCommand is \"%s\"" ), command );
             DisplayError( NULL, msg );
         }
     }
     else
     {
         wxString msg;
-        msg.Printf( _( "Unable to find a PDF viewer for <%s>" ), GetChars( filename ) );
+        msg.Printf( _( "Unable to find a PDF viewer for \"%s\"" ), file );
         DisplayError( NULL, msg );
-        success = false;
     }
 
-    return success;
+    return false;
 }
 
 
 void OpenFile( const wxString& file )
 {
+    wxFileName  fileName( file );
+    wxFileType* filetype = wxTheMimeTypesManager->GetFileTypeFromExtension( fileName.GetExt() );
+
+    if( !filetype )
+        return;
+
     wxString    command;
-    wxString    filename = file;
+    wxFileType::MessageParameters params( file );
 
-    wxFileName  CurrentFileName( filename );
-    wxString    ext, type;
-
-    ext = CurrentFileName.GetExt();
-    wxFileType* filetype = wxTheMimeTypesManager->GetFileTypeFromExtension( ext );
-
-    bool        success = false;
-
-    wxFileType::MessageParameters params( filename, type );
-
-    if( filetype )
-        success = filetype->GetOpenCommand( &command, params );
-
+    filetype->GetOpenCommand( &command, params );
     delete filetype;
 
-    if( success && !command.IsEmpty() )
+    if( !command.IsEmpty() )
         ProcessExecute( command );
+}
+
+
+bool doPrintFile( const wxString& file, bool aDryRun )
+{
+    wxFileName  fileName( file );
+    wxString    ext = fileName.GetExt();
+    wxFileType* filetype = wxTheMimeTypesManager->GetFileTypeFromExtension( ext );
+
+    if( !filetype )
+        return false;
+
+    wxString    printCommand;
+    wxString    openCommand;
+    wxString    application;
+
+    wxFileType::MessageParameters params( file );
+    filetype->GetPrintCommand( &printCommand, params );
+    filetype->GetOpenCommand( &openCommand, params );
+    delete filetype;
+
+    if( !printCommand.IsEmpty() )
+    {
+        if( !aDryRun )
+            ProcessExecute( printCommand );
+
+        return true;
+    }
+
+#ifdef __WXMAC__
+    if( ext == "ps" || ext == "pdf" )
+        application = "Preview";
+    else if( ext == "csv" )
+        application = "Numbers";
+    else if( ext == "txt" || ext == "rpt" || ext == "pos" || ext == "cmp" || ext == "net" )
+        application = "TextEdit";
+
+    if( !application.IsEmpty() )
+    {
+        printCommand.Printf( "osascript -e 'tell application \"%s\"' "
+                                  "-e '   set srcFileRef to (open POSIX file \"%s\")' "
+                                  "-e '   activate' "
+                                  "-e '   print srcFileRef print dialog true' "
+                                  "-e 'end tell' ",
+                             application,
+                             file );
+
+        if( !aDryRun )
+            system( printCommand.c_str() );
+
+        return true;
+    }
+#endif
+
+#ifdef __WXGTK__
+    if( ext == "ps" || ext == "pdf"
+            || ext == "csv"
+            || ext == "txt" || ext == "rpt" || ext == "pos" || ext == "cmp" || ext == "net" )
+    {
+        printCommand.Printf( "lp \"%s\"", file );
+
+        if( !aDryRun )
+            ProcessExecute( printCommand );
+
+        return true;
+    }
+#endif
+
+    if( !aDryRun )
+    {
+        DisplayError( nullptr, wxString::Format( _( "Cannot print '%s'.\n\nUnknown filetype." ),
+                                                 file ) );
+    }
+
+    return false;
+}
+
+
+void PrintFile( const wxString& file )
+{
+    doPrintFile( file, false );
+}
+
+
+bool CanPrintFile( const wxString& file )
+{
+    return doPrintFile( file, true );
 }
 
 

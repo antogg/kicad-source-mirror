@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2019 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,14 +22,10 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file lib_rectangle.h
- */
+#ifndef LIB_RECTANGLE_H
+#define LIB_RECTANGLE_H
 
-#ifndef _LIB_RECTANGLE_H_
-#define _LIB_RECTANGLE_H_
-
-#include <lib_draw_item.h>
+#include <lib_item.h>
 
 
 class LIB_RECTANGLE  : public LIB_ITEM
@@ -37,15 +33,9 @@ class LIB_RECTANGLE  : public LIB_ITEM
     wxPoint m_End;                  // Rectangle end point.
     wxPoint m_Pos;                  // Rectangle start point.
     int     m_Width;                // Line width
-    bool    m_isWidthLocked;        // Flag: Keep width locked
-    bool    m_isHeightLocked;       // Flag: Keep height locked
-    bool    m_isStartPointSelected; // Flag: is the upper left edge selected?
 
-    void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
-                      const TRANSFORM& aTransform );
-
-    void calcEdit( const wxPoint& aPosition );
+    void print( wxDC* aDC, const wxPoint& aOffset, void* aData,
+                const TRANSFORM& aTransform ) override;
 
 public:
     LIB_RECTANGLE( LIB_PART * aParent );
@@ -54,59 +44,55 @@ public:
 
     ~LIB_RECTANGLE() { }
 
-    wxString GetClass() const
+    wxString GetClass() const override
     {
         return wxT( "LIB_RECTANGLE" );
     }
 
+    wxString GetTypeName() override
+    {
+        return _( "Rectangle" );
+    }
+
     void SetEndPosition( const wxPoint& aPosition ) { m_End = aPosition; }
 
-    bool Save( OUTPUTFORMATTER& aFormatter );
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override;
 
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg );
+    int GetPenSize( ) const override;
 
-    bool HitTest( const wxPoint& aPosition ) const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    bool HitTest( const wxPoint &aPosRef, int aThreshold, const TRANSFORM& aTransform ) const;
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    int GetPenSize( ) const;
+    void BeginEdit( const wxPoint aStartPoint ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
 
-    const EDA_RECT GetBoundingBox() const;    // Virtual
+    void Offset( const wxPoint& aOffset ) override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    bool Inside( EDA_RECT& aRect ) const override;
 
-    void BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aStartPoint = wxPoint( 0, 0 ) );
+    void MoveTo( const wxPoint& aPosition ) override;
 
-    bool ContinueEdit( const wxPoint aNextPoint );
+    wxPoint GetPosition() const override { return m_Pos; }
 
-    void EndEdit( const wxPoint& aPosition, bool aAbort = false );
-
-    void SetOffset( const wxPoint& aOffset );
-
-    bool Inside( EDA_RECT& aRect ) const;
-
-    void Move( const wxPoint& aPosition );
-
-    wxPoint GetPosition() const { return m_Pos; }
-
-    void MirrorHorizontal( const wxPoint& aCenter );
-
-    void MirrorVertical( const wxPoint& aCenter );
-
-    void Rotate( const wxPoint& aCenter, bool aRotateCCW = true );
+    void MirrorHorizontal( const wxPoint& aCenter ) override;
+    void MirrorVertical( const wxPoint& aCenter ) override;
+    void Rotate( const wxPoint& aCenter, bool aRotateCCW = true ) override;
 
     void Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
-               const TRANSFORM& aTransform );
+               const TRANSFORM& aTransform ) override;
 
-    int GetWidth() const { return m_Width; }
+    int GetWidth() const override { return m_Width; }
+    void SetWidth( int aWidth ) override { m_Width = aWidth; }
 
-    void SetWidth( int aWidth ) { m_Width = aWidth; }
+    void SetEnd( const wxPoint& aEnd ) { m_End = aEnd; }
+    wxPoint GetEnd() const { return m_End; }
 
-    wxString GetSelectMenuText() const;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    BITMAP_DEF GetMenuImage() const { return  add_rectangle_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 private:
 
@@ -119,8 +105,8 @@ private:
      *      - Rectangle horizontal (X) end position.
      *      - Rectangle vertical (Y) end position.
      */
-    int compare( const LIB_ITEM& aOther ) const;
+    int compare( const LIB_ITEM& aOther ) const override;
 };
 
 
-#endif    // _LIB_RECTANGLE_H_
+#endif    // LIB_RECTANGLE_H

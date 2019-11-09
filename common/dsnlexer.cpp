@@ -3,7 +3,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2007-2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2007 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2007-2015 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -50,8 +50,9 @@ void DSNLEXER::init()
 
     specctraMode = false;
     space_in_quoted_tokens = false;
-
     commentsAreTokens = false;
+
+    curOffset = 0;
 
 #if 1
     if( keywordCount > 11 )
@@ -75,6 +76,10 @@ void DSNLEXER::init()
 DSNLEXER::DSNLEXER( const KEYWORD* aKeywordTable, unsigned aKeywordCount,
                     FILE* aFile, const wxString& aFilename ) :
     iOwnReaders( true ),
+    start( NULL ),
+    next( NULL ),
+    limit( NULL ),
+    reader( NULL ),
     keywords( aKeywordTable ),
     keywordCount( aKeywordCount )
 {
@@ -87,6 +92,10 @@ DSNLEXER::DSNLEXER( const KEYWORD* aKeywordTable, unsigned aKeywordCount,
 DSNLEXER::DSNLEXER( const KEYWORD* aKeywordTable, unsigned aKeywordCount,
                     const std::string& aClipboardTxt, const wxString& aSource ) :
     iOwnReaders( true ),
+    start( NULL ),
+    next( NULL ),
+    limit( NULL ),
+    reader( NULL ),
     keywords( aKeywordTable ),
     keywordCount( aKeywordCount )
 {
@@ -100,6 +109,10 @@ DSNLEXER::DSNLEXER( const KEYWORD* aKeywordTable, unsigned aKeywordCount,
 DSNLEXER::DSNLEXER( const KEYWORD* aKeywordTable, unsigned aKeywordCount,
                     LINE_READER* aLineReader ) :
     iOwnReaders( false ),
+    start( NULL ),
+    next( NULL ),
+    limit( NULL ),
+    reader( NULL ),
     keywords( aKeywordTable ),
     keywordCount( aKeywordCount )
 {
@@ -113,6 +126,10 @@ static const KEYWORD empty_keywords[1] = {};
 
 DSNLEXER::DSNLEXER( const std::string& aSExpression, const wxString& aSource ) :
     iOwnReaders( true ),
+    start( NULL ),
+    next( NULL ),
+    limit( NULL ),
+    reader( NULL ),
     keywords( empty_keywords ),
     keywordCount( 0 )
 {
@@ -148,6 +165,30 @@ void DSNLEXER::SetSpecctraMode( bool aMode )
     }
 }
 
+
+bool DSNLEXER::SyncLineReaderWith( DSNLEXER& aLexer )
+{
+    // Synchronize the pointers handling the data read by the LINE_READER
+    // only if aLexer shares the same LINE_READER, because only in this case
+    // the char buffer is be common
+
+    if( reader != aLexer.reader )
+        return false;
+
+    // We can synchronize the pointers which handle the data currently read
+    start = aLexer.start;
+    next = aLexer.next;
+    limit = aLexer.limit;
+
+    // Sync these parameters is not mandatory, but could help
+    // for instance in debug
+    curText = aLexer.curText;
+    curOffset = aLexer.curOffset;
+
+    return true;
+}
+
+
 void DSNLEXER::PushReader( LINE_READER* aLineReader )
 {
     readerStack.push_back( aLineReader );
@@ -182,7 +223,6 @@ LINE_READER* DSNLEXER::PopReader()
         {
             reader = 0;
             start  = dummy;
-            limit  = dummy;
             limit  = dummy;
         }
     }
@@ -306,38 +346,35 @@ bool DSNLEXER::IsSymbol( int aTok )
     // This is static and not inline to reduce code space.
 
     // if aTok is >= 0, then it is a coincidental match to a keyword.
-    return     aTok==DSN_SYMBOL
-            || aTok==DSN_STRING
-            || aTok>=0
-            ;
+    return aTok==DSN_SYMBOL || aTok==DSN_STRING || aTok>=0;
 }
 
 
-void DSNLEXER::Expecting( int aTok ) throw( IO_ERROR )
+void DSNLEXER::Expecting( int aTok )
 {
     wxString errText = wxString::Format(
-        _("Expecting '%s'"), GetChars( GetTokenString( aTok ) ) );
+        _( "Expecting \"%s\"" ), GetChars( GetTokenString( aTok ) ) );
     THROW_PARSE_ERROR( errText, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
 }
 
 
-void DSNLEXER::Expecting( const char* text ) throw( IO_ERROR )
+void DSNLEXER::Expecting( const char* text )
 {
     wxString errText = wxString::Format(
-        _("Expecting '%s'"), GetChars( wxString::FromUTF8( text ) ) );
+        _( "Expecting \"%s\"" ), GetChars( wxString::FromUTF8( text ) ) );
     THROW_PARSE_ERROR( errText, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
 }
 
 
-void DSNLEXER::Unexpected( int aTok ) throw( IO_ERROR )
+void DSNLEXER::Unexpected( int aTok )
 {
     wxString errText = wxString::Format(
-        _("Unexpected '%s'"), GetChars( GetTokenString( aTok ) ) );
+        _( "Unexpected \"%s\"" ), GetChars( GetTokenString( aTok ) ) );
     THROW_PARSE_ERROR( errText, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
 }
 
 
-void DSNLEXER::Duplicate( int aTok ) throw( IO_ERROR )
+void DSNLEXER::Duplicate( int aTok )
 {
     wxString errText = wxString::Format(
         _("%s is a duplicate"), GetTokenString( aTok ).GetData() );
@@ -345,15 +382,15 @@ void DSNLEXER::Duplicate( int aTok ) throw( IO_ERROR )
 }
 
 
-void DSNLEXER::Unexpected( const char* text ) throw( IO_ERROR )
+void DSNLEXER::Unexpected( const char* text )
 {
     wxString errText = wxString::Format(
-        _("Unexpected '%s'"), GetChars( wxString::FromUTF8( text ) ) );
+        _( "Unexpected \"%s\"" ), GetChars( wxString::FromUTF8( text ) ) );
     THROW_PARSE_ERROR( errText, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
 }
 
 
-void DSNLEXER::NeedLEFT() throw( IO_ERROR )
+void DSNLEXER::NeedLEFT()
 {
     int tok = NextTok();
     if( tok != DSN_LEFT )
@@ -361,7 +398,7 @@ void DSNLEXER::NeedLEFT() throw( IO_ERROR )
 }
 
 
-void DSNLEXER::NeedRIGHT() throw( IO_ERROR )
+void DSNLEXER::NeedRIGHT()
 {
     int tok = NextTok();
     if( tok != DSN_RIGHT )
@@ -369,7 +406,7 @@ void DSNLEXER::NeedRIGHT() throw( IO_ERROR )
 }
 
 
-int DSNLEXER::NeedSYMBOL() throw( IO_ERROR )
+int DSNLEXER::NeedSYMBOL()
 {
     int tok = NextTok();
     if( !IsSymbol( tok ) )
@@ -378,7 +415,7 @@ int DSNLEXER::NeedSYMBOL() throw( IO_ERROR )
 }
 
 
-int DSNLEXER::NeedSYMBOLorNUMBER() throw( IO_ERROR )
+int DSNLEXER::NeedSYMBOLorNUMBER()
 {
     int  tok = NextTok();
     if( !IsSymbol( tok ) && tok!=DSN_NUMBER )
@@ -387,13 +424,13 @@ int DSNLEXER::NeedSYMBOLorNUMBER() throw( IO_ERROR )
 }
 
 
-int DSNLEXER::NeedNUMBER( const char* aExpectation ) throw( IO_ERROR )
+int DSNLEXER::NeedNUMBER( const char* aExpectation )
 {
     int tok = NextTok();
     if( tok != DSN_NUMBER )
     {
         wxString errText = wxString::Format(
-            _("need a NUMBER for '%s'"), wxString::FromUTF8( aExpectation ).GetData() );
+            _( "need a NUMBER for \"%s\"" ), wxString::FromUTF8( aExpectation ).GetData() );
         THROW_PARSE_ERROR( errText, CurSource(), CurLine(), CurLineNumber(), CurOffset() );
     }
     return tok;
@@ -500,7 +537,7 @@ static bool isNumber( const char* cp, const char* limit )
 }
 
 
-int DSNLEXER::NextTok() throw( IO_ERROR )
+int DSNLEXER::NextTok()
 {
     const char*   cur  = next;
     const char*   head = cur;
@@ -771,7 +808,7 @@ exit:   // single point of exit, no returns elsewhere please.
 }
 
 
-wxArrayString* DSNLEXER::ReadCommentLines() throw( IO_ERROR )
+wxArrayString* DSNLEXER::ReadCommentLines()
 {
     wxArrayString*  ret = 0;
     bool            cmt_setting = SetCommentsAreTokens( true );

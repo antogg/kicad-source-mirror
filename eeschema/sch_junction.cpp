@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,36 +29,32 @@
 #include <fctsys.h>
 #include <gr_basic.h>
 #include <macros.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <trigo.h>
 #include <common.h>
 #include <richio.h>
-#include <plot_common.h>
+#include <plotter.h>
+#include <bitmaps.h>
 
 #include <sch_junction.h>
-#include <class_netlist_object.h>
+#include <netlist_object.h>
+#include <sch_connection.h>
 
 
 int SCH_JUNCTION::m_symbolSize = 40;    // Default diameter of the junction symbol
+
+
+int SCH_JUNCTION::GetEffectiveSymbolSize()
+{
+    return std::max( GetDefaultLineThickness(), m_symbolSize );
+}
+
 
 SCH_JUNCTION::SCH_JUNCTION( const wxPoint& pos ) :
     SCH_ITEM( NULL, SCH_JUNCTION_T )
 {
     m_pos    = pos;
     m_Layer  = LAYER_JUNCTION;
-}
-
-
-bool SCH_JUNCTION::Save( FILE* aFile ) const
-{
-    bool success = true;
-
-    if( fprintf( aFile, "Connection ~ %-4d %-4d\n", m_pos.x, m_pos.y ) == EOF )
-    {
-        success = false;
-    }
-
-    return success;
 }
 
 
@@ -74,27 +70,15 @@ void SCH_JUNCTION::SwapData( SCH_ITEM* aItem )
                  wxT( "Cannot swap junction data with invalid item." ) );
 
     SCH_JUNCTION* item = (SCH_JUNCTION*) aItem;
-    EXCHG( m_pos, item->m_pos );
+    std::swap( m_pos, item->m_pos );
 }
 
 
-bool SCH_JUNCTION::Load( LINE_READER& aLine, wxString& aErrorMsg )
+void SCH_JUNCTION::ViewGetLayers( int aLayers[], int& aCount ) const
 {
-    char name[256];
-    char* line = (char*) aLine;
-
-    while( (*line != ' ' ) && *line )
-        line++;
-
-    if( sscanf( line, "%s %d %d", name, &m_pos.x, &m_pos.y ) != 3 )
-    {
-        aErrorMsg.Printf( wxT( "Eeschema file connection load error at line %d, aborted" ),
-                          aLine.LineNumber() );
-        aErrorMsg << wxT( "\n" ) << FROM_UTF8( (char*) aLine );
-        return false;
-    }
-
-    return true;
+    aCount     = 2;
+    aLayers[0] = LAYER_JUNCTION;
+    aLayers[1] = LAYER_SELECTION_SHADOWS;
 }
 
 
@@ -103,42 +87,31 @@ const EDA_RECT SCH_JUNCTION::GetBoundingBox() const
     EDA_RECT rect;
 
     rect.SetOrigin( m_pos );
-    rect.Inflate( ( GetPenSize() + GetSymbolSize() ) / 2 );
+    rect.Inflate( ( GetPenSize() + GetEffectiveSymbolSize() ) / 2 );
 
     return rect;
 }
 
 
-void SCH_JUNCTION::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                         GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor )
+void SCH_JUNCTION::Print( wxDC* aDC, const wxPoint& aOffset )
 {
-    EDA_COLOR_T color;
+    auto    conn = Connection( *g_CurrentSheet );
+    COLOR4D color = GetLayerColor( ( conn && conn->IsBus() ) ? LAYER_BUS : m_Layer );
 
-    if( aColor >= 0 )
-        color = aColor;
-    else
-        color = GetLayerColor( m_Layer );
-
-    GRSetDrawMode( aDC, aDrawMode );
-
-    GRFilledCircle( aPanel->GetClipBox(), aDC, m_pos.x + aOffset.x, m_pos.y + aOffset.y,
-                    ( GetSymbolSize() / 2 ), 0, color, color );
+    GRFilledCircle( nullptr, aDC, m_pos.x + aOffset.x, m_pos.y + aOffset.y,
+                    ( GetEffectiveSymbolSize() / 2 ), 0, color, color );
 }
 
 
 void SCH_JUNCTION::MirrorX( int aXaxis_position )
 {
-    m_pos.y -= aXaxis_position;
-    NEGATE( m_pos.y );
-    m_pos.y += aXaxis_position;
+    MIRROR( m_pos.y, aXaxis_position );
 }
 
 
 void SCH_JUNCTION::MirrorY( int aYaxis_position )
 {
-    m_pos.x -= aYaxis_position;
-    NEGATE( m_pos.x );
-    m_pos.x += aYaxis_position;
+    MIRROR( m_pos.x, aYaxis_position );
 }
 
 
@@ -152,19 +125,6 @@ void SCH_JUNCTION::GetEndPoints( std::vector <DANGLING_END_ITEM>& aItemList )
 {
     DANGLING_END_ITEM item( JUNCTION_END, this, m_pos );
     aItemList.push_back( item );
-}
-
-
-bool SCH_JUNCTION::IsSelectStateChanged( const wxRect& aRect )
-{
-    bool previousState = IsSelected();
-
-    if( aRect.Contains( m_pos ) )
-        SetFlags( SELECTED );
-    else
-        ClearFlags( SELECTED );
-
-    return previousState != IsSelected();
 }
 
 
@@ -235,5 +195,11 @@ bool SCH_JUNCTION::doIsConnected( const wxPoint& aPosition ) const
 void SCH_JUNCTION::Plot( PLOTTER* aPlotter )
 {
     aPlotter->SetColor( GetLayerColor( GetLayer() ) );
-    aPlotter->Circle( m_pos, GetSymbolSize(), FILLED_SHAPE );
+    aPlotter->Circle( m_pos, GetEffectiveSymbolSize(), FILLED_SHAPE );
+}
+
+
+BITMAP_DEF SCH_JUNCTION::GetMenuImage() const
+{
+    return add_junction_xpm;
 }

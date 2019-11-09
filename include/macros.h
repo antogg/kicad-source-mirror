@@ -1,12 +1,41 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2007-2014 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2015 KiCad Developers, see CHANGELOG.TXT for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 /**
  * @file macros.h
- * @brief This file contains miscellaneous helper definitions and functions.
+ * @brief This file contains miscellaneous commonly used macros and functions.
  */
 
 #ifndef MACROS_H
 #define MACROS_H
 
 #include <wx/wx.h>
+#include <deque>
+#include <vector>
+#include <map>
+#include <set>
+#include <memory>       // std::shared_ptr
 
 /**
  * Macro TO_UTF8
@@ -17,6 +46,14 @@
  * type of the parameter!
  */
 #define TO_UTF8( wxstring )  ( (const char*) (wxstring).utf8_str() )
+
+/**
+ * Stringifies the given parameter by placing in quotes
+ * @param cstring STRING (no spaces)
+ * @return "STRING"
+ */
+#define TO_STR2(x) #x
+#define TO_STR(x) TO_STR2(x)
 
 /**
  * function FROM_UTF8
@@ -30,6 +67,16 @@ static inline wxString FROM_UTF8( const char* cstring )
         line = wxConvCurrent->cMB2WC( cstring );    // try to use locale conversion
 
     return line;
+}
+
+
+/// Utility to build comma separated lists in messages
+inline void AccumulateDescription( wxString &aDesc, const wxString &aItem )
+{
+    if( !aDesc.IsEmpty() )
+        aDesc << wxT(", ");
+
+    aDesc << aItem;
 }
 
 /**
@@ -53,29 +100,31 @@ static inline wxString FROM_UTF8( const char* cstring )
  */
 static inline const wxChar* GetChars( const wxString& s )
 {
-#if wxCHECK_VERSION( 2, 9, 0 )
     return (const wxChar*) s.c_str();
-#else
-    return s.GetData();
-#endif
 }
 
-// This really needs a function? well, it is used *a lot* of times
-template <class T> inline void NEGATE( T &x ) { x = -x; }
-
-/// # of elements in an array
-#define DIM( x )    unsigned( sizeof(x) / sizeof( (x)[0] ) )    // not size_t
-
-/// Exchange two values
-// std::swap works only with arguments of the same type (which is saner);
-// here the compiler will figure out what to do (I hope to get rid of
-// this soon or late)
-template <class T, class T2> inline void EXCHG( T& a, T2& b )
+/// # of elements in an array.  This implements type-safe compile time checking
+template <typename T, std::size_t N>
+constexpr std::size_t arrayDim(T const (&)[N]) noexcept
 {
-    T temp = a;
-    a = b;
-    b = temp;
+    return N;
 }
+
+/**
+ * Function MIRROR
+ * Mirror @a aPoint in @a aMirrorRef.
+ */
+template<typename T>
+T Mirror( T aPoint, T aMirrorRef )
+{
+    return -( aPoint - aMirrorRef ) + aMirrorRef;
+}
+template<typename T>
+void MIRROR( T& aPoint, const T& aMirrorRef )
+{
+    aPoint = Mirror( aPoint, aMirrorRef );
+}
+
 
 /**
  * Function Clamp
@@ -98,4 +147,20 @@ template <typename T> inline const T& Clamp( const T& lower, const T& value, con
 }
 
 
-#endif /* ifdef MACRO_H */
+#ifdef SWIG
+/// Declare a std::vector and also the swig %template in unison
+#define DECL_VEC_FOR_SWIG(TypeName, MemberType) namespace std { %template(TypeName) vector<MemberType>; } typedef std::vector<MemberType> TypeName;
+#define DECL_DEQ_FOR_SWIG(TypeName, MemberType) namespace std { %template(TypeName) deque<MemberType>; } typedef std::deque<MemberType> TypeName;
+#define DECL_MAP_FOR_SWIG(TypeName, KeyType, ValueType) namespace std { %template(TypeName) map<KeyType, ValueType>; } typedef std::map<KeyType, ValueType> TypeName;
+#define DECL_SPTR_FOR_SWIG(TypeName, MemberType) %shared_ptr(MemberType) namespace std { %template(TypeName) shared_ptr<MemberType>; } typedef std::shared_ptr<MemberType> TypeName;
+#define DECL_SET_FOR_SWIG(TypeName, MemberType) namespace std { %template(TypeName) set<MemberType>; } typedef std::set<MemberType> TypeName;
+#else
+/// Declare a std::vector but no swig %template
+#define DECL_VEC_FOR_SWIG(TypeName, MemberType) typedef std::vector<MemberType> TypeName;
+#define DECL_DEQ_FOR_SWIG(TypeName, MemberType) typedef std::deque<MemberType> TypeName;
+#define DECL_MAP_FOR_SWIG(TypeName, KeyType, ValueType) typedef std::map<KeyType, ValueType> TypeName;
+#define DECL_SPTR_FOR_SWIG(TypeName, MemberType) typedef std::shared_ptr<MemberType> TypeName;
+#define DECL_SET_FOR_SWIG(TypeName, MemberType) typedef std::set<MemberType> TypeName;
+#endif
+
+#endif // MACROS_H

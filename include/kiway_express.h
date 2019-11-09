@@ -1,5 +1,3 @@
-#ifndef KIWAY_EXPRESS_H_
-#define KIWAY_EXPRESS_H_
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
@@ -23,6 +21,9 @@
  * or you may write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
+
+#ifndef KIWAY_EXPRESS_H_
+#define KIWAY_EXPRESS_H_
 
 // @see http://wiki.wxwidgets.org/Custom_Events_Tutorial
 
@@ -58,17 +59,15 @@ public:
      * returns the payload, which can be any text but it typicall self
      * identifying s-expression.
      */
-    const std::string&  GetPayload()                    { return m_payload; }
+    std::string&  GetPayload()                          { return m_payload; }
     void SetPayload( const std::string& aPayload )      { m_payload = aPayload; }
 
-    KIWAY_EXPRESS* Clone() const            { return new KIWAY_EXPRESS( *this ); }
+    KIWAY_EXPRESS* Clone() const override   { return new KIWAY_EXPRESS( *this ); }
 
     //KIWAY_EXPRESS() {}
 
-    KIWAY_EXPRESS( FRAME_T aDestination,
-            MAIL_T aCommand,
-            const std::string& aPayload,
-            wxWindow* aSource = NULL );
+    KIWAY_EXPRESS( FRAME_T aDestination, MAIL_T aCommand, std::string& aPayload,
+                   wxWindow* aSource = NULL );
 
     KIWAY_EXPRESS( const KIWAY_EXPRESS& anOther );
 
@@ -81,7 +80,7 @@ public:
 
 private:
     FRAME_T         m_destination;      ///< could have been a bitmap indicating multiple recipients
-    std::string     m_payload;          ///< very often s-expression text, but not always
+    std::string&    m_payload;          ///< very often s-expression text, but not always
 
     // possible new ideas here.
 };
@@ -102,4 +101,3 @@ typedef void ( wxEvtHandler::*kiwayExpressFunction )( KIWAY_EXPRESS& );
 
 
 #endif  // KIWAY_EXPRESS_H_
-

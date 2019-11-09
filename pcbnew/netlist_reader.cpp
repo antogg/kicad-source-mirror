@@ -5,8 +5,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 1992-2011 Jean-Pierre Charras.
- * Copyright (C) 2013 Wayne Stambaugh <stambaughw@verizon.net>.
- * Copyright (C) 1992-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2013-2016 Wayne Stambaugh <stambaughw@verizon.net>.
+ * Copyright (C) 1992-2016 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -40,17 +40,8 @@
 
 NETLIST_READER::~NETLIST_READER()
 {
-    if( m_lineReader )
-    {
-        delete m_lineReader;
-        m_lineReader = NULL;
-    }
-
-    if( m_footprintReader )
-    {
-        delete m_footprintReader;
-        m_footprintReader = NULL;
-    }
+    delete m_lineReader;
+    delete m_footprintReader;
 }
 
 
@@ -88,52 +79,37 @@ NETLIST_READER::NETLIST_FILE_T NETLIST_READER::GuessNetlistFileType( LINE_READER
 NETLIST_READER* NETLIST_READER::GetNetlistReader( NETLIST*        aNetlist,
                                                   const wxString& aNetlistFileName,
                                                   const wxString& aCompFootprintFileName )
-    throw( IO_ERROR )
 {
     wxASSERT( aNetlist != NULL );
 
-    FILE* file = wxFopen( aNetlistFileName, wxT( "rt" ) );
+    std::unique_ptr< FILE_LINE_READER > file_rdr(new FILE_LINE_READER( aNetlistFileName ) );
 
-    if( file == NULL )
-    {
-        wxString msg;
-        msg.Printf( _( "Cannot open file %s for reading." ), GetChars( aNetlistFileName ) );
-        THROW_IO_ERROR( msg );
-    }
-
-    FILE_LINE_READER* reader = new FILE_LINE_READER( file, aNetlistFileName );
-    std::auto_ptr< FILE_LINE_READER > r( reader );
-
-    NETLIST_FILE_T type = GuessNetlistFileType( reader );
-    reader->Rewind();
+    NETLIST_FILE_T type = GuessNetlistFileType( file_rdr.get() );
+    file_rdr->Rewind();
 
     // The component footprint link reader is NULL if no file name was specified.
-    CMP_READER* cmpFileReader = NULL;
-
-    if( !aCompFootprintFileName.IsEmpty() )
-    {
-        cmpFileReader = new CMP_READER( new FILE_LINE_READER( aCompFootprintFileName ) );
-    }
+    std::unique_ptr<CMP_READER>  cmp_rdr( aCompFootprintFileName.IsEmpty() ?
+            NULL :
+            new CMP_READER( new FILE_LINE_READER( aCompFootprintFileName ) ) );
 
     switch( type )
     {
     case LEGACY:
     case ORCAD:
-        return new LEGACY_NETLIST_READER( r.release(), aNetlist, cmpFileReader );
+        return new LEGACY_NETLIST_READER( file_rdr.release(), aNetlist, cmp_rdr.release() );
 
     case KICAD:
-        return new KICAD_NETLIST_READER( r.release(), aNetlist, cmpFileReader );
+        return new KICAD_NETLIST_READER( file_rdr.release(), aNetlist, cmp_rdr.release() );
 
     default:    // Unrecognized format:
         break;
-
     }
 
     return NULL;
 }
 
 
-bool CMP_READER::Load( NETLIST* aNetlist ) throw( IO_ERROR, PARSE_ERROR )
+bool CMP_READER::Load( NETLIST* aNetlist )
 {
     wxCHECK_MSG( aNetlist != NULL,true, wxT( "No netlist passed to CMP_READER::Load()" ) );
 
@@ -193,21 +169,27 @@ bool CMP_READER::Load( NETLIST* aNetlist ) throw( IO_ERROR, PARSE_ERROR )
         COMPONENT* component = aNetlist->GetComponentByReference( reference );
 
         // The corresponding component could no longer existing in the netlist.  This
-        // can happed when it is removed from schematic and still exists in footprint
+        // can happen when it is removed from schematic and still exists in footprint
         // assignment list.  This is an usual case during the life of a design.
         if( component )
         {
-            FPID fpid;
+            LIB_ID fpid;
 
-            if( !footprint.IsEmpty() && fpid.Parse( footprint ) >= 0 )
+            if( !footprint.IsEmpty() && fpid.Parse( footprint, LIB_ID::ID_PCB, true ) >= 0 )
             {
                 wxString error;
-                error.Printf( _( "invalid PFID in\nfile: <%s>\nline: %d" ),
-                              GetChars( m_lineReader->GetSource() ),
-                              m_lineReader->LineNumber() );
+                error.Printf( _( "Invalid footprint ID in\nfile: \"%s\"\nline: %d" ),
+                              m_lineReader->GetSource(), m_lineReader->LineNumber() );
 
                 THROW_IO_ERROR( error );
             }
+
+            // For checking purpose, store the existing LIB_ID (if any) in the alternate fpid copy
+            // if this existing LIB_ID differs from the LIB_ID read from the .cmp file.
+            // CvPcb can ask for user to chose the right LIB_ID.
+            // It happens if the LIB_ID was modified outside CvPcb.
+            if( fpid != component->GetFPID() && !component->GetFPID().empty() )
+                component->SetAltFPID( component->GetFPID() );
 
             component->SetFPID( fpid );
         }

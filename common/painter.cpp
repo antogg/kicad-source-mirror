@@ -37,19 +37,11 @@ RENDER_SETTINGS::RENDER_SETTINGS()
     m_layerOpacity          = 0.8;
     m_highlightEnabled      = false;
     m_hiContrastEnabled     = false;
-    m_hiContrastFactor      = 0.2;
+    m_hiContrastFactor      = 0.2; //TODO: Make this user-configurable
     m_highlightNetcode      = -1;
     m_outlineWidth          = 1;
     m_worksheetLineWidth    = 100000;
-
-    // Store the predefined colors used in KiCad in format used by GAL
-    for( int i = 0; i < NBCOLORS; i++ )
-    {
-        m_legacyColorMap[g_ColorRefs[i].m_Numcolor] = COLOR4D( (double) g_ColorRefs[i].m_Red / 255.0,
-                                                               (double) g_ColorRefs[i].m_Green / 255.0,
-                                                               (double) g_ColorRefs[i].m_Blue / 255.0,
-                                                               m_layerOpacity );
-    }
+    m_showPageLimits        = false;
 }
 
 
@@ -60,13 +52,21 @@ RENDER_SETTINGS::~RENDER_SETTINGS()
 
 void RENDER_SETTINGS::update()
 {
-    m_hiContrastColor = COLOR4D( m_hiContrastFactor, m_hiContrastFactor, m_hiContrastFactor,
-                                 m_layerOpacity );
+    // Calculate darkened/highlighted variants of layer colors
+    for( int i = 0; i < LAYER_ID_COUNT; i++ )
+    {
+        m_hiContrastColor[i] = m_layerColors[i].Mix( m_layerColors[LAYER_PCB_BACKGROUND],
+                m_hiContrastFactor );
+        m_layerColorsHi[i]   = m_layerColors[i].Brightened( m_highlightFactor );
+        m_layerColorsDark[i] = m_layerColors[i].Darkened( 1.0 - m_highlightFactor );
+        m_layerColorsSel[i]  = m_layerColors[i].Brightened( m_selectFactor );
+    }
 }
 
 
 PAINTER::PAINTER( GAL* aGal ) :
-    m_gal( aGal ), m_brightenedColor( 0.0, 1.0, 0.0, 0.9 )
+    m_gal( aGal ),
+    m_brightenedColor( 0.0, 1.0, 0.0, 0.9 )
 {
 }
 

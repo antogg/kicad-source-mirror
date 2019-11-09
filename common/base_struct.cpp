@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -23,23 +23,35 @@
  */
 
 /**
- * @file base_struct.cpp
  * @brief Implementation of EDA_ITEM base class for KiCad.
  */
+
+#include <deque>
 
 #include <fctsys.h>
 #include <trigo.h>
 #include <common.h>
 #include <macros.h>
-#include <kicad_string.h>
-#include <wxstruct.h>
-#include <class_drawpanel.h>
-#include <class_base_screen.h>
-
-#include "../eeschema/dialogs/dialog_schematic_find.h"
+#include <base_screen.h>
+#include <bitmaps.h>
+#include <trace_helpers.h>
+#include <eda_rect.h>
 
 
-const wxString traceFindReplace( wxT( "KicadFindReplace" ) );
+static const unsigned char dummy_png[] = {
+ 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+ 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0xf3, 0xff,
+ 0x61, 0x00, 0x00, 0x00, 0x5f, 0x49, 0x44, 0x41, 0x54, 0x38, 0xcb, 0x63, 0xf8, 0xff, 0xff, 0x3f,
+ 0x03, 0x25, 0x98, 0x61, 0x68, 0x1a, 0x00, 0x04, 0x46, 0x40, 0xfc, 0x02, 0x88, 0x45, 0x41, 0x1c,
+ 0x76, 0x20, 0xfe, 0x01, 0xc4, 0xbe, 0x24, 0x18, 0x60, 0x01, 0xc4, 0x20, 0x86, 0x04, 0x88, 0xc3,
+ 0x01, 0xe5, 0x04, 0x0c, 0xb8, 0x01, 0x37, 0x81, 0xf8, 0x04, 0x91, 0xf8, 0x0a, 0x54, 0x8f, 0x06,
+ 0xb2, 0x01, 0x9b, 0x81, 0x78, 0x02, 0x91, 0x78, 0x05, 0x54, 0x8f, 0xca, 0xe0, 0x08, 0x03, 0x36,
+ 0xa8, 0xbf, 0xec, 0xc8, 0x32, 0x80, 0xcc, 0x84, 0x04, 0x0a, 0xbc, 0x1d, 0x40, 0x2c, 0xc8, 0x30,
+ 0xf4, 0x33, 0x13, 0x00, 0x6b, 0x1a, 0x46, 0x7b, 0x68, 0xe7, 0x0f, 0x0b, 0x00, 0x00, 0x00, 0x00,
+ 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+};
+
+static const BITMAP_OPAQUE dummy_xpm[1] = {{ dummy_png, sizeof( dummy_png ), "dummy_xpm" }};
 
 
 enum textbox {
@@ -49,7 +61,7 @@ enum textbox {
 
 EDA_ITEM::EDA_ITEM( EDA_ITEM* parent, KICAD_T idType )
 {
-    InitVars();
+    initVars();
     m_StructType = idType;
     m_Parent     = parent;
 }
@@ -57,32 +69,25 @@ EDA_ITEM::EDA_ITEM( EDA_ITEM* parent, KICAD_T idType )
 
 EDA_ITEM::EDA_ITEM( KICAD_T idType )
 {
-    InitVars();
+    initVars();
     m_StructType = idType;
 }
 
 
 EDA_ITEM::EDA_ITEM( const EDA_ITEM& base )
 {
-    InitVars();
-    m_StructType = base.m_StructType;
-    m_Parent     = base.m_Parent;
-    m_Flags      = base.m_Flags;
-
-    // A copy of an item cannot have the same time stamp as the original item.
-    SetTimeStamp( GetNewTimeStamp() );
-    m_Status     = base.m_Status;
+    initVars();
+    *this = base;
 }
 
 
-void EDA_ITEM::InitVars()
+void EDA_ITEM::initVars()
 {
     m_StructType = TYPE_NOT_INIT;
     Pnext       = NULL;     // Linked list: Link (next struct)
     Pback       = NULL;     // Linked list: Link (previous struct)
     m_Parent    = NULL;     // Linked list: Link (parent struct)
     m_List      = NULL;     // I am not on any list yet
-    m_Image     = NULL;     // Link to an image copy for undelete or abort command
     m_Flags     = 0;        // flags for editions and other
     SetTimeStamp( 0 );      // Time stamp used for logical links
     m_Status    = 0;
@@ -100,6 +105,19 @@ void EDA_ITEM::SetModified()
 }
 
 
+const EDA_RECT EDA_ITEM::GetBoundingBox() const
+{
+#if defined(DEBUG)
+    printf( "Missing GetBoundingBox()\n" );
+    Show( 0, std::cout ); // tell me which classes still need GetBoundingBox support
+#endif
+
+    // return a zero-sized box per default. derived classes should override
+    // this
+    return EDA_RECT( wxPoint( 0, 0 ), wxSize( 0, 0 ) );
+}
+
+
 EDA_ITEM* EDA_ITEM::Clone() const
 {
     wxCHECK_MSG( false, NULL, wxT( "Clone not implemented in derived class " ) + GetClass() +
@@ -107,16 +125,18 @@ EDA_ITEM* EDA_ITEM::Clone() const
 }
 
 
-SEARCH_RESULT EDA_ITEM::IterateForward( EDA_ITEM*     listStart,
-                                        INSPECTOR*    inspector,
-                                        const void*   testData,
-                                        const KICAD_T scanTypes[] )
+// see base_struct.h
+// many classes inherit this method, be careful:
+//TODO(snh): Fix this to use std::set instead of C-style vector
+SEARCH_RESULT EDA_ITEM::Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] )
 {
-    EDA_ITEM* p = listStart;
+#if 0 && defined(DEBUG)
+    std::cout << GetClass().mb_str() << ' ';
+#endif
 
-    for( ; p; p = p->Pnext )
+    if( IsType( scanTypes ) )
     {
-        if( SEARCH_QUIT == p->Visit( inspector, testData, scanTypes ) )
+        if( SEARCH_QUIT == inspector( this, testData ) )
             return SEARCH_QUIT;
     }
 
@@ -124,34 +144,7 @@ SEARCH_RESULT EDA_ITEM::IterateForward( EDA_ITEM*     listStart,
 }
 
 
-// see base_struct.h
-// many classes inherit this method, be careful:
-SEARCH_RESULT EDA_ITEM::Visit( INSPECTOR* inspector, const void* testData,
-                               const KICAD_T scanTypes[] )
-{
-    KICAD_T stype;
-
-#if 0 && defined(DEBUG)
-    std::cout << GetClass().mb_str() << ' ';
-#endif
-
-    for( const KICAD_T* p = scanTypes;  (stype = *p) != EOT;   ++p )
-    {
-        // If caller wants to inspect my type
-        if( stype == Type() )
-        {
-            if( SEARCH_QUIT == inspector->Inspect( this, testData ) )
-                return SEARCH_QUIT;
-
-            break;
-        }
-    }
-
-    return SEARCH_CONTINUE;
-}
-
-
-wxString EDA_ITEM::GetSelectMenuText() const
+wxString EDA_ITEM::GetSelectMenuText( EDA_UNITS_T aUnits ) const
 {
     wxFAIL_MSG( wxT( "GetSelectMenuText() was not overridden for schematic item type " ) +
                 GetClass() );
@@ -189,9 +182,6 @@ bool EDA_ITEM::Matches( const wxString& aText, wxFindReplaceData& aSearchData )
 
 bool EDA_ITEM::Replace( wxFindReplaceData& aSearchData, wxString& aText )
 {
-    wxCHECK_MSG( IsReplaceable(), false,
-                 wxT( "Attempt to replace text in <" ) + GetClass() + wxT( "> item." ) );
-
     wxString searchString = (aSearchData.GetFlags() & wxFR_MATCHCASE) ? aText : aText.Upper();
 
     int result = searchString.Find( (aSearchData.GetFlags() & wxFR_MATCHCASE) ?
@@ -225,23 +215,23 @@ bool EDA_ITEM::operator<( const EDA_ITEM& aItem ) const
     return false;
 }
 
-
 EDA_ITEM& EDA_ITEM::operator=( const EDA_ITEM& aItem )
 {
-    if( &aItem != this )
-    {
-        m_Image = aItem.m_Image;
-        m_StructType = aItem.m_StructType;
-        m_Parent = aItem.m_Parent;
-        m_Flags = aItem.m_Flags;
-        m_TimeStamp = aItem.m_TimeStamp;
-        m_Status = aItem.m_Status;
-        m_forceVisible = aItem.m_forceVisible;
-    }
+    // do not call initVars()
+
+    m_StructType = aItem.m_StructType;
+    m_Flags      = aItem.m_Flags;
+    m_Status     = aItem.m_Status;
+    m_Parent     = aItem.m_Parent;
+    m_forceVisible = aItem.m_forceVisible;
+
+    // A copy of an item cannot have the same time stamp as the original item.
+    SetTimeStamp( GetNewTimeStamp() );
+
+    // do not copy list related fields (Pnext, Pback, m_List)
 
     return *this;
 }
-
 
 const BOX2I EDA_ITEM::ViewBBox() const
 {
@@ -258,24 +248,12 @@ void EDA_ITEM::ViewGetLayers( int aLayers[], int& aCount ) const
     aLayers[0]  = 0;
 }
 
+BITMAP_DEF EDA_ITEM::GetMenuImage() const
+{
+    return dummy_xpm;
+}
 
 #if defined(DEBUG)
-
-// A function that should have been in wxWidgets
-std::ostream& operator<<( std::ostream& out, const wxSize& size )
-{
-    out << " width=\"" << size.GetWidth() << "\" height=\"" << size.GetHeight() << "\"";
-    return out;
-}
-
-
-// A function that should have been in wxWidgets
-std::ostream& operator<<( std::ostream& out, const wxPoint& pt )
-{
-    out << " x=\"" << pt.x << "\" y=\"" << pt.y << "\"";
-    return out;
-}
-
 
 void EDA_ITEM::ShowDummy( std::ostream& os ) const
 {
@@ -348,19 +326,12 @@ bool EDA_RECT::Contains( const wxPoint& aPoint ) const
 }
 
 
-/*
- * return true if aRect is inside me (or on boundaries)
- */
 bool EDA_RECT::Contains( const EDA_RECT& aRect ) const
 {
     return Contains( aRect.GetOrigin() ) && Contains( aRect.GetEnd() );
 }
 
 
-/* Intersects
- * test for a common area between segment and rect.
- * return true if at least a common point is found
- */
 bool EDA_RECT::Intersects( const wxPoint& aPoint1, const wxPoint& aPoint2 ) const
 {
     wxPoint point2, point4;
@@ -387,12 +358,11 @@ bool EDA_RECT::Intersects( const wxPoint& aPoint1, const wxPoint& aPoint2 ) cons
 }
 
 
-/* Intersects
- * test for a common area between 2 rect.
- * return true if at least a common point is found
- */
 bool EDA_RECT::Intersects( const EDA_RECT& aRect ) const
 {
+    if( !m_init )
+        return false;
+
     // this logic taken from wxWidgets' geometry.cpp file:
     bool rc;
     EDA_RECT me(*this);
@@ -416,6 +386,182 @@ bool EDA_RECT::Intersects( const EDA_RECT& aRect ) const
         rc = false;
 
     return rc;
+}
+
+
+bool EDA_RECT::Intersects( const EDA_RECT& aRect, double aRot ) const
+{
+    if( !m_init )
+        return false;
+
+    /* Most rectangles will be axis aligned.
+     * It is quicker to check for this case and pass the rect
+     * to the simpler intersection test
+     */
+
+    // Prevent floating point comparison errors
+    static const double ROT_EPS = 0.000000001;
+
+    static const double ROT_PARALLEL[] = { -3600, -1800, 0, 1800, 3600 };
+    static const double ROT_PERPENDICULAR[] = { -2700, -900, 0, 900, 2700 };
+
+    NORMALIZE_ANGLE_POS<double>( aRot );
+
+    // Test for non-rotated rectangle
+    for( int ii = 0; ii < 5; ii++ )
+    {
+        if( std::fabs( aRot - ROT_PARALLEL[ii] ) < ROT_EPS )
+        {
+            return Intersects( aRect );
+        }
+    }
+
+    // Test for rectangle rotated by multiple of 90 degrees
+    for( int jj = 0; jj < 4; jj++ )
+    {
+        if( std::fabs( aRot - ROT_PERPENDICULAR[jj] ) < ROT_EPS )
+        {
+            EDA_RECT rotRect;
+
+            // Rotate the supplied rect by 90 degrees
+            rotRect.SetOrigin( aRect.Centre() );
+            rotRect.Inflate( aRect.GetHeight(), aRect.GetWidth() );
+            return Intersects( rotRect );
+        }
+    }
+
+    /* There is some non-orthogonal rotation.
+     * There are three cases to test:
+     * A) One point of this rect is inside the rotated rect
+     * B) One point of the rotated rect is inside this rect
+     * C) One of the sides of the rotated rect intersect this
+     */
+
+    wxPoint corners[4];
+
+    /* Test A : Any corners exist in rotated rect? */
+
+    corners[0] = m_Pos;
+    corners[1] = m_Pos + wxPoint( m_Size.x, 0 );
+    corners[2] = m_Pos + wxPoint( m_Size.x, m_Size.y );
+    corners[3] = m_Pos + wxPoint( 0, m_Size.y );
+
+    wxPoint rCentre = aRect.Centre();
+
+    for( int i = 0; i < 4; i++ )
+    {
+        wxPoint delta = corners[i] - rCentre;
+        RotatePoint( &delta, -aRot );
+        delta += rCentre;
+
+        if( aRect.Contains( delta ) )
+        {
+            return true;
+        }
+    }
+
+    /* Test B : Any corners of rotated rect exist in this one? */
+    int w = aRect.GetWidth() / 2;
+    int h = aRect.GetHeight() / 2;
+
+    // Construct corners around center of shape
+    corners[0] = wxPoint( -w, -h );
+    corners[1] = wxPoint(  w, -h );
+    corners[2] = wxPoint(  w,  h );
+    corners[3] = wxPoint( -w,  h );
+
+    // Rotate and test each corner
+    for( int j=0; j<4; j++ )
+    {
+        RotatePoint( &corners[j], aRot );
+        corners[j] += rCentre;
+
+        if( Contains( corners[j] ) )
+        {
+            return true;
+        }
+    }
+
+    /* Test C : Any sides of rotated rect intersect this */
+
+    if( Intersects( corners[0], corners[1] ) ||
+        Intersects( corners[1], corners[2] ) ||
+        Intersects( corners[2], corners[3] ) ||
+        Intersects( corners[3], corners[0] ) )
+    {
+        return true;
+    }
+
+
+    return false;
+}
+
+
+const wxPoint EDA_RECT::ClosestPointTo( const wxPoint& aPoint ) const
+{
+    EDA_RECT me( *this );
+
+    me.Normalize();         // ensure size is >= 0
+
+    // Determine closest point to the circle centre within this rect
+    int nx = std::max( me.GetLeft(), std::min( aPoint.x, me.GetRight() ) );
+    int ny = std::max( me.GetTop(), std::min( aPoint.y, me.GetBottom() ) );
+
+    return wxPoint( nx, ny );
+}
+
+
+const wxPoint EDA_RECT::FarthestPointTo( const wxPoint& aPoint ) const
+{
+    EDA_RECT me( *this );
+
+    me.Normalize();         // ensure size is >= 0
+
+    int fx = std::max( std::abs( aPoint.x - me.GetLeft() ), std::abs( aPoint.x - me.GetRight() ) );
+    int fy = std::max( std::abs( aPoint.y - me.GetTop() ), std::abs( aPoint.y - me.GetBottom() ) );
+
+    return wxPoint( fx, fy );
+}
+
+
+bool EDA_RECT::IntersectsCircle( const wxPoint& aCenter, const int aRadius ) const
+{
+    if( !m_init )
+        return false;
+
+    wxPoint closest = ClosestPointTo( aCenter );
+
+    double dx = aCenter.x - closest.x;
+    double dy = aCenter.y - closest.y;
+
+    double r = (double) aRadius;
+
+    return ( dx * dx + dy * dy ) <= ( r * r );
+}
+
+
+bool EDA_RECT::IntersectsCircleEdge( const wxPoint& aCenter, const int aRadius, const int aWidth ) const
+{
+    if( !m_init )
+        return false;
+
+    EDA_RECT me( *this );
+    me.Normalize();         // ensure size is >= 0
+
+    // Test if the circle intersects at all
+    if( !IntersectsCircle( aCenter, aRadius + aWidth / 2 ) )
+    {
+        return false;
+    }
+
+    wxPoint farpt = FarthestPointTo( aCenter );
+    // Farthest point must be further than the inside of the line
+    double fx = (double) farpt.x;
+    double fy = (double) farpt.y;
+
+    double r = (double) aRadius - (double) aWidth / 2;
+
+    return ( fx * fx + fy * fy ) > ( r * r );
 }
 
 
@@ -496,6 +642,17 @@ EDA_RECT& EDA_RECT::Inflate( wxCoord dx, wxCoord dy )
 
 void EDA_RECT::Merge( const EDA_RECT& aRect )
 {
+    if( !m_init )
+    {
+        if( aRect.IsValid() )
+        {
+            m_Pos = aRect.GetPosition();
+            m_Size = aRect.GetSize();
+            m_init = true;
+        }
+        return;
+    }
+
     Normalize();        // ensure width and height >= 0
     EDA_RECT rect = aRect;
     rect.Normalize();   // ensure width and height >= 0
@@ -513,6 +670,13 @@ void EDA_RECT::Merge( const EDA_RECT& aRect )
 
 void EDA_RECT::Merge( const wxPoint& aPoint )
 {
+    if( !m_init )
+    {
+        m_Pos = aPoint;
+        m_Size = wxSize( 0, 0 );
+        return;
+    }
+
     Normalize();        // ensure width and height >= 0
 
     wxPoint  end = GetEnd();
@@ -530,8 +694,30 @@ double EDA_RECT::GetArea() const
     return (double) GetWidth() * (double) GetHeight();
 }
 
-/* Calculate the bounding box of this, when rotated
- */
+
+EDA_RECT EDA_RECT::Common( const EDA_RECT& aRect ) const
+{
+    EDA_RECT r;
+
+    if( Intersects( aRect ) )
+    {
+        wxPoint originA( std::min( GetOrigin().x, GetEnd().x ),
+                         std::min( GetOrigin().y, GetEnd().y ) );
+        wxPoint originB( std::min( aRect.GetOrigin().x, aRect.GetEnd().x ),
+                         std::min( aRect.GetOrigin().y, aRect.GetEnd().y ) );
+        wxPoint endA( std::max( GetOrigin().x, GetEnd().x ),
+                      std::max( GetOrigin().y, GetEnd().y ) );
+        wxPoint endB( std::max( aRect.GetOrigin().x, aRect.GetEnd().x ),
+                      std::max( aRect.GetOrigin().y, aRect.GetEnd().y ) );
+
+        r.SetOrigin( wxPoint( std::max( originA.x, originB.x ), std::max( originA.y, originB.y ) ) );
+        r.SetEnd   ( wxPoint( std::min( endA.x, endB.x ),       std::min( endA.y, endB.y ) ) );
+    }
+
+    return r;
+}
+
+
 const EDA_RECT EDA_RECT::GetBoundingBoxRotated( wxPoint aRotCenter, double aAngle )
 {
     wxPoint corners[4];

@@ -57,20 +57,20 @@ public:
         SHAPE( SH_RECT ), m_p0( aP0 ), m_w( aW ), m_h( aH )
     {}
 
-    SHAPE_RECT ( const SHAPE_RECT& aOther ) : 
+    SHAPE_RECT( const SHAPE_RECT& aOther ) :
         SHAPE( SH_RECT ),
         m_p0( aOther.m_p0 ),
         m_w( aOther.m_w ),
         m_h( aOther.m_h )
     {};
 
-    SHAPE* Clone() const
+    SHAPE* Clone() const override
     {
         return new SHAPE_RECT( *this );
     }
 
     /// @copydoc SHAPE::BBox()
-    const BOX2I BBox( int aClearance = 0 ) const
+    const BOX2I BBox( int aClearance = 0 ) const override
     {
         BOX2I bbox( VECTOR2I( m_p0.x - aClearance,  m_p0.y - aClearance ),
                     VECTOR2I( m_w + 2 * aClearance, m_h + 2 * aClearance ) );
@@ -90,34 +90,7 @@ public:
     }
 
     /// @copydoc SHAPE::Collide()
-    bool Collide( const SEG& aSeg, int aClearance = 0 ) const
-    {
-        //VECTOR2I pmin = VECTOR2I( std::min( aSeg.a.x, aSeg.b.x ), std::min( aSeg.a.y, aSeg.b.y ) );
-        //VECTOR2I pmax = VECTOR2I( std::max( aSeg.a.x, aSeg.b.x ), std::max( aSeg.a.y, aSeg.b.y ));
-        //BOX2I r( pmin, VECTOR2I( pmax.x - pmin.x, pmax.y - pmin.y ) );
-
-        //if( BBox( 0 ).SquaredDistance( r ) > aClearance * aClearance )
-        //    return false;
-
-        if( BBox( 0 ).Contains( aSeg.A ) || BBox( 0 ).Contains( aSeg.B ) )
-            return true;
-
-        VECTOR2I vts[] = { VECTOR2I( m_p0.x, m_p0.y ),
-                           VECTOR2I( m_p0.x, m_p0.y + m_h ),
-                           VECTOR2I( m_p0.x + m_w, m_p0.y + m_h ),
-                           VECTOR2I( m_p0.x + m_w, m_p0.y ),
-                           VECTOR2I( m_p0.x, m_p0.y ) };
-
-        for( int i = 0; i < 4; i++ )
-        {
-            SEG s( vts[i], vts[i + 1], i );
-
-            if( s.Distance( aSeg ) <= aClearance )
-                return true;
-        }
-
-        return false;
-    }
+    bool Collide( const SEG& aSeg, int aClearance = 0 ) const override;
 
     /**
      * Function GetPosition()
@@ -157,6 +130,28 @@ public:
     const int GetHeight() const
     {
         return m_h;
+    }
+
+    void Move( const VECTOR2I& aVector ) override
+    {
+        m_p0 += aVector;
+    }
+
+    bool IsSolid() const override
+    {
+        return true;
+    }
+
+    const SHAPE_LINE_CHAIN Outline() const
+    {
+        SHAPE_LINE_CHAIN rv;
+        rv.Append( m_p0 );
+        rv.Append( m_p0.x, m_p0.y + m_h );
+        rv.Append( m_p0.x + m_w, m_p0.y + m_h );
+        rv.Append( m_p0.x + m_w, m_p0.y );
+        rv.Append( m_p0 );
+        rv.SetClosed( true );
+        return rv;
     }
 
 private:

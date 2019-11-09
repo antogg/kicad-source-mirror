@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -23,10 +24,10 @@
 
 #include <vector>
 #include <list>
+#include <unordered_set>
+#include <unordered_map>
 
-#include <boost/unordered_set.hpp>
-#include <boost/unordered_map.hpp>
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <geometry/shape.h>
 #include <geometry/shape_line_chain.h>
@@ -36,39 +37,52 @@
 #include "pns_joint.h"
 #include "pns_itemset.h"
 
-class PNS_SEGMENT;
-class PNS_LINE;
-class PNS_SOLID;
-class PNS_VIA;
-class PNS_RATSNEST;
-class PNS_INDEX;
+namespace PNS {
 
+class SEGMENT;
+class LINE;
+class SOLID;
+class VIA;
+class INDEX;
+class ROUTER;
+class NODE;
 
 /**
- * Class PNS_CLEARANCE_FUNC
+ * Class RULE_RESOLVER
  *
- * An abstract function object, returning a required clearance between two items.
+ * An abstract function object, returning a design rule (clearance, diff pair gap, etc) required between two items.
  **/
-class PNS_CLEARANCE_FUNC
+
+class RULE_RESOLVER
 {
 public:
-    virtual int operator()( const PNS_ITEM* aA, const PNS_ITEM* aB ) = 0;
-    virtual ~PNS_CLEARANCE_FUNC() {}
+    virtual ~RULE_RESOLVER() {}
+
+    virtual bool CollideHoles( const ITEM* aA, const ITEM* aB,
+                               bool aNeedMTV, VECTOR2I* aMTV ) const = 0;
+
+    virtual int Clearance( const ITEM* aA, const ITEM* aB ) const = 0;
+    virtual int Clearance( int aNetCode ) const = 0;
+    virtual int DpCoupledNet( int aNet ) = 0;
+    virtual int DpNetPolarity( int aNet ) = 0;
+    virtual bool DpNetPair( ITEM* aItem, int& aNetP, int& aNetN ) = 0;
+
+    virtual wxString NetName( int aNet ) = 0;
 };
 
 /**
- * Struct PNS_OBSTACLE
+ * Struct OBSTACLE
  *
  * Holds an object colliding with another object, along with
  * some useful data about the collision.
  **/
-struct PNS_OBSTACLE
+struct OBSTACLE
 {
     ///> Item we search collisions with
-    PNS_ITEM* m_head;
+    const ITEM* m_head;
 
     ///> Item found to be colliding with m_head
-    PNS_ITEM* m_item;
+    ITEM* m_item;
 
     ///> Hull of the colliding m_item
     SHAPE_LINE_CHAIN m_hull;
@@ -82,7 +96,37 @@ struct PNS_OBSTACLE
 };
 
 /**
- * Class PNS_NODE
+ * Struct OBSTACLE_VISITOR
+ **/
+class OBSTACLE_VISITOR {
+
+public:
+
+    OBSTACLE_VISITOR( const ITEM* aItem );
+
+    void SetWorld( const NODE* aNode, const NODE* aOverride = NULL );
+
+    virtual bool operator()( ITEM* aCandidate ) = 0;
+
+protected:
+
+    bool visit( ITEM* aCandidate );
+
+    ///> the item we are looking for collisions with
+    const ITEM* m_item;
+
+    ///> node we are searching in (either root or a branch)
+    const NODE* m_node;
+
+    ///> node that overrides root entries
+    const NODE* m_override;
+
+    ///> additional clearance
+    int m_extraClearance;
+};
+
+/**
+ * Class NODE
  *
  * Keeps the router "world" - i.e. all the tracks, vias, solids in a
  * hierarchical and indexed way.
@@ -93,18 +137,18 @@ struct PNS_OBSTACLE
  * - lightweight cloning/branching (for recursive optimization and shove
  * springback)
  **/
-class PNS_NODE
+class NODE
 {
 public:
-    typedef boost::optional<PNS_OBSTACLE>   OPT_OBSTACLE;
-    typedef std::vector<PNS_ITEM*>          ITEM_VECTOR;
-    typedef std::vector<PNS_OBSTACLE>       OBSTACLES;
-    
-    PNS_NODE ();
-    ~PNS_NODE ();
+    typedef OPT<OBSTACLE>   OPT_OBSTACLE;
+    typedef std::vector<ITEM*>          ITEM_VECTOR;
+    typedef std::vector<OBSTACLE>       OBSTACLES;
+
+    NODE();
+    ~NODE();
 
     ///> Returns the expected clearance between items a and b.
-    int GetClearance( const PNS_ITEM* aA, const PNS_ITEM* aB ) const;
+    int GetClearance( const ITEM* aA, const ITEM* aB ) const;
 
     ///> Returns the pre-set worst case clearance between any pair of items
     int GetMaxClearance() const
@@ -119,9 +163,14 @@ public:
     }
 
     ///> Assigns a clerance resolution function object
-    void SetClearanceFunctor( PNS_CLEARANCE_FUNC* aFunc )
+    void SetRuleResolver( RULE_RESOLVER* aFunc )
     {
-        m_clearanceFunctor = aFunc;
+        m_ruleResolver = aFunc;
+    }
+
+    RULE_RESOLVER* GetRuleResolver() const
+    {
+        return m_ruleResolver;
     }
 
     ///> Returns the number of joints
@@ -131,12 +180,12 @@ public:
     }
 
     ///> Returns the number of nodes in the inheritance chain (wrs to the root node)
-    int Depth() const 
+    int Depth() const
     {
         return m_depth;
     }
 
-    /** 
+    /**
      * Function QueryColliding()
      *
      * Finds items collliding (closer than clearance) with the item aItem.
@@ -146,11 +195,17 @@ public:
      * @param aLimitCount stop looking for collisions after finding this number of colliding items
      * @return number of obstacles found
      */
-    int QueryColliding( const PNS_ITEM* aItem,
-                        OBSTACLES&      aObstacles,
-                        int             aKindMask = PNS_ITEM::ANY,
-                        int             aLimitCount = -1 );
-    
+    int QueryColliding( const ITEM*  aItem,
+                        OBSTACLES&   aObstacles,
+                        int          aKindMask = ITEM::ANY_T,
+                        int          aLimitCount = -1,
+                        bool         aDifferentNetsOnly = true,
+                        int          aForceClearance = -1 );
+
+    int QueryColliding( const ITEM* aItem,
+                         OBSTACLE_VISITOR& aVisitor
+                      );
+
     /**
      * Function NearestObstacle()
      *
@@ -160,10 +215,11 @@ public:
      * @param aKindMask mask of obstacle types to take into account
      * @return the obstacle, if found, otherwise empty.
      */
-    OPT_OBSTACLE NearestObstacle( const PNS_LINE*   aItem,
-                                  int               aKindMask = PNS_ITEM::ANY );
+    OPT_OBSTACLE NearestObstacle( const LINE*             aItem,
+                                  int                     aKindMask = ITEM::ANY_T,
+                                  const std::set<ITEM*>*  aRestrictedSet = NULL );
 
-    /** 
+    /**
      * Function CheckColliding()
      *
      * Checks if the item collides with anything else in the world,
@@ -172,11 +228,11 @@ public:
      * @param aKindMask mask of obstacle types to take into account
      * @return the obstacle, if found, otherwise empty.
      */
-    OPT_OBSTACLE CheckColliding( const PNS_ITEM*     aItem,
-                                 int                 aKindMask = PNS_ITEM::ANY );
-    
+    OPT_OBSTACLE CheckColliding( const ITEM*     aItem,
+                                 int             aKindMask = ITEM::ANY_T );
 
-    /** 
+
+    /**
      * Function CheckColliding()
      *
      * Checks if any item in the set collides with anything else in the world,
@@ -185,58 +241,81 @@ public:
      * @param aKindMask mask of obstacle types to take into account
      * @return the obstacle, if found, otherwise empty.
      */
-    OPT_OBSTACLE CheckColliding( const PNS_ITEMSET&  aSet,
-                                 int                 aKindMask = PNS_ITEM::ANY );
+    OPT_OBSTACLE CheckColliding( const ITEM_SET&  aSet,
+                                 int              aKindMask = ITEM::ANY_T );
 
 
-    /** 
+    /**
      * Function CheckColliding()
      *
-     * Checks if any item in the set collides with anything else in the world,
+     * Checks if 2 items collide.
      * and if found, returns the obstacle.
-     * @param aSet set of items to find collisions with
+     * @param aItemA  first item to find collisions with
+     * @param aItemB  second item to find collisions with
      * @param aKindMask mask of obstacle types to take into account
      * @return the obstacle, if found, otherwise empty.
      */
-    bool CheckColliding( const PNS_ITEM*    aItemA,
-                         const PNS_ITEM*    aItemB,
-                         int                aKindMask = PNS_ITEM::ANY );
+    bool CheckColliding( const ITEM*    aItemA,
+                         const ITEM*    aItemB,
+                         int            aKindMask = ITEM::ANY_T,
+                         int            aForceClearance = -1 );
 
-    /** 
+    /**
      * Function HitTest()
      *
      * Finds all items that contain the point aPoint.
      * @param aPoint the point
      * @return the items
      */
-    const PNS_ITEMSET HitTest( const VECTOR2I& aPoint ) const;
+    const ITEM_SET HitTest( const VECTOR2I& aPoint ) const;
 
     /**
      * Function Add()
      *
-     * Adds an item to the current node. 
-     * @param aItem item to add
-     * @param aAllowRedundant if true, duplicate items are allowed (e.g. a segment or via 
+     * Adds an item to the current node.
+     * @param aSegment item to add
+     * @param aAllowRedundant if true, duplicate items are allowed (e.g. a segment or via
+     * @return true if added
      * at the same coordinates as an existing one)
      */
-    void Add( PNS_ITEM* aItem, bool aAllowRedundant = false );
-    
-    /** 
+    bool Add( std::unique_ptr< SEGMENT > aSegment, bool aAllowRedundant = false );
+    void Add( std::unique_ptr< SOLID >   aSolid );
+    void Add( std::unique_ptr< VIA >     aVia );
+
+    void Add( LINE& aLine, bool aAllowRedundant = false );
+
+private:
+    void Add( std::unique_ptr< ITEM > aItem, bool aAllowRedundant = false );
+
+public:
+    /**
      * Function Remove()
      *
      * Just as the name says, removes an item from this branch.
-     * @param aItem item to remove
      */
-    void Remove( PNS_ITEM* aItem );
-    
-    /** 
+    void Remove( SOLID* aSolid );
+    void Remove( VIA* aVia );
+    void Remove( SEGMENT* aSegment );
+    void Remove( ITEM* aItem );
+
+public:
+    /**
+     * Function Remove()
+     *
+     * Just as the name says, removes a line from this branch.
+     * @param aLine item to remove
+     */
+    void Remove( LINE& aLine );
+
+    /**
      * Function Replace()
      *
      * Just as the name says, replaces an item with another one.
      * @param aOldItem item to be removed
      * @param aNewItem item add instead
      */
-    void Replace( PNS_ITEM* aOldItem, PNS_ITEM* aNewItem );
+    void Replace( ITEM* aOldItem, std::unique_ptr< ITEM > aNewItem );
+    void Replace( LINE& aOldLine, LINE& aNewLine );
 
     /**
      * Function Branch()
@@ -246,18 +325,19 @@ public:
      * any branches in use, their parents must NOT be deleted.
      * @return the new branch
      */
-    PNS_NODE* Branch();
+    NODE* Branch();
 
-    /** 
+    /**
      * Function AssembleLine()
      *
-     * Follows the joint map to assemble a line connecting two non-trivial 
+     * Follows the joint map to assemble a line connecting two non-trivial
      * joints starting from segment aSeg.
      * @param aSeg the initial segment
      * @param aOriginSegmentIndex index of aSeg in the resulting line
      * @return the line
      */
-    PNS_LINE* AssembleLine( PNS_SEGMENT* aSeg, int *aOriginSegmentIndex = NULL );
+    const LINE AssembleLine( SEGMENT* aSeg, int* aOriginSegmentIndex = NULL,
+                                 bool aStopAtLockedJoints = false );
 
     ///> Prints the contents and joints structure
     void Dump( bool aLong = false );
@@ -271,7 +351,7 @@ public:
      * @param aAdded added items
      */
     void GetUpdatedItems( ITEM_VECTOR& aRemoved, ITEM_VECTOR& aAdded );
-    
+
     /**
      * Function Commit()
      *
@@ -279,7 +359,7 @@ public:
      * a non-root branch will fail. Calling commit also kills all children nodes of the root branch.
      * @param aNode node to commit changes from
      */
-    void Commit( PNS_NODE* aNode );
+    void Commit( NODE* aNode );
 
     /**
      * Function FindJoint()
@@ -287,7 +367,9 @@ public:
      * Searches for a joint at a given position, layer and belonging to given net.
      * @return the joint, if found, otherwise empty
      */
-    PNS_JOINT* FindJoint( const VECTOR2I& aPos, int aLayer, int aNet );
+    JOINT* FindJoint( const VECTOR2I& aPos, int aLayer, int aNet );
+
+    void LockJoint( const VECTOR2I& aPos, const ITEM* aItem, bool aLock );
 
     /**
      * Function FindJoint()
@@ -295,121 +377,135 @@ public:
      * Searches for a joint at a given position, linked to given item.
      * @return the joint, if found, otherwise empty
      */
-    PNS_JOINT* FindJoint( const VECTOR2I& aPos, PNS_ITEM* aItem )
+    JOINT* FindJoint( const VECTOR2I& aPos, const ITEM* aItem )
     {
         return FindJoint( aPos, aItem->Layers().Start(), aItem->Net() );
     }
 
-    void MapConnectivity( PNS_JOINT* aStart, std::vector<PNS_JOINT*> & aFoundJoints );
+#if 0
+    void MapConnectivity( JOINT* aStart, std::vector<JOINT*> & aFoundJoints );
 
-    PNS_ITEM* NearestUnconnectedItem( PNS_JOINT* aStart, int *aAnchor = NULL,
-                                      int aKindMask = PNS_ITEM::ANY);
+    ITEM* NearestUnconnectedItem( JOINT* aStart, int* aAnchor = NULL,
+                                      int aKindMask = ITEM::ANY_T);
 
+#endif
 
     ///> finds all lines between a pair of joints. Used by the loop removal procedure.
-    int FindLinesBetweenJoints( PNS_JOINT&                  aA,
-                                PNS_JOINT&                  aB,
-                                std::vector<PNS_LINE*>&     aLines );
+    int FindLinesBetweenJoints( JOINT&                  aA,
+                                JOINT&                  aB,
+                                std::vector<LINE>&      aLines );
 
     ///> finds the joints corresponding to the ends of line aLine
-    void FindLineEnds( PNS_LINE* aLine, PNS_JOINT& aA, PNS_JOINT& aB );
-    
+    void FindLineEnds( const LINE& aLine, JOINT& aA, JOINT& aB );
+
     ///> Destroys all child nodes. Applicable only to the root node.
     void KillChildren();
 
-    void AllItemsInNet( int aNet, std::set<PNS_ITEM*>& aItems );
-    
-    void ClearRanks();
-    
-    int FindByMarker( int aMarker, PNS_ITEMSET& aItems );
-    int RemoveByMarker( int aMarker );
+    void AllItemsInNet( int aNet, std::set<ITEM*>& aItems );
+
+    void ClearRanks( int aMarkerMask = MK_HEAD | MK_VIOLATION );
+
+    void RemoveByMarker( int aMarker );
+
+    ITEM* FindItemByParent( const BOARD_CONNECTED_ITEM* aParent );
+
+    bool HasChildren() const
+    {
+        return !m_children.empty();
+    }
+
+    ///> checks if this branch contains an updated version of the m_item
+    ///> from the root branch.
+    bool Overrides( ITEM* aItem ) const
+    {
+        return m_override.find( aItem ) != m_override.end();
+    }
 
 private:
-    struct OBSTACLE_VISITOR;
-    typedef boost::unordered_multimap<PNS_JOINT::HASH_TAG, PNS_JOINT> JOINT_MAP;
+    struct DEFAULT_OBSTACLE_VISITOR;
+    typedef std::unordered_multimap<JOINT::HASH_TAG, JOINT, JOINT::JOINT_TAG_HASH> JOINT_MAP;
     typedef JOINT_MAP::value_type TagJointPair;
 
     /// nodes are not copyable
-    PNS_NODE( const PNS_NODE& aB );
-    PNS_NODE& operator=( const PNS_NODE& aB );
+    NODE( const NODE& aB );
+    NODE& operator=( const NODE& aB );
 
     ///> tries to find matching joint and creates a new one if not found
-    PNS_JOINT& touchJoint( const VECTOR2I&      aPos, 
-                           const PNS_LAYERSET&  aLayers,
-                           int                  aNet );
+    JOINT& touchJoint( const VECTOR2I&     aPos,
+                       const LAYER_RANGE&  aLayers,
+                       int                 aNet );
 
     ///> touches a joint and links it to an m_item
-    void linkJoint( const VECTOR2I& aPos, const PNS_LAYERSET& aLayers,
-                    int aNet, PNS_ITEM* aWhere );
+    void linkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers, int aNet, ITEM* aWhere );
 
     ///> unlinks an item from a joint
-    void unlinkJoint( const VECTOR2I& aPos, const PNS_LAYERSET& aLayers,
-                        int aNet, PNS_ITEM* aWhere );
+    void unlinkJoint( const VECTOR2I& aPos, const LAYER_RANGE& aLayers, int aNet, ITEM* aWhere );
 
     ///> helpers for adding/removing items
-    void addSolid( PNS_SOLID* aSeg );
-    void addSegment( PNS_SEGMENT* aSeg, bool aAllowRedundant );
-    void addLine( PNS_LINE* aLine, bool aAllowRedundant );
-    void addVia( PNS_VIA* aVia );
-    void removeSolid( PNS_SOLID* aSeg );
-    void removeLine( PNS_LINE* aLine );
-    void removeSegment( PNS_SEGMENT* aSeg );
-    void removeVia( PNS_VIA* aVia );
+    void addSolid( SOLID* aSeg );
+    void addSegment( SEGMENT* aSeg );
+    void addVia( VIA* aVia );
 
-    void doRemove( PNS_ITEM* aItem );
+    void removeLine( LINE& aLine );
+    void removeSolidIndex( SOLID* aSeg );
+    void removeSegmentIndex( SEGMENT* aSeg );
+    void removeViaIndex( VIA* aVia );
+
+    void doRemove( ITEM* aItem );
     void unlinkParent();
     void releaseChildren();
+    void releaseGarbage();
 
     bool isRoot() const
     {
         return m_parent == NULL;
     }
 
-    ///> checks if this branch contains an updated version of the m_item
-    ///> from the root branch.
-    bool overrides( PNS_ITEM* aItem ) const
-    {
-        return m_override.find( aItem ) != m_override.end();
-    }
-
-    PNS_SEGMENT *findRedundantSegment ( PNS_SEGMENT* aSeg );
+    SEGMENT* findRedundantSegment( const VECTOR2I& A, const VECTOR2I& B,
+                                   const LAYER_RANGE & lr, int aNet );
+    SEGMENT* findRedundantSegment( SEGMENT* aSeg );
 
     ///> scans the joint map, forming a line starting from segment (current).
-    void followLine( PNS_SEGMENT*    aCurrent,
-                     bool            aScanDirection,
-                     int&            aPos,
-                     int             aLimit,
-                     VECTOR2I*       aCorners,
-                     PNS_SEGMENT**   aSegments,
-                     bool&           aGuardHit );
+    void followLine( SEGMENT*    aCurrent,
+                     bool        aScanDirection,
+                     int&        aPos,
+                     int         aLimit,
+                     VECTOR2I*   aCorners,
+                     SEGMENT**   aSegments,
+                     bool&       aGuardHit,
+                     bool        aStopAtLockedJoints );
 
     ///> hash table with the joints, linking the items. Joints are hashed by
     ///> their position, layer set and net.
     JOINT_MAP m_joints;
 
     ///> node this node was branched from
-    PNS_NODE* m_parent;
+    NODE* m_parent;
 
     ///> root node of the whole hierarchy
-    PNS_NODE* m_root;
+    NODE* m_root;
 
     ///> list of nodes branched from this one
-    std::vector<PNS_NODE*> m_children;
+    std::set<NODE*> m_children;
 
     ///> hash of root's items that have been changed in this node
-    boost::unordered_set<PNS_ITEM*> m_override;
+    std::unordered_set<ITEM*> m_override;
 
     ///> worst case item-item clearance
     int m_maxClearance;
 
-    ///> Clearance resolution functor
-    PNS_CLEARANCE_FUNC* m_clearanceFunctor;
+    ///> Design rules resolver
+    RULE_RESOLVER* m_ruleResolver;
 
     ///> Geometric/Net index of the items
-    PNS_INDEX* m_index;
+    INDEX* m_index;
 
     ///> depth of the node (number of parent nodes in the inheritance chain)
     int m_depth;
+
+    std::unordered_set<ITEM*> m_garbageItems;
 };
+
+}
 
 #endif

@@ -2,8 +2,8 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2009 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2011 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2011-2016 Wayne Stambaugh <stambaughw@verizon.net>
+ * Copyright (C) 1992-2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,96 +29,73 @@
 
 #include <fctsys.h>
 #include <pgm_base.h>
-#include <class_drawpanel.h>
-#include <class_sch_screen.h>
-#include <wxEeschemaStruct.h>
+#include <sch_draw_panel.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
-#include <libeditframe.h>
+#include <lib_edit_frame.h>
 #include <sch_sheet_path.h>
 #include <project.h>
+#include <reporter.h>
 
 #include <dialog_plot_schematic.h>
-
+#include <wx_html_report_panel.h>
 
 void DIALOG_PLOT_SCHEMATIC::createSVGFile( bool aPrintAll, bool aPrintFrameRef )
 {
-    wxString    msg;
-    wxFileName  fn;
+    wxString        msg;
+    REPORTER&       reporter = m_MessagesBox->Reporter();
+    SCH_SHEET_PATH  oldsheetpath = m_parent->GetCurrentSheet();
+    SCH_SHEET_LIST  sheetList;
 
     if( aPrintAll )
+        sheetList.BuildSheetList( g_RootSheet );
+    else
+        sheetList.push_back( m_parent->GetCurrentSheet() );
+
+    for( unsigned i = 0; i < sheetList.size(); i++ )
     {
-        SCH_SHEET_PATH* sheetpath;
-        SCH_SHEET_PATH  oldsheetpath    = m_parent->GetCurrentSheet();
-        SCH_SHEET_LIST  SheetList( NULL );
-        sheetpath = SheetList.GetFirst();
-        SCH_SHEET_PATH  list;
+        SCH_SCREEN*  screen;
+        m_parent->SetCurrentSheet( sheetList[i] );
+        m_parent->GetCurrentSheet().UpdateAllScreenReferences();
+        m_parent->SetSheetNumberAndCount();
+        screen = m_parent->GetCurrentSheet().LastScreen();
 
-        for( ; ; )
+        try
         {
-            if( sheetpath == NULL )
-                break;
+            wxString fname = m_parent->GetUniqueFilenameForCurrentSheet();
+            wxString ext = SVG_PLOTTER::GetDefaultFileExtension();
+            wxFileName plotFileName = createPlotFileName( m_outputDirectoryName,
+                                                          fname, ext, &reporter );
 
-            SCH_SCREEN*  screen;
-            list.Clear();
-
-            if( list.BuildSheetPathInfoFromSheetPathValue( sheetpath->Path() ) )
-            {
-                m_parent->SetCurrentSheet( list );
-                m_parent->GetCurrentSheet().UpdateAllScreenReferences();
-                m_parent->SetSheetNumberAndCount();
-                screen = m_parent->GetCurrentSheet().LastScreen();
-            }
-            else // Should not happen
-                return;
-
-            sheetpath = SheetList.GetNext();
-
-            wxString fileName = m_parent->GetUniqueFilenameForCurrentSheet() + wxT( ".svg" );
-
-            fn = Prj().AbsolutePath( fileName );
-
-            bool success = plotOneSheetSVG( m_parent, fn.GetFullPath(), screen,
+            bool success = plotOneSheetSVG( m_parent, plotFileName.GetFullPath(), screen,
                                             getModeColor() ? false : true,
                                             aPrintFrameRef );
 
             if( !success )
             {
-                msg.Printf( _( "Error creating file <%s>\n" ),
-                            GetChars( fn.GetFullPath() ) );
+                msg.Printf( _( "Cannot create file \"%s\".\n" ),
+                            GetChars( plotFileName.GetFullPath() ) );
+                reporter.Report( msg, REPORTER::RPT_ERROR );
             }
             else
             {
-                msg.Printf( _( "File <%s> OK\n" ),
-                            GetChars( fn.GetFullPath() ) );
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ),
+                            GetChars( plotFileName.GetFullPath() ) );
+                reporter.Report( msg, REPORTER::RPT_ACTION );
             }
-
-            m_MessagesBox->AppendText( msg );
         }
-
-        m_parent->SetCurrentSheet( oldsheetpath );
-        m_parent->GetCurrentSheet().UpdateAllScreenReferences();
-        m_parent->SetSheetNumberAndCount();
+        catch( const IO_ERROR& e )
+        {
+            // Cannot plot SVG file
+            msg.Printf( wxT( "SVG Plotter exception: %s" ), GetChars( e.What() ) );
+            reporter.Report( msg, REPORTER::RPT_ERROR );
+            break;
+        }
     }
-    else    // Print current sheet
-    {
-        SCH_SCREEN* screen = (SCH_SCREEN*) m_parent->GetScreen();
 
-        fn = screen->GetFileName();
-        fn.SetExt( wxT( "svg" ) );
-        fn.MakeAbsolute();
-
-        bool success = plotOneSheetSVG( m_parent, fn.GetFullPath(), screen,
-                                        getModeColor() ? false : true,
-                                        aPrintFrameRef );
-        if( success )
-            msg.Printf( _( "Plot: <%s> OK\n" ),
-                        GetChars( fn.GetFullPath() ) );
-        else    // Error
-             msg.Printf( _( "Unable to create <%s>\n" ),
-                        GetChars( fn.GetFullPath() ) );
-
-        m_MessagesBox->AppendText( msg );
-    }
+    m_parent->SetCurrentSheet( oldsheetpath );
+    m_parent->GetCurrentSheet().UpdateAllScreenReferences();
+    m_parent->SetSheetNumberAndCount();
 }
 
 
@@ -136,7 +113,8 @@ bool DIALOG_PLOT_SCHEMATIC::plotOneSheetSVG( EDA_DRAW_FRAME*    aFrame,
     plotter->SetColorMode( aPlotBlackAndWhite ? false : true );
     wxPoint plot_offset;
     double scale = 1.0;
-    plotter->SetViewport( plot_offset, IU_PER_DECIMILS, scale, false );
+    // Currently, plot units are in decimil
+    plotter->SetViewport( plot_offset, IU_PER_MILS/10, scale, false );
 
     // Init :
     plotter->SetCreator( wxT( "Eeschema-SVG" ) );
@@ -158,7 +136,8 @@ bool DIALOG_PLOT_SCHEMATIC::plotOneSheetSVG( EDA_DRAW_FRAME*    aFrame,
                        aFrame->GetPageSettings(),
                        aScreen->m_ScreenNumber, aScreen->m_NumberOfScreens,
                        aFrame->GetScreenDesc(),
-                       aScreen->GetFileName() );
+                       aScreen->GetFileName(),
+                       GetLayerColor( ( SCH_LAYER_ID )LAYER_WORKSHEET ) );
     }
 
     aScreen->Plot( plotter );

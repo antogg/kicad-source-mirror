@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2014 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2014 KiCad Developers, see CHANGELOG.TXT for contributors.
+ * Copyright (C) 2014-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -23,6 +23,7 @@
  */
 
 
+#include <pgm_base.h>
 #include <kiway_player.h>
 #include <kiway_express.h>
 #include <kiway.h>
@@ -42,28 +43,27 @@ END_EVENT_TABLE()
 KIWAY_PLAYER::KIWAY_PLAYER( KIWAY* aKiway, wxWindow* aParent, FRAME_T aFrameType,
         const wxString& aTitle, const wxPoint& aPos, const wxSize& aSize,
         long aStyle, const wxString& aWdoName ) :
-    EDA_BASE_FRAME( aParent, aFrameType, aTitle, aPos, aSize, aStyle, aWdoName ),
-    KIWAY_HOLDER( aKiway ),
+    EDA_BASE_FRAME( aParent, aFrameType, aTitle, aPos, aSize, aStyle, aWdoName, aKiway ),
     m_modal( false ),
     m_modal_loop( 0 ), m_modal_resultant_parent( 0 )
 {
-    // DBG( printf("KIWAY_EXPRESS::wxEVENT_ID:%d\n", KIWAY_EXPRESS::wxEVENT_ID );)
+    m_modal_ret_val = 0;
 }
 
 
 KIWAY_PLAYER::KIWAY_PLAYER( wxWindow* aParent, wxWindowID aId, const wxString& aTitle,
         const wxPoint& aPos, const wxSize& aSize, long aStyle,
         const wxString& aWdoName ) :
-    EDA_BASE_FRAME( aParent, (FRAME_T) aId, aTitle, aPos, aSize, aStyle, aWdoName ),
-    KIWAY_HOLDER( 0 ),
+    EDA_BASE_FRAME( aParent, (FRAME_T) aId, aTitle, aPos, aSize, aStyle, aWdoName, nullptr ),
     m_modal( false ),
-    m_modal_loop( 0 ), m_modal_resultant_parent( 0 )
+    m_modal_loop( 0 ),
+    m_modal_resultant_parent( 0 ),
+    m_modal_ret_val( false )
 {
-    // DBG( printf("KIWAY_EXPRESS::wxEVENT_ID:%d\n", KIWAY_EXPRESS::wxEVENT_ID );)
 }
 
 
-KIWAY_PLAYER::~KIWAY_PLAYER(){}
+KIWAY_PLAYER::~KIWAY_PLAYER() throw() {}
 
 
 void KIWAY_PLAYER::KiwayMailIn( KIWAY_EXPRESS& aEvent )
@@ -96,28 +96,42 @@ bool KIWAY_PLAYER::ShowModal( wxString* aResult, wxWindow* aResultantFocusWindow
 
 
     m_modal_resultant_parent = aResultantFocusWindow;
+
     Show( true );
+    Raise();    // Needed on some Window managers to always display the frame
+
     SetFocus();
 
     {
-        // exception safe way to disable all frames except the modal one,
+        // We have to disable all frames but the the modal one.
+        // wxWindowDisabler does that, but it also disables all top level windows
+        // We do not want to disable top level windows which are child of the modal one,
+        // if they are enabled.
+        // An example is an aui toolbar which was moved
+        // or a dialog or another frame or miniframe opened by the modal one.
+        wxWindowList wlist = GetChildren();
+        std::vector<wxWindow*> enabledTopLevelWindows;
+
+        for( unsigned ii = 0; ii < wlist.size(); ii++ )
+            if( wlist[ii]->IsTopLevel() && wlist[ii]->IsEnabled() )
+                enabledTopLevelWindows.push_back( wlist[ii] );
+
+        // exception safe way to disable all top level windows except the modal one,
         // re-enables only those that were disabled on exit
-        wxWindowDisabler    toggle( this );
+        wxWindowDisabler toggle( this );
 
-        WX_EVENT_LOOP          event_loop;
+        for( unsigned ii = 0; ii < enabledTopLevelWindows.size(); ii++ )
+            enabledTopLevelWindows[ii]->Enable( true );
 
+        WX_EVENT_LOOP event_loop;
         m_modal_loop = &event_loop;
-
         event_loop.Run();
 
-    }   // End of scop for some variables.
+    }   // End of scope for some variables.
         // End nesting before setting focus below.
 
     if( aResult )
         *aResult = m_modal_string;
-
-    DBG(printf( "~%s: aResult:'%s'  ret:%d\n",
-            __func__, TO_UTF8( m_modal_string ), m_modal_ret_val );)
 
     if( aResultantFocusWindow )
     {
@@ -125,7 +139,7 @@ bool KIWAY_PLAYER::ShowModal( wxString* aResult, wxWindow* aResultantFocusWindow
 
         // have the final say, after wxWindowDisabler reenables my parent and
         // the events settle down, set the focus
-        wxYield();
+        wxSafeYield();
         aResultantFocusWindow->SetFocus();
     }
 
@@ -134,28 +148,12 @@ bool KIWAY_PLAYER::ShowModal( wxString* aResult, wxWindow* aResultantFocusWindow
 
 bool KIWAY_PLAYER::Destroy()
 {
-    // Reparent is needed on Windows to leave the modal parent on top with focus
-    // However it works only if the caller is a main frame, not a dialog.
-    // (application crashes if the new parent is a wxDialog
-#ifdef __WINDOWS__
-    if( m_modal_resultant_parent && GetParent() != m_modal_resultant_parent )
-    {
-        EDA_BASE_FRAME* parent = dynamic_cast<EDA_BASE_FRAME*>(m_modal_resultant_parent);
-        if( parent )
-            Reparent( m_modal_resultant_parent );
-    }
-#endif
-
     return EDA_BASE_FRAME::Destroy();
 }
 
 bool KIWAY_PLAYER::IsDismissed()
 {
-    bool ret = !m_modal_loop;
-
-    DBG(printf( "%s: ret:%d\n", __func__, ret );)
-
-    return ret;
+    return !m_modal_loop;
 }
 
 
@@ -177,13 +175,6 @@ void KIWAY_PLAYER::DismissModal( bool aRetVal, const wxString& aResult )
 void KIWAY_PLAYER::kiway_express( KIWAY_EXPRESS& aEvent )
 {
     // logging support
-#if defined(DEBUG)
-    const char* class_name = typeid( this ).name();
-
-    printf( "%s: received cmd:%d  pay:'%s'\n", class_name,
-        aEvent.Command(), aEvent.GetPayload().c_str() );
-#endif
-
     KiwayMailIn( aEvent );     // call the virtual, override in derived.
 }
 
@@ -195,3 +186,5 @@ void KIWAY_PLAYER::language_change( wxCommandEvent& event )
     // tell all the KIWAY_PLAYERs about the language change.
     Kiway().SetLanguage( id );
 }
+
+

@@ -1,7 +1,8 @@
 /*
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
- * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2013-2017 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  * Author: Maciej Suminski <maciej.suminski@cern.ch>
  *
@@ -22,58 +23,49 @@
 #ifndef __ROUTER_TOOL_H
 #define __ROUTER_TOOL_H
 
-#include <import_export.h>
+#include "pns_tool_base.h"
 
-#include <math/vector2d.h>
-#include <tool/tool_interactive.h>
-
-#include <msgpanel.h>
-
-#include "pns_routing_settings.h"
-
-class PNS_ROUTER;
-class PNS_ITEM;
-
-class APIEXPORT ROUTER_TOOL : public TOOL_INTERACTIVE
+class APIEXPORT ROUTER_TOOL : public PNS::TOOL_BASE
 {
 public:
     ROUTER_TOOL();
     ~ROUTER_TOOL();
 
-    void Reset( RESET_REASON aReason );
-    int Main( TOOL_EVENT& aEvent );
+    bool Init() override;
+    void Reset( RESET_REASON aReason ) override;
+
+    int MainLoop( const TOOL_EVENT& aEvent );
+
+    int InlineBreakTrack( const TOOL_EVENT& aEvent );
+    bool CanInlineDrag();
+    int InlineDrag( const TOOL_EVENT& aEvent );
+
+    int SelectCopperLayerPair( const TOOL_EVENT& aEvent );
+    int DpDimensionsDialog( const TOOL_EVENT& aEvent );
+    int SettingsDialog( const TOOL_EVENT& aEvent );
+    int CustomTrackWidthDialog( const TOOL_EVENT& aEvent );
+
+    void setTransitions() override;
+
+    // A filter for narrowing a collection representing a simple corner
+    // or a non-fanout-via to a single TRACK item.
+    static void NeighboringSegmentFilter( const VECTOR2I& aPt, GENERAL_COLLECTOR& aCollector );
 
 private:
-    PNS_ITEM* pickSingleItem( const VECTOR2I& aWhere, int aNet = -1, int aLayer = -1 );
-
-    int getDefaultWidth( int aNetCode );
-    
     void performRouting();
-    void performDragging();
-    
-    void highlightNet( bool aEnabled, int aNetcode = -1 );
+    void performDragging( int aMode = PNS::DM_ANY );
+    void breakTrack();
 
-    void updateStartItem( TOOL_EVENT& aEvent );
-    void updateEndItem( TOOL_EVENT& aEvent );
+    void handleCommonEvents( const TOOL_EVENT& evt );
 
-    void getNetclassDimensions( int aNetCode, int& aWidth, int& aViaDiameter, int& aViaDrill );
+    int getStartLayer( const PNS::ITEM* aItem );
+    void switchLayerOnViaPlacement();
 
-    void handleCommonEvents( TOOL_EVENT& evt );
+    int onViaCommand( const TOOL_EVENT& aEvent );
+    int onTrackViaSizeChanged( const TOOL_EVENT& aEvent );
 
-    MSG_PANEL_ITEMS m_panelItems;
-
-    PNS_ROUTER* m_router;
-    PNS_ROUTING_SETTINGS m_settings;     ///< Stores routing settings between router invocations
-
-    PNS_ITEM* m_startItem;
-    int m_startLayer;
-    VECTOR2I m_startSnapPoint;
-
-    PNS_ITEM* m_endItem;
-    VECTOR2I m_endSnapPoint;
-
-    ///> Flag marking that the router's world needs syncing.
-    bool m_needsSync;
+    bool prepareInteractive();
+    bool finishInteractive();
 };
 
 #endif

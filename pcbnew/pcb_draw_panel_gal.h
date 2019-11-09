@@ -26,10 +26,13 @@
 #define PCB_DRAW_PANEL_GAL_H_
 
 #include <class_draw_panel_gal.h>
+#include <layers_id_colors_and_visibility.h>
+#include <pcb_view.h>
+#include <common.h>
 
 namespace KIGFX
 {
-    class WORKSHEET_VIEWITEM;
+    class WS_PROXY_VIEW_ITEM;
     class RATSNEST_VIEWITEM;
 }
 class COLORS_DESIGN_SETTINGS;
@@ -38,7 +41,8 @@ class PCB_DRAW_PANEL_GAL : public EDA_DRAW_PANEL_GAL
 {
 public:
     PCB_DRAW_PANEL_GAL( wxWindow* aParentWindow, wxWindowID aWindowId, const wxPoint& aPosition,
-                        const wxSize& aSize, GalType aGalType = GAL_TYPE_OPENGL );
+                        const wxSize& aSize, KIGFX::GAL_DISPLAY_OPTIONS& aOptions,
+                        GAL_TYPE aGalType = GAL_TYPE_OPENGL );
 
     virtual ~PCB_DRAW_PANEL_GAL();
 
@@ -47,7 +51,7 @@ public:
      * adds all items from the current board to the VIEW, so they can be displayed by GAL.
      * @param aBoard is the PCB to be loaded.
      */
-    void DisplayBoard( const BOARD* aBoard );
+    void DisplayBoard( BOARD* aBoard );
 
     /**
      * Function SetWorksheet
@@ -55,7 +59,7 @@ public:
      * @param aWorksheet is the worksheet to be used.
      *        The object is then owned by PCB_DRAW_PANEL_GAL.
      */
-    void SetWorksheet( KIGFX::WORKSHEET_VIEWITEM* aWorksheet );
+    void SetWorksheet( KIGFX::WS_PROXY_VIEW_ITEM* aWorksheet );
 
     /**
      * Function UseColorScheme
@@ -65,10 +69,22 @@ public:
     void UseColorScheme( const COLORS_DESIGN_SETTINGS* aSettings );
 
     ///> @copydoc EDA_DRAW_PANEL_GAL::SetHighContrastLayer()
-    virtual void SetHighContrastLayer( LAYER_ID aLayer );
+    virtual void SetHighContrastLayer( int aLayer ) override
+    {
+        SetHighContrastLayer( static_cast< PCB_LAYER_ID >( aLayer ) );
+    }
+
+    ///> SetHighContrastLayer(), with some extra smarts for PCB
+    void SetHighContrastLayer( PCB_LAYER_ID aLayer );
 
     ///> @copydoc EDA_DRAW_PANEL_GAL::SetTopLayer()
-    virtual void SetTopLayer( LAYER_ID aLayer );
+    virtual void SetTopLayer( int aLayer ) override
+    {
+        SetTopLayer( static_cast< PCB_LAYER_ID >( aLayer ) );
+    }
+
+    ///> SetTopLayer(), with some extra smarts for PCB
+    void SetTopLayer( PCB_LAYER_ID aLayer );
 
     /**
      * Function SyncLayersVisibility
@@ -77,12 +93,35 @@ public:
      */
     void SyncLayersVisibility( const BOARD* aBoard );
 
+    ///> @copydoc EDA_DRAW_PANEL_GAL::GetMsgPanelInfo()
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector<MSG_PANEL_ITEM>& aList ) override;
+
+    ///> @copydoc EDA_DRAW_PANEL_GAL::OnShow()
+    void OnShow() override;
+
+    bool SwitchBackend( GAL_TYPE aGalType ) override;
+
+    ///> Forces refresh of the ratsnest visual representation
+    void RedrawRatsnest();
+
+    ///> @copydoc EDA_DRAW_PANEL_GAL::GetDefaultViewBBox()
+    BOX2I GetDefaultViewBBox() const override;
+
+    virtual KIGFX::PCB_VIEW* GetView() const override;
+
 protected:
+
+    ///> Reassigns layer order to the initial settings.
+    void setDefaultLayerOrder();
+
+    ///> Sets rendering targets & dependencies for layers.
+    void setDefaultLayerDeps();
+
     ///> Currently used worksheet
-    KIGFX::WORKSHEET_VIEWITEM* m_worksheet;
+    std::unique_ptr<KIGFX::WS_PROXY_VIEW_ITEM> m_worksheet;
 
     ///> Ratsnest view item
-    KIGFX::RATSNEST_VIEWITEM* m_ratsnest;
+    std::unique_ptr<KIGFX::RATSNEST_VIEWITEM> m_ratsnest;
 };
 
 #endif /* PCB_DRAW_PANEL_GAL_H_ */

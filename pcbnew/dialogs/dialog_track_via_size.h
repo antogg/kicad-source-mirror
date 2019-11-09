@@ -19,34 +19,35 @@
  */
 
 /**
- * Push and Shove router track width and via size dialog.
+ * Custom track width and via size dialog.
  */
 
 #ifndef __dialog_track_via_size__
 #define __dialog_track_via_size__
 
+#include <widgets/unit_binder.h>
+
 #include "dialog_track_via_size_base.h"
 
-class PNS_ROUTING_SETTINGS;
+class BOARD_DESIGN_SETTINGS;
 
 /** Implementing DIALOG_TRACK_VIA_SIZE_BASE */
 class DIALOG_TRACK_VIA_SIZE : public DIALOG_TRACK_VIA_SIZE_BASE
 {
-	public:
-		/** Constructor */
-		DIALOG_TRACK_VIA_SIZE( wxWindow* aParent, PNS_ROUTING_SETTINGS& aSettings );
+public:
+    /** Constructor */
+    DIALOG_TRACK_VIA_SIZE( EDA_DRAW_FRAME* aParent, BOARD_DESIGN_SETTINGS& aSettings );
 
-    protected:
-		// Routings settings that are modified by the dialog.
-        PNS_ROUTING_SETTINGS& m_settings;
+    bool TransferDataFromWindow() override;
+    bool TransferDataToWindow() override;
 
-        ///> Checks if values given in the dialog are sensible.
-        bool check();
+protected:
+    UNIT_BINDER m_trackWidth;
+    UNIT_BINDER m_viaDiameter;
+    UNIT_BINDER m_viaDrill;
 
-        // Handlers for DIALOG_TRACK_VIA_SIZE_BASE events.
-        void onClose( wxCloseEvent& aEvent );
-        void onOkClick( wxCommandEvent& aEvent );
-        void onCancelClick( wxCommandEvent& aEvent );
+    // Routings settings that are modified by the dialog.
+    BOARD_DESIGN_SETTINGS& m_settings;
 };
 
 #endif // __dialog_track_via_size__

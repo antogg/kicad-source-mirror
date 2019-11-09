@@ -6,8 +6,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2012 Jean_Pierre Charras <jp.charras at wanadoo.fr>
- * Copyright (C) 1992-2012 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2017 Jean_Pierre Charras <jp.charras at wanadoo.fr>
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,9 +29,9 @@
 
 #include <fctsys.h>
 #include <common.h>
-#include <plot_common.h>
+#include <plotter.h>
 #include <base_struct.h>
-#include <drawtxt.h>
+#include <gr_text.h>
 #include <confirm.h>
 #include <kicad_string.h>
 #include <macros.h>
@@ -40,7 +40,7 @@
 
 #include <pcbnew.h>
 #include <pcbplot.h>
-#include <gendrill_Excellon_writer.h>
+#include <gendrill_file_writer_base.h>
 
 /* Conversion utilities - these will be used often in there... */
 inline double diameter_in_inches( double ius )
@@ -55,20 +55,26 @@ inline double diameter_in_mm( double ius )
 }
 
 
-bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
-                                       const PAGE_INFO& aSheet,
-                                       PlotFormat aFormat )
+bool GENDRILL_WRITER_BASE::genDrillMapFile( const wxString& aFullFileName,
+                                            PlotFormat aFormat )
 {
+    // Remark:
+    // Hole list must be created before calling this function, by buildHolesList(),
+    // for the right holes set (PTH, NPTH, buried/blind vias ...)
+
     double          scale = 1.0;
     wxPoint         offset;
     PLOTTER*        plotter = NULL;
+    PAGE_INFO dummy( PAGE_INFO::A4, false );
 
     PCB_PLOT_PARAMS plot_opts;  // starts plotting with default options
 
     LOCALE_IO       toggle;     // use standard C notation for float numbers
 
+    const PAGE_INFO& page_info =  m_pageInfo ? *m_pageInfo : dummy;
+
     // Calculate dimensions and center of PCB
-    EDA_RECT        bbbox = m_pcb->ComputeBoundingBox( true );
+    EDA_RECT        bbbox = m_pcb->GetBoardEdgesBoundingBox();
 
     // Calculate the scale for the format type, scale 1 in HPGL, drawing on
     // an A4 sheet in PS, + text description of symbols
@@ -77,7 +83,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     case PLOT_FORMAT_GERBER:
         offset  = GetOffset();
         plotter = new GERBER_PLOTTER();
-        plotter->SetViewport( offset, IU_PER_DECIMILS, scale, false );
+        plotter->SetViewport( offset, IU_PER_MILS/10, scale, false );
         plotter->SetGerberCoordinatesFormat( 5 );   // format x.5 unit = mm
         break;
 
@@ -87,9 +93,8 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
         plotter = hpgl_plotter;
         hpgl_plotter->SetPenNumber( plot_opts.GetHPGLPenNum() );
         hpgl_plotter->SetPenSpeed( plot_opts.GetHPGLPenSpeed() );
-        hpgl_plotter->SetPenOverlap( 0 );
-        plotter->SetPageSettings( aSheet );
-        plotter->SetViewport( offset, IU_PER_DECIMILS, scale, false );
+        plotter->SetPageSettings( page_info );
+        plotter->SetViewport( offset, IU_PER_MILS/10, scale, false );
     }
         break;
 
@@ -132,16 +137,22 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
             plotter = new PS_PLOTTER;
 
         plotter->SetPageSettings( pageA4 );
-        plotter->SetViewport( offset, IU_PER_DECIMILS, scale, false );
+        plotter->SetViewport( offset, IU_PER_MILS/10, scale, false );
     }
         break;
 
     case PLOT_FORMAT_DXF:
     {
         DXF_PLOTTER* dxf_plotter = new DXF_PLOTTER;
+
+        if( m_unitsMetric )
+            dxf_plotter->SetUnits( DXF_PLOTTER::DXF_UNIT_MILLIMETERS );
+        else
+            dxf_plotter->SetUnits( DXF_PLOTTER::DXF_UNIT_INCHES );
+
         plotter = dxf_plotter;
-        plotter->SetPageSettings( aSheet );
-        plotter->SetViewport( offset, IU_PER_DECIMILS, scale, false );
+        plotter->SetPageSettings( page_info );
+        plotter->SetViewport( offset, IU_PER_MILS/10, scale, false );
     }
         break;
 
@@ -149,8 +160,8 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     {
         SVG_PLOTTER* svg_plotter = new SVG_PLOTTER;
         plotter = svg_plotter;
-        plotter->SetPageSettings( aSheet );
-        plotter->SetViewport( offset, IU_PER_DECIMILS, scale, false );
+        plotter->SetPageSettings( page_info );
+        plotter->SetViewport( offset, IU_PER_MILS/10, scale, false );
     }
         break;
     }
@@ -171,7 +182,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     BRDITEMS_PLOTTER itemplotter( plotter, m_pcb, plot_opts );
     itemplotter.SetLayerSet( Edge_Cuts );
 
-    for( EDA_ITEM* PtStruct = m_pcb->m_Drawings; PtStruct != NULL; PtStruct = PtStruct->Next() )
+    for( auto PtStruct : m_pcb->Drawings() )
     {
         switch( PtStruct->Type() )
         {
@@ -203,7 +214,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
     plotter->SetCurrentLineWidth( -1 );
 
     // Plot board outlines and drill map
-    PlotDrillMarks( plotter );
+    plotDrillMarks( plotter );
 
     // Print a list of symbols used.
     int     charSize    = 3 * IU_PER_MM;                    // text size in IUs
@@ -218,7 +229,7 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
 
     // Plot title  "Info"
     wxString Text = wxT( "Drill Map:" );
-    plotter->Text( wxPoint( plotX, plotY ), UNSPECIFIED_COLOR, Text, 0,
+    plotter->Text( wxPoint( plotX, plotY ), COLOR4D::UNSPECIFIED, Text, 0,
                    wxSize( KiROUND( charSize * charScale ),
                            KiROUND( charSize * charScale ) ),
                    GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_CENTER,
@@ -226,51 +237,55 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
 
     for( unsigned ii = 0; ii < m_toolListBuffer.size(); ii++ )
     {
-        int plot_diam;
+        DRILL_TOOL& tool = m_toolListBuffer[ii];
 
-        if( m_toolListBuffer[ii].m_TotalCount == 0 )
+        if( tool.m_TotalCount == 0 )
             continue;
 
         plotY += intervalle;
 
-        plot_diam = KiROUND( m_toolListBuffer[ii].m_Diameter );
+        int plot_diam = KiROUND( tool.m_Diameter );
         x = KiROUND( plotX - textmarginaftersymbol * charScale - plot_diam / 2.0 );
         y = KiROUND( plotY + charSize * charScale );
         plotter->Marker( wxPoint( x, y ), plot_diam, ii );
 
         // List the diameter of each drill in mm and inches.
         sprintf( line, "%2.2fmm / %2.3f\" ",
-                 diameter_in_mm( m_toolListBuffer[ii].m_Diameter ),
-                 diameter_in_inches( m_toolListBuffer[ii].m_Diameter ) );
+                 diameter_in_mm( tool.m_Diameter ),
+                 diameter_in_inches( tool.m_Diameter ) );
 
         msg = FROM_UTF8( line );
 
         // Now list how many holes and ovals are associated with each drill.
-        if( ( m_toolListBuffer[ii].m_TotalCount == 1 )
-            && ( m_toolListBuffer[ii].m_OvalCount == 0 ) )
+        if( ( tool.m_TotalCount == 1 )
+            && ( tool.m_OvalCount == 0 ) )
             sprintf( line, "(1 hole)" );
-        else if( m_toolListBuffer[ii].m_TotalCount == 1 ) // && ( m_toolListBuffer[ii]m_OvalCount == 1 )
+        else if( tool.m_TotalCount == 1 ) // && ( toolm_OvalCount == 1 )
             sprintf( line, "(1 slot)" );
-        else if( m_toolListBuffer[ii].m_OvalCount == 0 )
-            sprintf( line, "(%d holes)", m_toolListBuffer[ii].m_TotalCount );
-        else if( m_toolListBuffer[ii].m_OvalCount == 1 )
-            sprintf( line, "(%d holes + 1 slot)", m_toolListBuffer[ii].m_TotalCount - 1 );
-        else // if ( m_toolListBuffer[ii]m_OvalCount > 1 )
+        else if( tool.m_OvalCount == 0 )
+            sprintf( line, "(%d holes)", tool.m_TotalCount );
+        else if( tool.m_OvalCount == 1 )
+            sprintf( line, "(%d holes + 1 slot)", tool.m_TotalCount - 1 );
+        else // if ( toolm_OvalCount > 1 )
             sprintf( line, "(%d holes + %d slots)",
-                     m_toolListBuffer[ii].m_TotalCount - m_toolListBuffer[ii].m_OvalCount,
-                     m_toolListBuffer[ii].m_OvalCount );
+                     tool.m_TotalCount - tool.m_OvalCount,
+                     tool.m_OvalCount );
 
         msg += FROM_UTF8( line );
-        plotter->Text( wxPoint( plotX, y ), UNSPECIFIED_COLOR, msg, 0,
+
+        if( tool.m_Hole_NotPlated )
+            msg += wxT( " (not plated)" );
+
+        plotter->Text( wxPoint( plotX, y ), COLOR4D::UNSPECIFIED, msg, 0,
                        wxSize( KiROUND( charSize * charScale ),
                                KiROUND( charSize * charScale ) ),
                        GR_TEXT_HJUSTIFY_LEFT, GR_TEXT_VJUSTIFY_CENTER,
                        TextWidth, false, false );
 
-        intervalle  = KiROUND( (( charSize * charScale ) + TextWidth) * 1.2);
+        intervalle = KiROUND( ( ( charSize * charScale ) + TextWidth ) * 1.2 );
 
-        if( intervalle < (plot_diam + (1 * IU_PER_MM / scale) + TextWidth) )
-            intervalle = plot_diam + (1 * IU_PER_MM / scale) + TextWidth;
+        if( intervalle < ( plot_diam + ( 1 * IU_PER_MM / scale ) + TextWidth ) )
+            intervalle = plot_diam + ( 1 * IU_PER_MM / scale ) + TextWidth;
     }
 
     plotter->EndPlot();
@@ -280,157 +295,172 @@ bool EXCELLON_WRITER::GenDrillMapFile( const wxString& aFullFileName,
 }
 
 
-bool EXCELLON_WRITER::GenDrillReportFile( const wxString& aFullFileName )
+bool GENDRILL_WRITER_BASE::GenDrillReportFile( const wxString& aFullFileName )
 {
+    FILE_OUTPUTFORMATTER    out( aFullFileName );
+
+    static const char separator[] =
+        "    =============================================================\n";
+
+    wxASSERT( m_pcb );
+
     unsigned    totalHoleCount;
-    char        line[1024];
-    LAYER_NUM   layer1 = B_Cu;
-    LAYER_NUM   layer2 = F_Cu;
-    bool        gen_through_holes   = true;
-    bool        gen_NPTH_holes      = false;
+    wxString    brdFilename = m_pcb->GetFileName();
 
-    m_file = wxFopen( aFullFileName, wxT( "w" ) );
+    std::vector<DRILL_LAYER_PAIR> hole_sets = getUniqueLayerPairs();
 
-    if( m_file == NULL )
-        return false;
+    out.Print( 0, "Drill report for %s\n", TO_UTF8( brdFilename ) );
+    out.Print( 0, "Created on %s\n\n", TO_UTF8( DateAndTime() ) );
 
-    wxString brdFilename = m_pcb->GetFileName();
-    fprintf( m_file, "Drill report for %s\n", TO_UTF8( brdFilename ) );
-    fprintf( m_file, "Created on %s\n", TO_UTF8( DateAndTime() ) );
+    // Output the cu layer stackup, so layer name references make sense.
+    out.Print( 0, "Copper Layer Stackup:\n" );
+    out.Print( 0, separator );
 
-    /* build hole lists:
-     * 1 - through holes
-     * 2 - for partial holes only: by layer pair
-     * 3 - Not Plated through holes
-     */
+    LSET cu = m_pcb->GetEnabledLayers() & LSET::AllCuMask();
 
-    for( ; ; )
+    int conventional_layer_num = 1;
+
+    for( LSEQ seq = cu.Seq();  seq;  ++seq, ++conventional_layer_num )
     {
-        BuildHolesList( layer1, layer2,
-                        gen_through_holes ? false : true, gen_NPTH_holes, false);
-
-        totalHoleCount = 0;
-
-        if( gen_NPTH_holes )
-            sprintf( line, "Drill report for unplated through holes :\n" );
-        else if( gen_through_holes )
-            sprintf( line, "Drill report for plated through holes :\n" );
-        else
-        {
-            // If this is the first partial hole list: print a title
-            if( layer1 == B_Cu )
-                fputs( "Drill report for buried and blind vias :\n\n", m_file );
-
-            sprintf( line, "Drill report for holes from layer %s to layer %s :\n",
-                     TO_UTF8( m_pcb->GetLayerName( ToLAYER_ID( layer1 ) ) ),
-                     TO_UTF8( m_pcb->GetLayerName( ToLAYER_ID( layer2 ) ) ) );
-        }
-
-        fputs( line, m_file );
-
-        for( unsigned ii = 0; ii < m_toolListBuffer.size(); ii++ )
-        {
-            // List the tool number assigned to each drill,
-            // in mm then in inches.
-            sprintf( line, "T%d  %2.2fmm  %2.3f\"  ",
-                     ii + 1,
-                     diameter_in_mm( m_toolListBuffer[ii].m_Diameter ),
-                     diameter_in_inches( m_toolListBuffer[ii].m_Diameter ) );
-
-            fputs( line, m_file );
-
-            // Now list how many holes and ovals are associated with each drill.
-            if( ( m_toolListBuffer[ii].m_TotalCount == 1 )
-                && ( m_toolListBuffer[ii].m_OvalCount == 0 ) )
-                sprintf( line, "(1 hole)\n" );
-            else if( m_toolListBuffer[ii].m_TotalCount == 1 )
-                sprintf( line, "(1 hole)  (with 1 slot)\n" );
-            else if( m_toolListBuffer[ii].m_OvalCount == 0 )
-                sprintf( line, "(%d holes)\n", m_toolListBuffer[ii].m_TotalCount );
-            else if( m_toolListBuffer[ii].m_OvalCount == 1 )
-                sprintf( line, "(%d holes)  (with 1 slot)\n",
-                         m_toolListBuffer[ii].m_TotalCount );
-            else // if ( buffer[ii]m_OvalCount > 1 )
-                sprintf( line, "(%d holes)  (with %d slots)\n",
-                         m_toolListBuffer[ii].m_TotalCount,
-                         m_toolListBuffer[ii].m_OvalCount );
-
-            fputs( line, m_file );
-
-            totalHoleCount += m_toolListBuffer[ii].m_TotalCount;
-        }
-
-        if( gen_NPTH_holes )
-            sprintf( line, "\nTotal unplated holes count %d\n\n\n", totalHoleCount );
-        else
-            sprintf( line, "\nTotal plated holes count %d\n\n\n", totalHoleCount );
-
-        fputs( line, m_file );
-
-        if( gen_NPTH_holes )
-        {
-            break;
-        }
-        else
-        {
-            if( m_pcb->GetCopperLayerCount() <= 2 )
-            {
-                gen_NPTH_holes = true;
-                continue;
-            }
-
-            if( gen_through_holes )
-            {
-                layer2 = layer1 + 1;
-            }
-            else
-            {
-                if( layer2 >= F_Cu )    // no more layer pair to consider
-                {
-                    gen_NPTH_holes = true;
-                    continue;
-                }
-
-                ++layer1;
-                ++layer2;           // use next layer pair
-
-                if( layer2 == m_pcb->GetCopperLayerCount() - 1 )
-                    layer2 = F_Cu; // the last layer is always the
-
-                // component layer
-            }
-
-            gen_through_holes = false;
-        }
+        out.Print( 0, "    L%-2d:  %-25s %s\n",
+            conventional_layer_num,
+            TO_UTF8( m_pcb->GetLayerName( *seq ) ),
+            layerName( *seq ).c_str()       // generic layer name
+            );
     }
 
-    fclose( m_file );
+    out.Print( 0, "\n\n" );
+
+    /* output hole lists:
+     * 1 - through holes
+     * 2 - for partial holes only: by layer starting and ending pair
+     * 3 - Non Plated through holes
+     */
+
+    bool buildNPTHlist = false;     // First pass: build PTH list only
+
+    // in this loop are plated only:
+    for( unsigned pair_ndx = 0; pair_ndx < hole_sets.size();  ++pair_ndx )
+    {
+        DRILL_LAYER_PAIR  pair = hole_sets[pair_ndx];
+
+        buildHolesList( pair, buildNPTHlist );
+
+        if( pair == DRILL_LAYER_PAIR( F_Cu, B_Cu ) )
+        {
+            out.Print( 0, "Drill file '%s' contains\n",
+                TO_UTF8( getDrillFileName( pair, false, m_merge_PTH_NPTH ) ) );
+
+            out.Print( 0, "    plated through holes:\n" );
+            out.Print( 0, separator );
+            totalHoleCount = printToolSummary( out, false );
+            out.Print( 0, "    Total plated holes count %u\n", totalHoleCount );
+        }
+        else    // blind/buried
+        {
+            out.Print( 0, "Drill file '%s' contains\n",
+                TO_UTF8( getDrillFileName( pair, false, m_merge_PTH_NPTH ) ) );
+
+            out.Print( 0, "    holes connecting layer pair: '%s and %s' (%s vias):\n",
+                TO_UTF8( m_pcb->GetLayerName( ToLAYER_ID( pair.first ) ) ),
+                TO_UTF8( m_pcb->GetLayerName( ToLAYER_ID( pair.second ) ) ),
+                pair.first == F_Cu || pair.second == B_Cu ? "blind" : "buried"
+                );
+
+            out.Print( 0, separator );
+            totalHoleCount = printToolSummary( out, false );
+            out.Print( 0, "    Total plated holes count %u\n", totalHoleCount );
+        }
+
+        out.Print( 0, "\n\n" );
+    }
+
+    // NPTHoles. Generate the full list (pads+vias) if PTH and NPTH are merged,
+    // or only the NPTH list (which never has vias)
+    if( !m_merge_PTH_NPTH )
+        buildNPTHlist = true;
+
+    buildHolesList( DRILL_LAYER_PAIR( F_Cu, B_Cu ), buildNPTHlist );
+
+    // nothing wrong with an empty NPTH file in report.
+    if( m_merge_PTH_NPTH )
+        out.Print( 0, "Not plated through holes are merged with plated holes\n" );
+    else
+        out.Print( 0, "Drill file '%s' contains\n",
+                   TO_UTF8( getDrillFileName( DRILL_LAYER_PAIR( F_Cu, B_Cu ),
+                   true, m_merge_PTH_NPTH ) ) );
+
+    out.Print( 0, "    unplated through holes:\n" );
+    out.Print( 0, separator );
+    totalHoleCount = printToolSummary( out, true );
+    out.Print( 0, "    Total unplated holes count %u\n", totalHoleCount );
 
     return true;
 }
 
 
-bool EXCELLON_WRITER::PlotDrillMarks( PLOTTER* aPlotter )
+bool GENDRILL_WRITER_BASE::plotDrillMarks( PLOTTER* aPlotter )
 {
     // Plot the drill map:
     wxPoint pos;
 
     for( unsigned ii = 0; ii < m_holeListBuffer.size(); ii++ )
     {
-        pos = m_holeListBuffer[ii].m_Hole_Pos;
+        const HOLE_INFO& hole = m_holeListBuffer[ii];
+        pos = hole.m_Hole_Pos;
 
         // Always plot the drill symbol (for slots identifies the needed cutter!
-        aPlotter->Marker( pos, m_holeListBuffer[ii].m_Hole_Diameter,
-                          m_holeListBuffer[ii].m_Tool_Reference - 1 );
+        aPlotter->Marker( pos, hole.m_Hole_Diameter, hole.m_Tool_Reference - 1 );
 
-        if( m_holeListBuffer[ii].m_Hole_Shape != 0 )
+        if( hole.m_Hole_Shape != 0 )
         {
-            wxSize oblong_size;
-            oblong_size = m_holeListBuffer[ii].m_Hole_Size;
-            aPlotter->FlashPadOval( pos, oblong_size,
-                                    m_holeListBuffer[ii].m_Hole_Orient, LINE );
+            wxSize oblong_size = hole.m_Hole_Size;
+            aPlotter->FlashPadOval( pos, oblong_size, hole.m_Hole_Orient, SKETCH, NULL );
         }
     }
 
     return true;
+}
+
+
+unsigned GENDRILL_WRITER_BASE::printToolSummary( OUTPUTFORMATTER& out, bool aSummaryNPTH ) const
+{
+    unsigned totalHoleCount = 0;
+
+    for( unsigned ii = 0; ii < m_toolListBuffer.size(); ii++ )
+    {
+        const DRILL_TOOL& tool = m_toolListBuffer[ii];
+
+        if( aSummaryNPTH && !tool.m_Hole_NotPlated )
+            continue;
+
+        if( !aSummaryNPTH && tool.m_Hole_NotPlated )
+            continue;
+
+        // List the tool number assigned to each drill,
+        // in mm then in inches.
+        int tool_number = ii+1;
+        out.Print( 0, "    T%d  %2.2fmm  %2.3f\"  ", tool_number,
+                 diameter_in_mm( tool.m_Diameter ),
+                 diameter_in_inches( tool.m_Diameter ) );
+
+        // Now list how many holes and ovals are associated with each drill.
+        if( ( tool.m_TotalCount == 1 ) && ( tool.m_OvalCount == 0 ) )
+            out.Print( 0, "(1 hole)\n" );
+        else if( tool.m_TotalCount == 1 )
+            out.Print( 0, "(1 hole)  (with 1 slot)\n" );
+        else if( tool.m_OvalCount == 0 )
+            out.Print( 0, "(%d holes)\n", tool.m_TotalCount );
+        else if( tool.m_OvalCount == 1 )
+            out.Print( 0, "(%d holes)  (with 1 slot)\n", tool.m_TotalCount );
+        else // tool.m_OvalCount > 1
+            out.Print( 0, "(%d holes)  (with %d slots)\n",
+                     tool.m_TotalCount, tool.m_OvalCount );
+
+        totalHoleCount += tool.m_TotalCount;
+    }
+
+    out.Print( 0, "\n" );
+
+    return totalHoleCount;
 }

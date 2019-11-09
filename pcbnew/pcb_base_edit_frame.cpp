@@ -23,6 +23,37 @@
  */
 
 #include <pcb_base_edit_frame.h>
+#include <tool/tool_manager.h>
+#include <pcb_draw_panel_gal.h>
+#include <gal/graphics_abstraction_layer.h>
+#include <class_board.h>
+#include <view/view.h>
+#include "footprint_info_impl.h"
+#include <project.h>
+#include <tools/pcb_actions.h>
+
+PCB_BASE_EDIT_FRAME::PCB_BASE_EDIT_FRAME( KIWAY* aKiway, wxWindow* aParent,
+                                          FRAME_T aFrameType, const wxString& aTitle,
+                                          const wxPoint& aPos, const wxSize& aSize, long aStyle,
+                                          const wxString& aFrameName ) :
+        PCB_BASE_FRAME( aKiway, aParent, aFrameType, aTitle, aPos, aSize, aStyle, aFrameName ),
+                        m_rotationAngle( 900 ), m_undoRedoBlocked( false )
+{
+    if( !GFootprintList.GetCount() )
+    {
+        wxTextFile footprintInfoCache( Prj().GetProjectPath() + "fp-info-cache" );
+        GFootprintList.ReadCacheFromFile( &footprintInfoCache );
+    }
+}
+
+PCB_BASE_EDIT_FRAME::~PCB_BASE_EDIT_FRAME()
+{
+    wxTextFile footprintInfoCache( Prj().GetProjectPath() + "fp-info-cache" );
+    GFootprintList.WriteCacheToFile( &footprintInfoCache );
+
+    GetCanvas()->GetView()->Clear();
+}
+
 
 void PCB_BASE_EDIT_FRAME::SetRotationAngle( int aRotationAngle )
 {
@@ -31,3 +62,54 @@ void PCB_BASE_EDIT_FRAME::SetRotationAngle( int aRotationAngle )
 
     m_rotationAngle = aRotationAngle;
 }
+
+
+void PCB_BASE_EDIT_FRAME::ActivateGalCanvas()
+{
+    PCB_BASE_FRAME::ActivateGalCanvas();
+
+    GetCanvas()->SyncLayersVisibility( m_Pcb );
+}
+
+
+void PCB_BASE_EDIT_FRAME::SetBoard( BOARD* aBoard )
+{
+    bool new_board = ( aBoard != m_Pcb );
+
+    if( new_board )
+    {
+        if( m_toolManager )
+            m_toolManager->ResetTools( TOOL_BASE::MODEL_RELOAD );
+
+        GetCanvas()->GetView()->Clear();
+    }
+
+    PCB_BASE_FRAME::SetBoard( aBoard );
+
+    GetCanvas()->GetGAL()->SetGridOrigin( VECTOR2D( aBoard->GetGridOrigin() ) );
+
+    // update the tool manager with the new board and its view.
+    if( m_toolManager )
+    {
+        GetCanvas()->DisplayBoard( aBoard );
+        GetCanvas()->UseColorScheme( &Settings().Colors() );
+        m_toolManager->SetEnvironment( aBoard, GetCanvas()->GetView(),
+                                       GetCanvas()->GetViewControls(), this );
+
+        if( new_board )
+            m_toolManager->ResetTools( TOOL_BASE::MODEL_RELOAD );
+    }
+}
+
+
+void PCB_BASE_EDIT_FRAME::unitsChangeRefresh()
+{
+    PCB_BASE_FRAME::unitsChangeRefresh();
+
+    ReCreateAuxiliaryToolbar();
+
+    if( m_toolManager )
+        m_toolManager->RunAction( PCB_ACTIONS::updateUnits, true );
+}
+
+

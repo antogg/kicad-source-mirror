@@ -1,8 +1,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2009 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 1992-2011 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -33,36 +33,39 @@
 
 #include <macros.h>
 #include <eda_text.h>
-#include <sch_item_struct.h>
+#include <sch_item.h>
+#include <sch_connection.h>   // for CONNECTION_TYPE
 
 
 class LINE_READER;
 class NETLIST_OBJECT_LIST;
 
 
-/* Type of SCH_HIERLABEL and SCH_GLOBALLABEL
+/* Shape/Type of SCH_HIERLABEL and SCH_GLOBALLABEL
  * mainly used to handle the graphic associated shape
  */
-typedef enum {
+enum PINSHEETLABEL_SHAPE {
     NET_INPUT,
     NET_OUTPUT,
     NET_BIDI,
     NET_TRISTATE,
-    NET_UNSPECIFIED,
-    NET_TMAX        /* Last value */
-} TypeSheetLabel;
+    NET_UNSPECIFIED
+};
 
 
 extern const char* SheetLabelType[];    /* names of types of labels */
 
+
 class SCH_TEXT : public SCH_ITEM, public EDA_TEXT
 {
 protected:
-    int m_shape;
+    PINSHEETLABEL_SHAPE m_shape;
 
     /// True if not connected to another object if the object derive from SCH_TEXT
     /// supports connections.
     bool m_isDangling;
+
+    CONNECTION_TYPE m_connectionType;
 
     /**
      * The orientation of text and any associated drawing elements of derived objects.
@@ -71,9 +74,9 @@ protected:
      * 2 is horizontal and right justified.  It is the equivalent of the mirrored 0 orentation.
      * 3 is veritcal and bottom justifiend. It is the equivalent of the mirrored 1 orentation.
      * This is a duplicattion of m_Orient, m_HJustified, and m_VJustified in #EDA_TEXT but is
-     * easier to handle that 3 parameters when editing and reading and saving files.
+     * easier to handle than 3 parameters when editing and reading and saving files.
      */
-    int m_schematicOrientation;
+    int m_spin_style;
 
 public:
     SCH_TEXT( const wxPoint& pos = wxPoint( 0, 0 ),
@@ -81,8 +84,7 @@ public:
               KICAD_T aType = SCH_TEXT_T );
 
     /**
-     * Copy Constructor
-     * clones \a aText into a new object.  All members are copied as is except
+     * Clones \a aText into a new object.  All members are copied as is except
      * for the #m_isDangling member which is set to false.  This prevents newly
      * copied objects derived from #SCH_TEXT from having their connection state
      * improperly set.
@@ -91,39 +93,41 @@ public:
 
     ~SCH_TEXT() { }
 
-    virtual wxString GetClass() const
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && SCH_TEXT_T == aItem->Type();
+    }
+
+    virtual wxString GetClass() const override
     {
         return wxT( "SCH_TEXT" );
     }
 
     /**
-     * Function IncrementLabel
-     * increments the label text.
+     * Increment the label text, if it ends with a number.
+     *
+     * @param aIncrement = the increment value to add to the number ending the text.
      */
-    void IncrementLabel();
+    void IncrementLabel( int aIncrement );
 
     /**
-     * Function SetOrientation
-     * Set m_schematicOrientation, and initialize
-     * m_orient,m_HJustified and m_VJustified, according to the value of
-     * m_schematicOrientation (for a text )
-     * must be called after changing m_schematicOrientation
-     * @param aSchematicOrientation =
+     * Set a spin or rotation angle, along with specific horizontal and vertical justification
+     * styles with each angle.
+     *
+     * @param aSpinStyle =
      *  0 = normal (horizontal, left justified).
      *  1 = up (vertical)
      *  2 = (horizontal, right justified). This can be seen as the mirrored position of 0
      *  3 = bottom . This can be seen as the mirrored position of up
      */
-    virtual void SetOrientation( int aSchematicOrientation );
+    virtual void SetLabelSpinStyle( int aSpinStyle );
+    int GetLabelSpinStyle() const               { return m_spin_style; }
 
-    int GetOrientation() { return m_schematicOrientation; }
+    PINSHEETLABEL_SHAPE GetShape() const        { return m_shape; }
 
-    int GetShape() const { return m_shape; }
-
-    void SetShape( int aShape ) { m_shape = aShape; }
+    void SetShape( PINSHEETLABEL_SHAPE aShape ) { m_shape = aShape; }
 
     /**
-     * Function GetSchematicTextOffset (virtual)
      * @return the offset between the SCH_TEXT position and the text itself position
      *
      * This offset depends on the orientation, the type of text, and the area required to
@@ -131,15 +135,11 @@ public:
      */
     virtual wxPoint GetSchematicTextOffset() const;
 
-    virtual void Draw( EDA_DRAW_PANEL* panel,
-                       wxDC*           DC,
-                       const wxPoint&  offset,
-                       GR_DRAWMODE     draw_mode,
-                       EDA_COLOR_T     Color = UNSPECIFIED_COLOR );
+    void Print( wxDC* DC, const wxPoint& offset ) override;
 
     /**
-     * Function CreateGraphicShape
-     * Calculates the graphic shape (a polygon) associated to the text
+     * Calculate the graphic shape (a polygon) associated to the text.
+     *
      * @param aPoints A buffer to fill with polygon corners coordinates
      * @param Pos Position of the shape, for texts and labels: do nothing
      * Mainly for derived classes (SCH_SHEET_PIN and Hierarchical labels)
@@ -149,74 +149,66 @@ public:
         aPoints.clear();
     }
 
-    virtual void SwapData( SCH_ITEM* aItem );
+    void SwapData( SCH_ITEM* aItem ) override;
 
-    virtual const EDA_RECT GetBoundingBox() const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    virtual bool Save( FILE* aFile ) const;
-
-    virtual bool Load( LINE_READER& aLine, wxString& aErrorMsg );
-
-    virtual int GetPenSize() const;
+    int GetPenSize() const override;
 
     // Geometric transforms (used in block operations):
 
-    virtual void Move( const wxPoint& aMoveVector )
+    void Move( const wxPoint& aMoveVector ) override
     {
-        m_Pos += aMoveVector;
+        EDA_TEXT::Offset( aMoveVector );
     }
 
-    virtual void MirrorY( int aYaxis_position );
+    void MirrorY( int aYaxis_position ) override;
+    void MirrorX( int aXaxis_position ) override;
+    void Rotate( wxPoint aPosition ) override;
 
-    virtual void MirrorX( int aXaxis_position );
-
-    virtual void Rotate( wxPoint aPosition );
-
-    virtual bool Matches( wxFindReplaceData& aSearchData, void* aAuxData, wxPoint* aFindLocation );
-
-    virtual bool Replace( wxFindReplaceData& aSearchData, void* aAuxData = NULL )
+    bool Matches( wxFindReplaceData& aSearchData, void* aAuxData ) override
     {
-        return EDA_ITEM::Replace( aSearchData, m_Text );
+        return SCH_ITEM::Matches( GetText(), aSearchData );
     }
 
-    virtual bool IsReplaceable() const { return true; }
+    bool Replace( wxFindReplaceData& aSearchData, void* aAuxData ) override
+    {
+        return EDA_TEXT::Replace( aSearchData );
+    }
 
-    virtual void GetEndPoints( std::vector< DANGLING_END_ITEM >& aItemList );
+    virtual bool IsReplaceable() const override { return true; }
 
-    virtual bool IsDanglingStateChanged( std::vector< DANGLING_END_ITEM >& aItemList );
+    void GetEndPoints( std::vector< DANGLING_END_ITEM >& aItemList ) override;
 
-    virtual bool IsDangling() const { return m_isDangling; }
+    bool UpdateDanglingState( std::vector<DANGLING_END_ITEM>& aItemList ) override;
 
-    virtual bool IsSelectStateChanged( const wxRect& aRect );
+    bool IsDangling() const override { return m_isDangling; }
+    void SetIsDangling( bool aIsDangling ) { m_isDangling = aIsDangling; }
 
-    virtual void GetConnectionPoints( std::vector< wxPoint >& aPoints ) const;
+    void GetConnectionPoints( std::vector< wxPoint >& aPoints ) const override;
 
-    virtual bool CanIncrementLabel() const { return true; }
+    bool CanIncrementLabel() const override { return true; }
 
-    virtual wxString GetSelectMenuText() const;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    virtual BITMAP_DEF GetMenuImage() const { return  add_text_xpm; }
+    BITMAP_DEF GetMenuImage() const override;
 
-    virtual void GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems,
-                                 SCH_SHEET_PATH*      aSheetPath );
+    void GetNetListItem( NETLIST_OBJECT_LIST& aNetListItems, SCH_SHEET_PATH* aSheetPath ) override;
 
-    virtual wxPoint GetPosition() const { return m_Pos; }
+    wxPoint GetPosition() const override { return EDA_TEXT::GetTextPos(); }
+    void SetPosition( const wxPoint& aPosition ) override { EDA_TEXT::SetTextPos( aPosition ); }
 
-    virtual void SetPosition( const wxPoint& aPosition ) { m_Pos = aPosition; }
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override;
+    bool HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy = 0 ) const override;
 
-    virtual bool HitTest( const wxPoint& aPosition, int aAccuracy ) const;
+    void Plot( PLOTTER* aPlotter ) override;
 
-    virtual bool HitTest( const EDA_RECT& aRect, bool aContained = false,
-                          int aAccuracy = 0 ) const;
+    EDA_ITEM* Clone() const override;
 
-    virtual void Plot( PLOTTER* aPlotter );
-
-    virtual EDA_ITEM* Clone() const;
-
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
 #if defined(DEBUG)
-    void Show( int nestLevel, std::ostream& os ) const;     // override
+    void Show( int nestLevel, std::ostream& os ) const override;
 #endif
 };
 
@@ -230,43 +222,38 @@ public:
 
     ~SCH_LABEL() { }
 
-    void Draw( EDA_DRAW_PANEL* panel,
-               wxDC*           DC,
-               const wxPoint&  offset,
-               GR_DRAWMODE     draw_mode,
-               EDA_COLOR_T     Color = UNSPECIFIED_COLOR );
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && SCH_LABEL_T == aItem->Type();
+    }
 
-    wxString GetClass() const
+    wxString GetClass() const override
     {
         return wxT( "SCH_LABEL" );
     }
 
-    void SetOrientation( int aSchematicOrientation );
+    bool IsType( const KICAD_T aScanTypes[] ) override ;
 
-    wxPoint GetSchematicTextOffset() const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    void MirrorX( int aXaxis_position );
+    bool IsConnectable() const override { return true; }
 
-    void Rotate( wxPoint aPosition );
+    bool CanConnect( const SCH_ITEM* aItem ) const override
+    {
+        return aItem->Type() == SCH_LINE_T &&
+                ( aItem->GetLayer() == LAYER_WIRE || aItem->GetLayer() == LAYER_BUS );
+    }
 
-    const EDA_RECT GetBoundingBox() const;  // Virtual
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    bool Save( FILE* aFile ) const;
+    BITMAP_DEF GetMenuImage() const override;
 
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg );
+    bool IsReplaceable() const override { return true; }
 
-    bool IsConnectable() const { return true; }
-
-    wxString GetSelectMenuText() const;
-
-    BITMAP_DEF GetMenuImage() const { return  add_line_label_xpm; }
-
-    bool IsReplaceable() const { return true; }
-
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 private:
-    bool doIsConnected( const wxPoint& aPosition ) const { return m_Pos == aPosition; }
+    bool doIsConnected( const wxPoint& aPosition ) const override { return EDA_TEXT::GetTextPos() == aPosition; }
 };
 
 
@@ -279,45 +266,42 @@ public:
 
     ~SCH_GLOBALLABEL() { }
 
-    void Draw( EDA_DRAW_PANEL* panel,
-               wxDC*           DC,
-               const wxPoint&  offset,
-               GR_DRAWMODE     draw_mode,
-               EDA_COLOR_T     Color = UNSPECIFIED_COLOR );
+    void Print( wxDC* DC, const wxPoint& offset ) override;
 
-    wxString GetClass() const
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && SCH_GLOBAL_LABEL_T == aItem->Type();
+    }
+
+    wxString GetClass() const override
     {
         return wxT( "SCH_GLOBALLABEL" );
     }
 
-    void SetOrientation( int aSchematicOrientation );
+    void SetLabelSpinStyle( int aSpinStyle ) override;
 
-    wxPoint GetSchematicTextOffset() const;
+    wxPoint GetSchematicTextOffset() const override;
 
-    bool Save( FILE* aFile ) const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg );
+    void CreateGraphicShape( std::vector <wxPoint>& aPoints, const wxPoint& aPos ) override;
 
-    const EDA_RECT GetBoundingBox() const;  // Virtual
+    bool IsConnectable() const override { return true; }
 
-    void CreateGraphicShape( std::vector <wxPoint>& aPoints, const wxPoint& aPos );
+    bool CanConnect( const SCH_ITEM* aItem ) const override
+    {
+        return aItem->Type() == SCH_LINE_T &&
+                ( aItem->GetLayer() == LAYER_WIRE || aItem->GetLayer() == LAYER_BUS );
+    }
 
-    void MirrorY( int aYaxis_position );
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    void MirrorX( int aXaxis_position );
+    BITMAP_DEF GetMenuImage() const override;
 
-    void Rotate( wxPoint aPosition );
-
-    bool IsConnectable() const { return true; }
-
-    wxString GetSelectMenuText() const;
-
-    BITMAP_DEF GetMenuImage() const { return  add_glabel_xpm; }
-
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 private:
-    bool doIsConnected( const wxPoint& aPosition ) const { return m_Pos == aPosition; }
+    bool doIsConnected( const wxPoint& aPosition ) const override { return EDA_TEXT::GetTextPos() == aPosition; }
 };
 
 
@@ -326,51 +310,48 @@ class SCH_HIERLABEL : public SCH_TEXT
 public:
     SCH_HIERLABEL( const wxPoint& pos = wxPoint( 0, 0 ),
                    const wxString& text = wxEmptyString,
-                   KICAD_T aType = SCH_HIERARCHICAL_LABEL_T );
+                   KICAD_T aType = SCH_HIER_LABEL_T );
 
     // Do not create a copy constructor.  The one generated by the compiler is adequate.
 
     ~SCH_HIERLABEL() { }
 
-    void Draw( EDA_DRAW_PANEL* panel,
-               wxDC*           DC,
-               const wxPoint&  offset,
-               GR_DRAWMODE     draw_mode,
-               EDA_COLOR_T     Color = UNSPECIFIED_COLOR );
+    void Print( wxDC* DC, const wxPoint& offset ) override;
 
-    wxString GetClass() const
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && SCH_HIER_LABEL_T == aItem->Type();
+    }
+
+    wxString GetClass() const override
     {
         return wxT( "SCH_HIERLABEL" );
     }
 
-    void SetOrientation( int aSchematicOrientation );
+    void SetLabelSpinStyle( int aSpinStyle ) override;
 
-    wxPoint GetSchematicTextOffset() const;
+    wxPoint GetSchematicTextOffset() const override;
 
-    void CreateGraphicShape( std::vector <wxPoint>& aPoints, const wxPoint& Pos );
+    void CreateGraphicShape( std::vector <wxPoint>& aPoints, const wxPoint& Pos ) override;
 
-    bool Save( FILE* aFile ) const;
+    const EDA_RECT GetBoundingBox() const override;
 
-    bool Load( LINE_READER& aLine, wxString& aErrorMsg );
+    bool IsConnectable() const override { return true; }
 
-    const EDA_RECT GetBoundingBox() const;      // Virtual
+    bool CanConnect( const SCH_ITEM* aItem ) const override
+    {
+        return aItem->Type() == SCH_LINE_T &&
+                ( aItem->GetLayer() == LAYER_WIRE || aItem->GetLayer() == LAYER_BUS );
+    }
 
-    void MirrorY( int aYaxis_position );
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    void MirrorX( int aXaxis_position );
+    BITMAP_DEF GetMenuImage() const override;
 
-    void Rotate( wxPoint aPosition );
-
-    bool IsConnectable() const { return true; }
-
-    wxString GetSelectMenuText() const;
-
-    BITMAP_DEF GetMenuImage() const { return  add_hierarchical_label_xpm; }
-
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 private:
-    bool doIsConnected( const wxPoint& aPosition ) const { return m_Pos == aPosition; }
+    bool doIsConnected( const wxPoint& aPosition ) const override { return EDA_TEXT::GetTextPos() == aPosition; }
 };
 
 #endif /* CLASS_TEXT_LABEL_H */

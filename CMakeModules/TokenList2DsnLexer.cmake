@@ -150,7 +150,7 @@ set( sourceFileHeader
  * your DSN lexer.
  */
 
-#include <${result}_lexer.h>
+#include <${outHeaderFile}>
 
 using namespace ${enum};
 
@@ -268,7 +268,7 @@ public:
 
     /**
      * Constructor ( LINE_READER* )
-     * intializes a lexer and prepares to read from @a aLineReader which
+     * initializes a lexer and prepares to read from @a aLineReader which
      * is assumed ready, and may be in use by other DSNLEXERs also.  No ownership
      * is taken of @a aLineReader. This enables it to be used by other lexers also.
      * The transition between grammars in such a case, must happen on a text
@@ -298,7 +298,7 @@ public:
      * @return ${enum}::T - the type of token found next.
      * @throw IO_ERROR - only if the LINE_READER throws it.
      */
-    ${enum}::T NextTok() throw( IO_ERROR )
+    ${enum}::T NextTok()
     {
         return (${enum}::T) DSNLEXER::NextTok();
     }
@@ -311,7 +311,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy IsSymbol()
      */
-    ${enum}::T NeedSYMBOL() throw( IO_ERROR )
+    ${enum}::T NeedSYMBOL()
     {
         return (${enum}::T) DSNLEXER::NeedSYMBOL();
     }
@@ -324,7 +324,7 @@ public:
      * @return int - the actual token read in.
      * @throw IO_ERROR, if the next token does not satisfy the above test
      */
-    ${enum}::T NeedSYMBOLorNUMBER() throw( IO_ERROR )
+    ${enum}::T NeedSYMBOLorNUMBER()
     {
         return (${enum}::T) DSNLEXER::NeedSYMBOLorNUMBER();
     }
@@ -374,14 +374,10 @@ const char* ${LEXERCLASS}::TokenName( T aTok )
 {
     const char* ret;
 
-    if( (unsigned) aTok < keyword_count )
-    {
-        ret = keywords[aTok].name;
-    }
-    else if( aTok < 0 )
-    {
+    if( aTok < 0 )
         ret = DSNLEXER::Syntax( aTok );
-    }
+    else if( (unsigned) aTok < keyword_count )
+        ret = keywords[aTok].name;
     else
         ret = \"token too big\";
 

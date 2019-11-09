@@ -3,7 +3,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,56 +24,11 @@
  */
 
 #include <wx/wx.h>
-#include <pcb_plot_params_lexer.h>
 #include <eda_text.h>                // EDA_DRAW_MODE_T
-#include <plot_common.h>
+#include <plotter.h>
 #include <layers_id_colors_and_visibility.h>
 
-class PCB_PLOT_PARAMS;
-class LINE_READER;
-
-
-/**
- * Class PCB_PLOT_PARAMS_PARSER
- * is the parser class for PCB_PLOT_PARAMS.
- */
-class PCB_PLOT_PARAMS_PARSER : public PCB_PLOT_PARAMS_LEXER
-{
-public:
-    PCB_PLOT_PARAMS_PARSER( LINE_READER* aReader );
-    PCB_PLOT_PARAMS_PARSER( char* aLine, const wxString& aSource );
-
-    LINE_READER* GetReader() { return reader; };
-
-    void Parse( PCB_PLOT_PARAMS* aPcbPlotParams ) throw( PARSE_ERROR, IO_ERROR );
-
-private:
-    bool parseBool();
-
-    /**
-     * Function parseInt
-     * parses an integer and constrains it between two values.
-     * @param aMin is the smallest return value.
-     * @param aMax is the largest return value.
-     * @return int - the parsed integer.
-     */
-    int parseInt( int aMin, int aMax );
-
-    /**
-     * Function parseDouble
-     * parses a double
-     * @return double - the parsed double.
-     */
-    double parseDouble();
-
-    /**
-     * Function skipCurrent
-     * Skip the current token level, i.e
-     * search for the RIGHT parenthesis which closes the current description
-     */
-    void skipCurrent() throw( IO_ERROR, PARSE_ERROR );
-};
-
+class PCB_PLOT_PARAMS_PARSER;
 
 /**
  * Class PCB_PLOT_PARAMS
@@ -94,9 +49,21 @@ private:
     // (mainly used to disable NPTH pads plotting on copper layers)
     bool        m_skipNPTH_Pads;
 
-    /** LINE, FILLED or SKETCH selects how to plot filled objects.
-     *  FILLED is not available with all drivers */
-    EDA_DRAW_MODE_T m_mode;
+    /** FILLED or SKETCH selects how to plot filled objects.
+     *  FILLED or SKETCH not available with all drivers: some have fixed mode
+     */
+    EDA_DRAW_MODE_T m_plotMode;
+
+    /** DXF format: Plot items in outline (polygon) mode
+     * In polygon mode, each item to plot is converted to a polygon, and all
+     * polygons are merged.
+     */
+    bool        m_DXFplotPolygonMode;
+
+    /**
+     * DXF format: Units to use when plotting the DXF
+     */
+    DXF_PLOTTER::DXF_UNITS m_DXFplotUnits;
 
     /// Plot format type (chooses the driver to be used)
     PlotFormat  m_format;
@@ -107,7 +74,7 @@ private:
     /// Choose how represent text with PS, PDF and DXF drivers
     PlotTextMode m_textMode;
 
-    /// The default line width (used for the frame and in LINE mode)
+    /// The default line width (used to draw items having no defined width)
     int         m_lineWidth;
 
     /// When true set the scale to fit the board in the page
@@ -134,12 +101,20 @@ private:
     /// Set of layers to plot
     LSET        m_layerSelection;
 
-    /** When plotting gerbers use a conventional set of extensions instead of
-     * appending a suffix to the board name */
-    bool        m_useGerberExtensions;
+    /** When plotting gerber files, use a conventional set of Protel extensions
+     * instead of .gbr, that is now the offical gerber file extension
+     * this is a deprecated feature
+     */
+    bool        m_useGerberProtelExtensions;
 
     /// Include attributes from the Gerber X2 format (chapter 5 in revision J2)
-    bool        m_useGerberAttributes;
+    bool        m_useGerberX2format;
+
+    /// Include netlist info (only in Gerber X2 format) (chapter ? in revision ?)
+    bool        m_includeGerberNetlistInfo;
+
+    /// generate the auxiliary "job file" in gerber format
+    bool        m_createGerberJobFile;
 
     /// precision of coordinates in Gerber files: accepted 5 or 6
     /// when units are in mm (6 or 7 in inches, but Pcbnew uses mm).
@@ -147,7 +122,7 @@ private:
     /// 5 is the minimal value for professional boards.
     int         m_gerberPrecision;
 
-    /// Plot gerbers using auxiliary (drill) origin instead of page coordinates
+    /// Plot gerbers using auxiliary (drill) origin instead of absolue coordinates
     bool        m_useAuxOrigin;
 
     /// On gerbers 'scrape' away the solder mask from silkscreen (trim silks)
@@ -171,8 +146,7 @@ private:
     /// Force plotting of fields marked invisible
     bool        m_plotInvisibleText;
 
-    /// Allows pads outlines on silkscreen layer
-    /// (when pads are also on silk screen)
+    /// Allows pads outlines on silkscreen layer (when pads are also on silk screen)
     bool        m_plotPadsOnSilkLayer;
 
     /* These next two scale factors are intended to compensate plotters
@@ -180,7 +154,8 @@ private:
      * near 1.0; only X and Y dimensions are adjusted: circles are plotted as
      * circles, even if X and Y fine scale differ; because of this it is mostly
      * useful for printers: postscript plots would be best adjusted using
-     * the prologue (that would change the whole output matrix */
+     * the prologue (that would change the whole output matrix
+     */
 
     double      m_fineScaleAdjustX;     ///< fine scale adjust X axis
     double      m_fineScaleAdjustY;     ///< fine scale adjust Y axis
@@ -192,11 +167,9 @@ private:
 
     int         m_HPGLPenNum;           ///< HPGL only: pen number selection(1 to 9)
     int         m_HPGLPenSpeed;         ///< HPGL only: pen speed, always in cm/s (1 to 99 cm/s)
-    int         m_HPGLPenDiam;          ///< HPGL only: pen diameter in MILS, useful to fill areas
-    int         m_HPGLPenOvr;           ///< HPGL only: pen overlay in MILS, useful only to fill areas
-    EDA_COLOR_T m_color;                ///< Color for plotting the current layer
-    EDA_COLOR_T m_referenceColor;       ///< Color for plotting references
-    EDA_COLOR_T m_valueColor;           ///< Color for plotting values
+    double      m_HPGLPenDiam;          ///< HPGL only: pen diameter in MILS, useful to fill areas
+                                        ///< However, it is in mm in hpgl files.
+    COLOR4D     m_color;                ///< Color for plotting the current layer. Provided, but not really used
 
 public:
     PCB_PLOT_PARAMS();
@@ -204,27 +177,39 @@ public:
     void        SetSkipPlotNPTH_Pads( bool aSkip ) { m_skipNPTH_Pads = aSkip; }
     bool        GetSkipPlotNPTH_Pads() const { return m_skipNPTH_Pads; }
 
-    void        Format( OUTPUTFORMATTER* aFormatter, int aNestLevel, int aControl=0 )
-                        const throw( IO_ERROR );
-    void        Parse( PCB_PLOT_PARAMS_PARSER* aParser ) throw( PARSE_ERROR, IO_ERROR );
+    void        Format( OUTPUTFORMATTER* aFormatter, int aNestLevel, int aControl=0 ) const;
+    void        Parse( PCB_PLOT_PARAMS_PARSER* aParser );
 
-    bool        operator==( const PCB_PLOT_PARAMS &aPcbPlotParams ) const;
-    bool        operator!=( const PCB_PLOT_PARAMS &aPcbPlotParams ) const;
+    /**
+     * Compare current settings to aPcbPlotParams, including not saved parameters in brd file
+     * @param aPcbPlotParams = the PCB_PLOT_PARAMS to compare
+     * @param aCompareOnlySavedPrms = true to compare only saved in file parameters,
+     * and false to compare the full set of parameters.
+     * @return true is parameters are same, false if one (or more) parameter does not match
+     */
+    bool        IsSameAs( const PCB_PLOT_PARAMS &aPcbPlotParams, bool aCompareOnlySavedPrms ) const;
 
-    void        SetColor( EDA_COLOR_T aVal ) { m_color = aVal; }
-    EDA_COLOR_T GetColor() const { return m_color; }
-
-    void        SetReferenceColor( EDA_COLOR_T aVal ) { m_referenceColor = aVal; }
-    EDA_COLOR_T GetReferenceColor() const { return m_referenceColor; }
-
-    void        SetValueColor( EDA_COLOR_T aVal ) { m_valueColor = aVal; }
-    EDA_COLOR_T GetValueColor() const { return m_valueColor; }
+    void        SetColor( COLOR4D aVal ) { m_color = aVal; }
+    COLOR4D     GetColor() const { return m_color; }
 
     void        SetTextMode( PlotTextMode aVal ) { m_textMode = aVal; }
     PlotTextMode GetTextMode() const { return m_textMode; }
 
-    void        SetMode( EDA_DRAW_MODE_T aVal ) { m_mode = aVal; }
-    EDA_DRAW_MODE_T GetMode() const { return m_mode; }
+    void        SetPlotMode( EDA_DRAW_MODE_T aPlotMode ) { m_plotMode = aPlotMode; }
+    EDA_DRAW_MODE_T GetPlotMode() const { return m_plotMode; }
+
+    void        SetDXFPlotPolygonMode( bool aFlag ) { m_DXFplotPolygonMode = aFlag; }
+    bool        GetDXFPlotPolygonMode() const { return m_DXFplotPolygonMode; }
+
+    void SetDXFPlotUnits( DXF_PLOTTER::DXF_UNITS aUnit )
+    {
+        m_DXFplotUnits = aUnit;
+    }
+
+    DXF_PLOTTER::DXF_UNITS GetDXFPlotUnits() const
+    {
+        return m_DXFplotUnits;
+    }
 
     void        SetDrillMarksType( DrillMarksType aVal ) { m_drillMarks = aVal; }
     DrillMarksType GetDrillMarksType() const { return m_drillMarks; }
@@ -273,11 +258,17 @@ public:
     void        SetOutputDirectory( wxString aDir ) { m_outputDirectory = aDir; }
     wxString    GetOutputDirectory() const { return m_outputDirectory; }
 
-    void        SetUseGerberAttributes( bool aUse ) { m_useGerberAttributes = aUse; }
-    bool        GetUseGerberAttributes() const { return m_useGerberAttributes; }
+    void        SetUseGerberX2format( bool aUse ) { m_useGerberX2format = aUse; }
+    bool        GetUseGerberX2format() const { return m_useGerberX2format; }
 
-    void        SetUseGerberExtensions( bool aUse ) { m_useGerberExtensions = aUse; }
-    bool        GetUseGerberExtensions() const { return m_useGerberExtensions; }
+    void        SetIncludeGerberNetlistInfo( bool aUse ) { m_includeGerberNetlistInfo = aUse; }
+    bool        GetIncludeGerberNetlistInfo() const { return m_includeGerberNetlistInfo; }
+
+    void        SetCreateGerberJobFile( bool aCreate ) { m_createGerberJobFile = aCreate; }
+    bool        GetCreateGerberJobFile() const { return m_createGerberJobFile; }
+
+    void        SetUseGerberProtelExtensions( bool aUse ) { m_useGerberProtelExtensions = aUse; }
+    bool        GetUseGerberProtelExtensions() const { return m_useGerberProtelExtensions; }
 
     void        SetGerberPrecision( int aPrecision );
     int         GetGerberPrecision() const { return m_gerberPrecision; }
@@ -303,12 +294,15 @@ public:
     void        SetA4Output( int aForce ) { m_A4Output = aForce; };
     bool        GetA4Output() const { return m_A4Output; };
 
-    int         GetHPGLPenDiameter() const { return m_HPGLPenDiam; };
-    bool        SetHPGLPenDiameter( int aValue );
+    // For historical reasons, this parameter is stored in mils
+    // (but is in mm in hpgl files...)
+    double      GetHPGLPenDiameter() const { return m_HPGLPenDiam; };
+    bool        SetHPGLPenDiameter( double aValue );
+
+    // This parameter is always in cm, due to hpgl file format constraint
     int         GetHPGLPenSpeed() const { return m_HPGLPenSpeed; };
     bool        SetHPGLPenSpeed( int aValue );
-    int         GetHPGLPenOverlay() const { return m_HPGLPenOvr; };
-    bool        SetHPGLPenOverlay( int aValue );
+
     void        SetHPGLPenNum( int aVal ) { m_HPGLPenNum = aVal; }
     int         GetHPGLPenNum() const { return m_HPGLPenNum; }
 

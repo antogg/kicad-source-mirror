@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2017 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,37 +22,25 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file lib_text.h
- */
-
-#ifndef _LIB_TEXT_H_
-#define _LIB_TEXT_H_
+#ifndef LIB_TEXT_H
+#define LIB_TEXT_H
 
 #include <eda_text.h>
-#include <lib_draw_item.h>
+#include <lib_item.h>
 
 
 /**
- * Class LIB_TEXT
- * defines a component library graphical text item.
+ * Define a symbol library graphical text item.
  * <p>
  * This is only a graphical text item.  Field text like the reference designator,
- * component value, etc. are not LIB_TEXT items.  See the #LIB_FIELD class for the
+ * symbol value, etc. are not LIB_TEXT items.  See the #LIB_FIELD class for the
  * field item definition.
  * </p>
  */
 class LIB_TEXT : public LIB_ITEM, public EDA_TEXT
 {
-    wxString m_savedText;         ///< Temporary storage for the string when edition.
-    bool m_rotate;                ///< Flag to indicate a rotation occurred while editing.
-    bool m_updateText;            ///< Flag to indicate text change occurred while editing.
-
-    void drawGraphic( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                      EDA_COLOR_T aColor, GR_DRAWMODE aDrawMode, void* aData,
-                      const TRANSFORM& aTransform );
-
-    void calcEdit( const wxPoint& aPosition );
+    void print( wxDC* aDC, const wxPoint& aOffset, void* aData,
+                const TRANSFORM& aTransform ) override;
 
 public:
     LIB_TEXT( LIB_PART * aParent );
@@ -61,77 +49,57 @@ public:
 
     ~LIB_TEXT() { }
 
-    wxString GetClass() const
+    wxString GetClass() const override
     {
         return wxT( "LIB_TEXT" );
     }
 
-    /**
-     * Sets the text item string to \a aText.
-     *
-     * This method does more than just set the set the text string.  There are special
-     * cases when changing the text string alone is not enough.  If the text item is
-     * being moved, the name change must be delayed until the next redraw to prevent
-     * drawing artifacts.
-     *
-     * @param aText - New text value.
-     */
-    void SetText( const wxString& aText );
-
-    bool Save( OUTPUTFORMATTER& aFormatter );
-
-    bool Load( LINE_READER& aLineReader, wxString& aErrorMsg );
-
-    bool HitTest( const wxPoint& aPosition ) const;
-
-    bool HitTest( const wxPoint &aPosition, int aThreshold, const TRANSFORM& aTransform ) const;
-
-    bool HitTest( const EDA_RECT& aRect ) const
+    wxString GetTypeName() override
     {
-        return TextHitTest( aRect );
+        return _( "Text" );
     }
 
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
-    int GetPenSize( ) const;
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    bool HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy = 0 ) const override
+    {
+        return TextHitTest( aRect, aContained, aAccuracy );
+    }
 
-    const EDA_RECT GetBoundingBox() const;  // virtual
+    int GetPenSize( ) const override;
 
-    void Rotate();
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    void BeginEdit( STATUS_FLAGS aEditMode, const wxPoint aStartPoint = wxPoint( 0, 0 ) );
+    const EDA_RECT GetBoundingBox() const override;
 
-    bool ContinueEdit( const wxPoint aNextPoint );
+    void BeginEdit( const wxPoint aStartPoint ) override;
+    void CalcEdit( const wxPoint& aPosition ) override;
 
-    void EndEdit( const wxPoint& aPosition, bool aAbort = false );
+    void Offset( const wxPoint& aOffset ) override;
 
-    void SetOffset( const wxPoint& aOffset );
+    bool Inside( EDA_RECT& aRect ) const override;
 
-    bool Inside( EDA_RECT& aRect ) const;
+    void MoveTo( const wxPoint& aPosition ) override;
 
-    void Move( const wxPoint& aPosition );
+    wxPoint GetPosition() const override { return EDA_TEXT::GetTextPos(); }
 
-    wxPoint GetPosition() const { return m_Pos; }
-
-    void MirrorHorizontal( const wxPoint& aCenter );
-
-    void MirrorVertical( const wxPoint& aCenter );
-
-    void Rotate( const wxPoint& aCenter, bool aRotateCCW = true );
+    void MirrorHorizontal( const wxPoint& aCenter ) override;
+    void MirrorVertical( const wxPoint& aCenter ) override;
+    void Rotate( const wxPoint& aCenter, bool aRotateCCW = true ) override;
 
     void Plot( PLOTTER* aPlotter, const wxPoint& aOffset, bool aFill,
-               const TRANSFORM& aTransform );
+               const TRANSFORM& aTransform ) override;
 
-    int GetWidth() const { return m_Thickness; }
+    int GetWidth() const override { return GetThickness(); }
+    void SetWidth( int aWidth ) override { SetThickness( aWidth ); }
 
-    void SetWidth( int aWidth ) { m_Thickness = aWidth; }
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    wxString GetSelectMenuText() const;
+    BITMAP_DEF GetMenuImage() const override;
 
-    BITMAP_DEF GetMenuImage() const { return  add_text_xpm; }
-
-    EDA_ITEM* Clone() const;
+    EDA_ITEM* Clone() const override;
 
 private:
 
@@ -145,8 +113,8 @@ private:
      *      - Text width.
      *      - Text height.
      */
-    int compare( const LIB_ITEM& aOther ) const;
+    int compare( const LIB_ITEM& aOther ) const override;
 };
 
 
-#endif    // _LIB_TEXT_H_
+#endif    // LIB_TEXT_H

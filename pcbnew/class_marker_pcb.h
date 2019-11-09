@@ -1,3 +1,27 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2009-2018 Jean-Pierre Charras, jean-pierre.charras@ujf-grenoble.fr
+ * Copyright (C) 1992-2018 KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 /**
  * @file class_marker_pcb.h
  * @brief Markers used to show a drc problem on boards.
@@ -8,18 +32,32 @@
 
 
 #include <class_board_item.h>
-#include <class_marker_base.h>
+#include <marker_base.h>
 
+// Coordinates count for the basic shape marker
+#define MARKER_SHAPE_POINT_COUNT 9
 
 class MSG_PANEL_ITEM;
 
 
 class MARKER_PCB : public BOARD_ITEM, public MARKER_BASE
 {
-
 public:
 
     MARKER_PCB( BOARD_ITEM* aParent );
+
+    /**
+     * Constructor
+     * @param aErrorCode The categorizing identifier for an error
+     * @param aMarkerPos The position of the MARKER_PCB on the BOARD
+     * @param aItem The first of two objects
+     * @param aPos The position of the first of two objects
+     * @param bItem The second of the two conflicting objects
+     * @param bPos The position of the second of two objects
+     */
+    MARKER_PCB( EDA_UNITS_T aUnits, int aErrorCode, const wxPoint& aMarkerPos,
+                BOARD_ITEM* aItem, const wxPoint& aPos,
+                BOARD_ITEM* bItem = nullptr, const wxPoint& bPos = wxPoint() );
 
     /**
      * Constructor
@@ -32,73 +70,62 @@ public:
      */
     MARKER_PCB( int aErrorCode, const wxPoint& aMarkerPos,
                 const wxString& aText, const wxPoint& aPos,
-                const wxString& bText, const wxPoint& bPos );
-
-    /**
-     * Constructor
-     * @param aErrorCode The categorizing identifier for an error
-     * @param aMarkerPos The position of the MARKER_PCB on the BOARD
-     * @param aText Text describing the object
-     * @param aPos The position of the object
-     */
-    MARKER_PCB( int aErrorCode, const wxPoint& aMarkerPos,
-                const wxString& aText, const wxPoint& aPos );
+                const wxString& bText = wxEmptyString, const wxPoint& bPos = wxPoint() );
 
     ~MARKER_PCB();
 
-    void Move(const wxPoint& aMoveVector)
+    static inline bool ClassOf( const EDA_ITEM* aItem )
+    {
+        return aItem && PCB_MARKER_T == aItem->Type();
+    }
+
+    void Move(const wxPoint& aMoveVector) override
     {
         m_Pos += aMoveVector;
     }
 
-    void Rotate( const wxPoint& aRotCentre, double aAngle );
+    void Rotate( const wxPoint& aRotCentre, double aAngle ) override;
 
-    void Flip( const wxPoint& aCentre );
+    void Flip( const wxPoint& aCentre, bool aFlipLeftRight ) override;
 
-    void Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC,
-               GR_DRAWMODE aDrawMode, const wxPoint& aOffset = ZeroOffset )
+    void Print( PCB_BASE_FRAME* aFrame, wxDC* aDC, const wxPoint& aOffset = ZeroOffset ) override
     {
-        DrawMarker( aPanel, aDC, aDrawMode, aOffset );
+        PrintMarker( aDC, aOffset );
     }
 
-    const wxPoint& GetPosition() const          { return m_Pos; }
-    void SetPosition( const wxPoint& aPos )     { m_Pos = aPos; }
+    const wxPoint GetPosition() const override { return m_Pos; }
+    void SetPosition( const wxPoint& aPos ) override { m_Pos = aPos; }
 
-    void SetItem( const BOARD_ITEM* aItem )
+    bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const override
     {
-        m_item = aItem;
+        return HitTestMarker( aPosition, aAccuracy );
     }
 
-    const BOARD_ITEM* GetItem() const
-    {
-        return m_item;
-    }
+    bool IsOnLayer( PCB_LAYER_ID aLayer ) const override;
 
-    bool HitTest( const wxPoint& aPosition ) const
-    {
-        return HitTestMarker( aPosition );
-    }
+    void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList ) override;
 
-    bool IsOnLayer( LAYER_ID aLayer ) const;
+    wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const override;
 
-    void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList );
+    BITMAP_DEF GetMenuImage() const override;
 
-    wxString GetSelectMenuText() const;
+    const BOX2I ViewBBox() const override;
 
-    BITMAP_DEF GetMenuImage() const { return  drc_xpm; }
+    const EDA_RECT GetBoundingBox() const override;
 
-    ///> @copydoc VIEW_ITEM::ViewBBox()
-    virtual const BOX2I ViewBBox() const
-    {
-        return GetParent()->ViewBBox();
-    }
-
-    ///> @copydoc VIEW_ITEM::ViewGetLayers()
-    virtual void ViewGetLayers( int aLayers[], int& aCount ) const;
+    void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
 #if defined(DEBUG)
-    void Show( int nestLevel, std::ostream& os ) const { ShowDummy( os ); } // override
+    void Show( int nestLevel, std::ostream& os ) const override { ShowDummy( os ); }
 #endif
+
+    /** Get class name
+     * @return  string "MARKER_PCB"
+     */
+    virtual wxString GetClass() const override
+    {
+        return wxT( "MARKER_PCB" );
+    }
 
 protected:
     ///> Pointer to BOARD_ITEM that causes DRC error.

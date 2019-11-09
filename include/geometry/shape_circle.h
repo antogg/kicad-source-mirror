@@ -38,7 +38,7 @@ public:
         SHAPE( SH_CIRCLE ), m_radius( aRadius ), m_center( aCenter )
     {}
 
-    SHAPE_CIRCLE ( const SHAPE_CIRCLE& aOther ) : 
+    SHAPE_CIRCLE( const SHAPE_CIRCLE& aOther ) :
         SHAPE( SH_CIRCLE ),
         m_radius( aOther.m_radius ),
         m_center( aOther.m_center )
@@ -47,23 +47,23 @@ public:
     ~SHAPE_CIRCLE()
     {}
 
-    SHAPE* Clone() const
+    SHAPE* Clone() const override
     {
         return new SHAPE_CIRCLE( *this );
     }
 
-    const BOX2I BBox( int aClearance = 0 ) const
+    const BOX2I BBox( int aClearance = 0 ) const override
     {
         const VECTOR2I rc( m_radius + aClearance, m_radius + aClearance );
 
         return BOX2I( m_center - rc, rc * 2 );
     }
 
-    bool Collide( const SEG& aSeg, int aClearance = 0 ) const
+    bool Collide( const SEG& aSeg, int aClearance = 0 ) const override
     {
         int rc = aClearance + m_radius;
 
-        return aSeg.Distance( m_center ) <= rc;
+        return aSeg.Distance( m_center ) < rc;
     }
 
     void SetRadius( int aRadius )
@@ -86,6 +86,15 @@ public:
         return m_center;
     }
 
+    void Move( const VECTOR2I& aVector ) override
+    {
+        m_center += aVector;
+    }
+
+    bool IsSolid() const override
+    {
+        return true;
+    }
 private:
     int m_radius;
     VECTOR2I m_center;

@@ -4,8 +4,8 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 1992-2010 Jean-Pierre Charras <jean-pierre.charras@gipsa-lab.inpg.fr
- * Copyright (C) 1992-2010 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2010 Jean-Pierre Charras jp.charras at wanadoo.fr
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -26,15 +26,14 @@
  */
 
 #include <fctsys.h>
-#include <plot_common.h>
-#include <class_sch_screen.h>
-#include <wxEeschemaStruct.h>
+#include <plotter.h>
+#include <sch_edit_frame.h>
 #include <base_units.h>
 #include <sch_sheet_path.h>
 #include <project.h>
 
 #include <dialog_plot_schematic.h>
-
+#include <wx_html_report_panel.h>
 
 enum HPGL_PAGEZ_T {
     PAGE_DEFAULT = 0,
@@ -53,52 +52,27 @@ enum HPGL_PAGEZ_T {
 
 static const wxChar* plot_sheet_list( int aSize )
 {
-    const wxChar* ret;
-
     switch( aSize )
     {
     default:
-    case PAGE_DEFAULT:
-        ret = NULL;         break;
-
-    case HPGL_PAGE_SIZE_A4:
-        ret = wxT( "A4" );  break;
-
-    case HPGL_PAGE_SIZE_A3:
-        ret = wxT( "A3" );  break;
-
-    case HPGL_PAGE_SIZE_A2:
-        ret = wxT( "A2" );  break;
-
-    case HPGL_PAGE_SIZE_A1:
-        ret = wxT( "A1" );  break;
-
-    case HPGL_PAGE_SIZE_A0:
-        ret = wxT( "A0" );  break;
-
-    case HPGL_PAGE_SIZE_A:
-        ret = wxT( "A" );   break;
-
-    case HPGL_PAGE_SIZE_B:
-        ret = wxT( "B" );   break;
-
-    case HPGL_PAGE_SIZE_C:
-        ret = wxT( "C" );   break;
-
-    case HPGL_PAGE_SIZE_D:
-        ret = wxT( "D" );   break;
-
-    case HPGL_PAGE_SIZE_E:
-        ret = wxT( "E" );   break;
+    case PAGE_DEFAULT:      return nullptr;
+    case HPGL_PAGE_SIZE_A4: return wxT( "A4" );
+    case HPGL_PAGE_SIZE_A3: return wxT( "A3" );
+    case HPGL_PAGE_SIZE_A2: return wxT( "A2" );
+    case HPGL_PAGE_SIZE_A1: return wxT( "A1" );
+    case HPGL_PAGE_SIZE_A0: return wxT( "A0" );
+    case HPGL_PAGE_SIZE_A:  return wxT( "A" );
+    case HPGL_PAGE_SIZE_B:  return wxT( "B" );
+    case HPGL_PAGE_SIZE_C:  return wxT( "C" );
+    case HPGL_PAGE_SIZE_D:  return wxT( "D" );
+    case HPGL_PAGE_SIZE_E:  return wxT( "E" );
     }
-
-    return ret;
-};
+}
 
 
 void DIALOG_PLOT_SCHEMATIC::SetHPGLPenWidth()
 {
-    m_HPGLPenSize = ValueFromTextCtrl( *m_penHPGLWidthCtrl );
+    m_HPGLPenSize = m_penWidth.GetValue();
 
     if( m_HPGLPenSize > Millimeter2iu( 2 ) )
         m_HPGLPenSize = Millimeter2iu( 2 );
@@ -110,9 +84,7 @@ void DIALOG_PLOT_SCHEMATIC::SetHPGLPenWidth()
 
 void DIALOG_PLOT_SCHEMATIC::createHPGLFile( bool aPlotAll, bool aPlotFrameRef )
 {
-    wxString        plotFileName;
     SCH_SCREEN*     screen = m_parent->GetScreen();
-    SCH_SHEET_PATH* sheetpath;
     SCH_SHEET_PATH  oldsheetpath = m_parent->GetCurrentSheet();
 
     /* When printing all pages, the printed page is not the current page.
@@ -121,52 +93,42 @@ void DIALOG_PLOT_SCHEMATIC::createHPGLFile( bool aPlotAll, bool aPlotFrameRef )
      *  because in complex hierarchies a SCH_SCREEN (a schematic drawings)
      *  is shared between many sheets
      */
-    SCH_SHEET_LIST  SheetList( NULL );
+    SCH_SHEET_LIST  sheetList;
 
-    sheetpath = SheetList.GetFirst();
-    SCH_SHEET_PATH  list;
+    if( aPlotAll )
+        sheetList.BuildSheetList( g_RootSheet );
+    else
+        sheetList.push_back( m_parent->GetCurrentSheet() );
+
+    REPORTER& reporter = m_MessagesBox->Reporter();
 
     SetHPGLPenWidth();
 
-    while( true )
+    for( unsigned i = 0; i < sheetList.size(); i++ )
     {
-        if( aPlotAll )
-        {
-            if( sheetpath == NULL )
-                break;
+        m_parent->SetCurrentSheet( sheetList[i] );
+        m_parent->GetCurrentSheet().UpdateAllScreenReferences();
+        m_parent->SetSheetNumberAndCount();
 
-            list.Clear();
+        screen = m_parent->GetCurrentSheet().LastScreen();
 
-            if( list.BuildSheetPathInfoFromSheetPathValue( sheetpath->Path() ) )
-            {
-                m_parent->SetCurrentSheet( list );
-                m_parent->GetCurrentSheet().UpdateAllScreenReferences();
-                m_parent->SetSheetNumberAndCount();
-
-                screen = m_parent->GetCurrentSheet().LastScreen();
-
-                if( !screen ) // LastScreen() may return NULL
-                    screen = m_parent->GetScreen();
-            }
-            else // Should not happen
-                return;
-
-            sheetpath = SheetList.GetNext();
-        }
+        if( !screen ) // LastScreen() may return NULL
+            screen = m_parent->GetScreen();
 
         const PAGE_INFO&    curPage = screen->GetPageSettings();
 
         PAGE_INFO           plotPage = curPage;
 
         // if plotting on a page size other than curPage
-        if( m_HPGLPaperSizeOption->GetSelection() != PAGE_DEFAULT )
-            plotPage.SetType( plot_sheet_list( m_HPGLPaperSizeOption->GetSelection() ) );
+        if( m_paperSizeOption->GetSelection() != PAGE_DEFAULT )
+            plotPage.SetType( plot_sheet_list( m_paperSizeOption->GetSelection() ) );
 
         // Calculation of conversion scales.
         double  plot_scale = (double) plotPage.GetWidthMils() / curPage.GetWidthMils();
 
         // Calculate offsets
         wxPoint plotOffset;
+        wxString msg;
 
         if( GetPlotOriginCenter() )
         {
@@ -174,24 +136,34 @@ void DIALOG_PLOT_SCHEMATIC::createHPGLFile( bool aPlotAll, bool aPlotFrameRef )
             plotOffset.y    = -plotPage.GetHeightIU() / 2;
         }
 
-        plotFileName = m_parent->GetUniqueFilenameForCurrentSheet() + wxT( "." )
-                       + HPGL_PLOTTER::GetDefaultFileExtension();
+        try
+        {
+            wxString fname = m_parent->GetUniqueFilenameForCurrentSheet();
+            wxString ext = HPGL_PLOTTER::GetDefaultFileExtension();
+            wxFileName plotFileName = createPlotFileName( m_outputDirectoryName, fname,
+                                                          ext, &reporter );
 
-        plotFileName = Prj().AbsolutePath( plotFileName );
+            LOCALE_IO toggle;
 
-        LOCALE_IO toggle;
+            if( Plot_1_Page_HPGL( plotFileName.GetFullPath(), screen, plotPage, plotOffset,
+                                  plot_scale, aPlotFrameRef ) )
+            {
+                msg.Printf( _( "Plot: \"%s\" OK.\n" ), GetChars( plotFileName.GetFullPath() ) );
+                reporter.Report( msg, REPORTER::RPT_ACTION );
+            }
+            else
+            {
+                msg.Printf( _( "Unable to create file \"%s\".\n" ),
+                            GetChars( plotFileName.GetFullPath() ) );
+                reporter.Report( msg, REPORTER::RPT_ERROR );
+            }
+        }
+        catch( IO_ERROR& e )
+        {
+            msg.Printf( wxT( "HPGL Plotter exception: %s"), GetChars( e.What() ) );
+            reporter.Report( msg, REPORTER::RPT_ERROR );
+        }
 
-        wxString msg;
-        if( Plot_1_Page_HPGL( plotFileName, screen, plotPage, plotOffset,
-                              plot_scale, aPlotFrameRef ) )
-            msg.Printf( _( "Plot: <%s> OK\n" ), GetChars( plotFileName ) );
-        else    // Error
-            msg.Printf( _( "Unable to create <%s>\n" ), GetChars( plotFileName ) );
-
-        m_MessagesBox->AppendText( msg );
-
-        if( !aPlotAll )
-            break;
     }
 
     m_parent->SetCurrentSheet( oldsheetpath );
@@ -210,7 +182,8 @@ bool DIALOG_PLOT_SCHEMATIC::Plot_1_Page_HPGL( const wxString&   aFileName,
     HPGL_PLOTTER* plotter = new HPGL_PLOTTER();
 
     plotter->SetPageSettings( aPageInfo );
-    plotter->SetViewport( aPlot0ffset, IU_PER_DECIMILS, aScale, false );
+    // Currently, plot units are in decimil
+    plotter->SetViewport( aPlot0ffset, IU_PER_MILS/10, aScale, false );
 
     // Init :
     plotter->SetCreator( wxT( "Eeschema-HPGL" ) );
@@ -226,7 +199,6 @@ bool DIALOG_PLOT_SCHEMATIC::Plot_1_Page_HPGL( const wxString&   aFileName,
     // Pen num and pen speed are not initialized here.
     // Default HPGL driver values are used
     plotter->SetPenDiameter( m_HPGLPenSize );
-    plotter->SetPenOverlap( m_HPGLPenSize / 4 );
     plotter->StartPlot();
 
     plotter->SetColor( BLACK );
@@ -236,7 +208,8 @@ bool DIALOG_PLOT_SCHEMATIC::Plot_1_Page_HPGL( const wxString&   aFileName,
                        m_parent->GetPageSettings(),
                        aScreen->m_ScreenNumber, aScreen->m_NumberOfScreens,
                        m_parent->GetScreenDesc(),
-                       aScreen->GetFileName() );
+                       aScreen->GetFileName(),
+                       GetLayerColor( ( SCH_LAYER_ID )LAYER_WORKSHEET ) );
 
     aScreen->Plot( plotter );
 

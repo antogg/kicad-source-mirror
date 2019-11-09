@@ -2,6 +2,7 @@
  * KiRouter - a push-and-(sometimes-)shove PCB router
  *
  * Copyright (C) 2013-2014 CERN
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  * Author: Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -18,8 +19,7 @@
  * with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <boost/foreach.hpp>
-#include <boost/optional.hpp>
+#include <core/optional.h>
 
 #include <geometry/shape_line_chain.h>
 
@@ -27,25 +27,34 @@
 #include "pns_optimizer.h"
 #include "pns_utils.h"
 #include "pns_router.h"
-using boost::optional;
 
-void PNS_WALKAROUND::start( const PNS_LINE& aInitialPath )
+namespace PNS {
+
+void WALKAROUND::start( const LINE& aInitialPath )
 {
     m_iteration = 0;
     m_iterationLimit = 50;
 }
 
 
-PNS_NODE::OPT_OBSTACLE PNS_WALKAROUND::nearestObstacle( const PNS_LINE& aPath )
+NODE::OPT_OBSTACLE WALKAROUND::nearestObstacle( const LINE& aPath )
 {
-    return m_world->NearestObstacle( &aPath, m_itemMask );
+    NODE::OPT_OBSTACLE obs = m_world->NearestObstacle( &aPath, m_itemMask, m_restrictedSet.empty() ? NULL : &m_restrictedSet );
+
+    if( m_restrictedSet.empty() )
+        return obs;
+
+    else if( obs && m_restrictedSet.find ( obs->m_item ) != m_restrictedSet.end() )
+        return obs;
+
+    return NODE::OPT_OBSTACLE();
 }
 
 
-PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::singleStep( PNS_LINE& aPath,
+WALKAROUND::WALKAROUND_STATUS WALKAROUND::singleStep( LINE& aPath,
                                                               bool aWindingDirection )
 {
-    optional<PNS_OBSTACLE>& current_obs =
+    OPT<OBSTACLE>& current_obs =
         aWindingDirection ? m_currentObstacle[0] : m_currentObstacle[1];
 
     bool& prev_recursive = aWindingDirection ? m_recursiveCollision[0] : m_recursiveCollision[1];
@@ -57,7 +66,7 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::singleStep( PNS_LINE& aPath,
 
     VECTOR2I last = aPath.CPoint( -1 );
 
-    if( ( current_obs->m_hull ).PointInside( last ) )
+    if( ( current_obs->m_hull ).PointInside( last ) || ( current_obs->m_hull ).PointOnEdge( last ) )
     {
         m_recursiveBlockageCount++;
 
@@ -70,10 +79,13 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::singleStep( PNS_LINE& aPath,
         }
     }
 
-    aPath.Walkaround( current_obs->m_hull, path_pre[0], path_walk[0],
-                      path_post[0], aWindingDirection );
-    aPath.Walkaround( current_obs->m_hull, path_pre[1], path_walk[1],
-                      path_post[1], !aWindingDirection );
+    if( ! aPath.Walkaround( current_obs->m_hull, path_pre[0], path_walk[0],
+                      path_post[0], aWindingDirection ) )
+        return STUCK;
+
+    if( ! aPath.Walkaround( current_obs->m_hull, path_pre[1], path_walk[1],
+                      path_post[1], !aWindingDirection ) )
+        return STUCK;
 
 #ifdef DEBUG
     m_logger.NewGroup( aWindingDirection ? "walk-cw" : "walk-ccw", m_iteration );
@@ -83,23 +95,26 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::singleStep( PNS_LINE& aPath,
     m_logger.Log( &current_obs->m_hull, 2, "hull" );
     m_logger.Log( current_obs->m_item, 3, "item" );
 #endif
-               
+
     int len_pre = path_walk[0].Length();
     int len_alt = path_walk[1].Length();
-    
-    PNS_LINE walk_path( aPath, path_walk[1] );
 
-    bool alt_collides = m_world->CheckColliding( &walk_path, m_itemMask );
+    LINE walk_path( aPath, path_walk[1] );
+
+    bool alt_collides = static_cast<bool>( m_world->CheckColliding( &walk_path, m_itemMask ) );
 
     SHAPE_LINE_CHAIN pnew;
 
-    if( !m_forceSingleDirection && len_alt < len_pre && !alt_collides && !prev_recursive )
+    if( !m_forceLongerPath && len_alt < len_pre && !alt_collides && !prev_recursive )
     {
         pnew = path_pre[1];
         pnew.Append( path_walk[1] );
         pnew.Append( path_post[1] );
 
-        current_obs = nearestObstacle( PNS_LINE( aPath, path_post[1] ) );
+        if( !path_post[1].PointCount() || !path_walk[1].PointCount() )
+            current_obs = nearestObstacle( LINE( aPath, path_pre[1] ) );
+        else
+            current_obs = nearestObstacle( LINE( aPath, path_post[1] ) );
         prev_recursive = false;
     }
     else
@@ -108,12 +123,15 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::singleStep( PNS_LINE& aPath,
         pnew.Append( path_walk[0] );
         pnew.Append( path_post[0] );
 
-        current_obs = nearestObstacle( PNS_LINE( aPath, path_walk[0] ) );
+        if( !path_post[0].PointCount() || !path_walk[0].PointCount() )
+            current_obs = nearestObstacle( LINE( aPath, path_pre[0] ) );
+        else
+            current_obs = nearestObstacle( LINE( aPath, path_walk[0] ) );
 
         if( !current_obs )
         {
             prev_recursive = false;
-            current_obs = nearestObstacle( PNS_LINE( aPath, path_post[0] ) );
+            current_obs = nearestObstacle( LINE( aPath, path_post[0] ) );
         }
         else
             prev_recursive = true;
@@ -126,12 +144,22 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::singleStep( PNS_LINE& aPath,
 }
 
 
-PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::Route( const PNS_LINE& aInitialPath,
-        PNS_LINE& aWalkPath, bool aOptimize )
+WALKAROUND::WALKAROUND_STATUS WALKAROUND::Route( const LINE& aInitialPath,
+        LINE& aWalkPath, bool aOptimize )
 {
-    PNS_LINE path_cw( aInitialPath ), path_ccw( aInitialPath );
+    LINE path_cw( aInitialPath ), path_ccw( aInitialPath );
     WALKAROUND_STATUS s_cw = IN_PROGRESS, s_ccw = IN_PROGRESS;
     SHAPE_LINE_CHAIN best_path;
+
+    // special case for via-in-the-middle-of-track placement
+    if( aInitialPath.PointCount() <= 1 )
+    {
+        if( aInitialPath.EndsWithVia() && m_world->CheckColliding( &aInitialPath.Via(), m_itemMask ) )
+            return STUCK;
+
+        aWalkPath = aInitialPath;
+        return DONE;
+    }
 
     start( aInitialPath );
 
@@ -139,6 +167,15 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::Route( const PNS_LINE& aInitia
     m_recursiveBlockageCount = 0;
 
     aWalkPath = aInitialPath;
+
+    if( m_forceWinding )
+    {
+        s_cw = m_forceCw ? IN_PROGRESS : STUCK;
+        s_ccw = m_forceCw ? STUCK : IN_PROGRESS;
+        m_forceSingleDirection = true;
+    } else {
+        m_forceSingleDirection = false;
+    }
 
     while( m_iteration < m_iterationLimit )
     {
@@ -152,11 +189,11 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::Route( const PNS_LINE& aInitia
         {
             int len_cw  = path_cw.CLine().Length();
             int len_ccw = path_ccw.CLine().Length();
-            
+
             if( m_forceLongerPath )
-                aWalkPath = (len_cw > len_ccw ? path_cw : path_ccw);
+                aWalkPath = ( len_cw > len_ccw ? path_cw : path_ccw );
             else
-                aWalkPath = (len_cw < len_ccw ? path_cw : path_ccw);
+                aWalkPath = ( len_cw < len_ccw ? path_cw : path_ccw );
 
             break;
         }
@@ -173,7 +210,7 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::Route( const PNS_LINE& aInitia
 
         m_iteration++;
     }
-    
+
     if( m_iteration == m_iterationLimit )
     {
         int len_cw  = path_cw.CLine().Length();
@@ -223,17 +260,20 @@ PNS_WALKAROUND::WALKAROUND_STATUS PNS_WALKAROUND::Route( const PNS_LINE& aInitia
 
     if( aWalkPath.SegmentCount() < 1 )
         return STUCK;
-
     if( aWalkPath.CPoint( -1 ) != aInitialPath.CPoint( -1 ) )
         return STUCK;
-
     if( aWalkPath.CPoint( 0 ) != aInitialPath.CPoint( 0 ) )
         return STUCK;
-    
+
     WALKAROUND_STATUS st = s_ccw == DONE || s_cw == DONE ? DONE : STUCK;
 
-    if( aOptimize && st == DONE )
-       PNS_OPTIMIZER::Optimize( &aWalkPath, PNS_OPTIMIZER::MERGE_OBTUSE, m_world );
+    if( st == DONE )
+    {
+        if( aOptimize )
+            OPTIMIZER::Optimize( &aWalkPath, OPTIMIZER::MERGE_OBTUSE, m_world );
+    }
 
     return st;
+}
+
 }

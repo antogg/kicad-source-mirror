@@ -36,8 +36,8 @@ class TOOL_ACTION;
 /**
  * Class ACTION_MANAGER
  *
- * Takes care of TOOL_ACTION objects. Registers them and allows to run them using associated
- * hot keys, names or ids.
+ * Takes care of TOOL_ACTION objects. Registers them and allows one to run them
+ * using associated hot keys, names or ids.
  */
 class ACTION_MANAGER
 {
@@ -63,16 +63,14 @@ public:
     void RegisterAction( TOOL_ACTION* aAction );
 
     /**
-     * Function UnregisterAction()
-     * Removes a tool action from the manager and makes it unavailable for further usage.
-     * @param aAction: action to be removed.
-     */
-    void UnregisterAction( TOOL_ACTION* aAction );
-
-    /**
      * Generates an unique ID from for an action with given name.
      */
     static int MakeActionId( const std::string& aActionName );
+
+    /**
+     * Get a list of currently-registered actions mapped by their name.
+     */
+    const std::map<std::string, TOOL_ACTION*>& GetActions();
 
     /**
      * Function FindAction()
@@ -90,12 +88,40 @@ public:
      */
     bool RunHotKey( int aHotKey ) const;
 
+    /**
+     * Function GetHotKey()
+     * Returns the hot key associated with a given action or 0 if there is none.
+     * @param aAction is the queried action.
+     */
+    int GetHotKey( const TOOL_ACTION& aAction ) const;
+
+    /**
+     * Function UpdateHotKeys()
+     * Optionally reads the hotkey config files and then rebuilds the internal hotkey maps.
+     */
+    void UpdateHotKeys( bool aFullUpdate );
+
+    /**
+     * Function GetActionList()
+     * Returns list of TOOL_ACTIONs. TOOL_ACTIONs add themselves to the list upon their
+     * creation.
+     * @return List of TOOL_ACTIONs.
+     */
+    static std::list<TOOL_ACTION*>& GetActionList()
+    {
+        static std::list<TOOL_ACTION*> actionList;
+
+        return actionList;
+    }
+
 private:
+    // Resolves a hotkey by applying legacy and current settings over the action's
+    // default hotkey.
+    int processHotKey( TOOL_ACTION* aAction, std::map<std::string, int> aLegacyMap,
+                       std::map<std::string, int> aHotKeyMap );
+
     ///> Tool manager needed to run actions
     TOOL_MANAGER* m_toolMgr;
-
-    ///> Map for indexing actions by their IDs
-    std::map<int, TOOL_ACTION*> m_actionIdIndex;
 
     ///> Map for indexing actions by their names
     std::map<std::string, TOOL_ACTION*> m_actionNameIndex;
@@ -103,6 +129,9 @@ private:
     ///> Map for indexing actions by their hotkeys
     typedef std::map<int, std::list<TOOL_ACTION*> > HOTKEY_LIST;
     HOTKEY_LIST m_actionHotKeys;
+
+    ///> Quick action<->hot key lookup
+    std::map<int, int> m_hotkeys;
 };
 
 #endif /* ACTION_MANAGER_H_ */

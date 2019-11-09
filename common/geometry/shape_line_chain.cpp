@@ -1,7 +1,7 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 CERN
+ * Copyright (C) 2013-2017 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
  *
  * This program is free software; you can redistribute it and/or
@@ -22,24 +22,47 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
+#include <algorithm>
+
 #include <geometry/shape_line_chain.h>
 #include <geometry/shape_circle.h>
+#include <trigo.h>
+#include "clipper.hpp"
 
-using boost::optional;
 
-bool SHAPE_LINE_CHAIN::Collide( const VECTOR2I& aP, int aClearance ) const
+ClipperLib::Path SHAPE_LINE_CHAIN::convertToClipper( bool aRequiredOrientation ) const
 {
-    assert( false );
+    ClipperLib::Path c_path;
 
-    return false;
+    for( int i = 0; i < PointCount(); i++ )
+    {
+        const VECTOR2I& vertex = CPoint( i );
+        c_path.push_back( ClipperLib::IntPoint( vertex.x, vertex.y ) );
+    }
+
+    if( Orientation( c_path ) != aRequiredOrientation )
+        ReversePath( c_path );
+
+    return c_path;
 }
 
 
-bool SHAPE_LINE_CHAIN::Collide( const BOX2I& aBox, int aClearance ) const
+bool SHAPE_LINE_CHAIN::Collide( const VECTOR2I& aP, int aClearance ) const
 {
-    assert( false );
+    // fixme: ugly!
+    SEG s( aP, aP );
+    return this->Collide( s, aClearance );
+}
 
-    return false;
+
+void SHAPE_LINE_CHAIN::Rotate( double aAngle, const VECTOR2I& aCenter )
+{
+    for( std::vector<VECTOR2I>::iterator i = m_points.begin(); i != m_points.end(); ++i )
+    {
+        (*i) -= aCenter;
+        (*i) = (*i).Rotate( aAngle );
+        (*i) += aCenter;
+    }
 }
 
 
@@ -77,9 +100,9 @@ const SHAPE_LINE_CHAIN SHAPE_LINE_CHAIN::Reverse() const
 }
 
 
-int SHAPE_LINE_CHAIN::Length() const
+long long int SHAPE_LINE_CHAIN::Length() const
 {
-    int l = 0;
+    long long int l = 0;
 
     for( int i = 0; i < SegmentCount(); i++ )
         l += CSegment( i ).Length();
@@ -131,11 +154,11 @@ void SHAPE_LINE_CHAIN::Remove( int aStartIndex, int aEndIndex )
 }
 
 
-int SHAPE_LINE_CHAIN::Distance( const VECTOR2I& aP ) const
+int SHAPE_LINE_CHAIN::Distance( const VECTOR2I& aP, bool aOutlineOnly ) const
 {
     int d = INT_MAX;
 
-    if( IsClosed() && PointInside( aP ) )
+    if( IsClosed() && PointInside( aP ) && !aOutlineOnly )
         return 0;
 
     for( int s = 0; s < SegmentCount(); s++ )
@@ -150,10 +173,7 @@ int SHAPE_LINE_CHAIN::Split( const VECTOR2I& aP )
     int ii = -1;
     int min_dist = 2;
 
-    ii = Find( aP );
-
-    if( ii >= 0 )
-        return ii;
+    int found_index = Find( aP );
 
     for( int s = 0; s < SegmentCount(); s++ )
     {
@@ -165,9 +185,15 @@ int SHAPE_LINE_CHAIN::Split( const VECTOR2I& aP )
         if( dist < min_dist && seg.A != aP && seg.B != aP )
         {
             min_dist = dist;
-            ii = s;
+            if( found_index < 0 )
+                ii = s;
+            else if( s < found_index )
+                ii = s;
         }
     }
+
+    if( ii < 0 )
+        ii = found_index;
 
     if( ii >= 0 )
     {
@@ -323,37 +349,99 @@ int SHAPE_LINE_CHAIN::PathLength( const VECTOR2I& aP ) const
 }
 
 
-bool SHAPE_LINE_CHAIN::PointInside( const VECTOR2I& aP ) const
+bool SHAPE_LINE_CHAIN::PointInside( const VECTOR2I& aPt, int aAccuracy, bool aUseBBoxCache ) const
 {
-    if( !m_closed || SegmentCount() < 3 )
+    /*
+     * Don't check the bounding box unless it's cached.  Building it is about the same speed as
+     * the rigorous test below and so just slows things down by doing potentially two tests.
+     */
+    if( aUseBBoxCache && !m_bbox.Contains( aPt ) )
         return false;
 
-    int cur = CSegment( 0 ).Side( aP );
-
-    if( cur == 0 )
+    if( !m_closed || PointCount() < 3 )
         return false;
 
-    for( int i = 1; i < SegmentCount(); i++ )
+    bool inside = false;
+
+    /**
+     * To check for interior points, we draw a line in the positive x direction from
+     * the point.  If it intersects an even number of segments, the point is outside the
+     * line chain (it had to first enter and then exit).  Otherwise, it is inside the chain.
+     *
+     * Note: slope might be denormal here in the case of a horizontal line but we require our
+     * y to move from above to below the point (or vice versa)
+     *
+     * Note: we open-code CPoint() here so that we don't end up calculating the size of the
+     * vector number-of-points times.  This has a non-trivial impact on zone fill times.
+     */
+    const std::vector<VECTOR2I>& points = CPoints();
+    int pointCount = points.size();
+
+    for( int i = 0; i < pointCount; )
     {
-        const SEG s = CSegment( i );
+        const auto p1 = points[ i++ ];
+        const auto p2 = points[ i == pointCount ? 0 : i ];
+        const auto diff = p2 - p1;
 
-        if( aP == s.A || aP == s.B ) // edge does not belong to the interior!
-            return false;
+        if( diff.y != 0 )
+        {
+            const int d = rescale( diff.x, ( aPt.y - p1.y ), diff.y );
 
-        if( s.Side( aP ) != cur )
-            return false;
+            if( ( ( p1.y > aPt.y ) != ( p2.y > aPt.y ) ) && ( aPt.x - p1.x < d ) )
+                inside = !inside;
+        }
     }
 
-    return true;
+    // If accuracy is 0 then we need to make sure the point isn't actually on the edge.
+    // If accuracy is 1 then we don't really care whether or not the point is *exactly* on the
+    // edge, so we skip edge processing for performance.
+    // If accuracy is > 1, then we use "OnEdge(accuracy-1)" as a proxy for "Inside(accuracy)".
+    if( aAccuracy == 0 )
+        return inside && !PointOnEdge( aPt );
+    else if( aAccuracy == 1 )
+        return inside;
+    else
+        return inside || PointOnEdge( aPt, aAccuracy - 1 );
 }
 
 
-bool SHAPE_LINE_CHAIN::PointOnEdge( const VECTOR2I& aP ) const
+bool SHAPE_LINE_CHAIN::PointOnEdge( const VECTOR2I& aPt, int aAccuracy ) const
 {
-	if( !PointCount() )
-		return false;
+	return EdgeContainingPoint( aPt, aAccuracy ) >= 0;
+}
+
+int SHAPE_LINE_CHAIN::EdgeContainingPoint( const VECTOR2I& aPt, int aAccuracy ) const
+{
+    if( !PointCount() )
+		return -1;
 
 	else if( PointCount() == 1 )
+    {
+	    VECTOR2I dist = m_points[0] - aPt;
+	    return ( hypot( dist.x, dist.y ) <= aAccuracy + 1 ) ? 0 : -1;
+    }
+
+    for( int i = 0; i < SegmentCount(); i++ )
+    {
+        const SEG s = CSegment( i );
+
+        if( s.A == aPt || s.B == aPt )
+            return i;
+
+        if( s.Distance( aPt ) <= aAccuracy + 1 )
+            return i;
+    }
+
+    return -1;
+}
+
+
+bool SHAPE_LINE_CHAIN::CheckClearance( const VECTOR2I& aP, const int aDist) const
+{
+    if( !PointCount() )
+        return false;
+
+    else if( PointCount() == 1 )
         return m_points[0] == aP;
 
     for( int i = 0; i < SegmentCount(); i++ )
@@ -363,7 +451,7 @@ bool SHAPE_LINE_CHAIN::PointOnEdge( const VECTOR2I& aP ) const
         if( s.A == aP || s.B == aP )
             return true;
 
-        if( s.Distance( aP ) <= 1 )
+        if( s.Distance( aP ) <= aDist )
             return true;
     }
 
@@ -371,7 +459,7 @@ bool SHAPE_LINE_CHAIN::PointOnEdge( const VECTOR2I& aP ) const
 }
 
 
-const optional<SHAPE_LINE_CHAIN::INTERSECTION> SHAPE_LINE_CHAIN::SelfIntersecting() const
+const OPT<SHAPE_LINE_CHAIN::INTERSECTION> SHAPE_LINE_CHAIN::SelfIntersecting() const
 {
     for( int s1 = 0; s1 < SegmentCount(); s1++ )
     {
@@ -387,7 +475,11 @@ const optional<SHAPE_LINE_CHAIN::INTERSECTION> SHAPE_LINE_CHAIN::SelfIntersectin
                 is.p = s2a;
                 return is;
             }
-            else if( CSegment( s1 ).Contains( s2b ) )
+            else if( CSegment( s1 ).Contains( s2b ) &&
+                     // for closed polylines, the ending point of the
+                     // last segment == starting point of the first segment
+                     // this is a normal case, not self intersecting case
+                     !( IsClosed() && s1 == 0 && s2 == SegmentCount()-1 ) )
             {
                 INTERSECTION is;
                 is.our = CSegment( s1 );
@@ -411,7 +503,7 @@ const optional<SHAPE_LINE_CHAIN::INTERSECTION> SHAPE_LINE_CHAIN::SelfIntersectin
         }
     }
 
-    return optional<INTERSECTION>();
+    return OPT<SHAPE_LINE_CHAIN::INTERSECTION>();
 }
 
 
@@ -426,7 +518,7 @@ SHAPE_LINE_CHAIN& SHAPE_LINE_CHAIN::Simplify()
     else if( PointCount() == 2 )
     {
         if( m_points[0] == m_points[1] )
-            m_points.erase( m_points.end() );
+            m_points.pop_back();
 
         return *this;
     }
@@ -504,6 +596,26 @@ const VECTOR2I SHAPE_LINE_CHAIN::NearestPoint( const VECTOR2I& aP ) const
 }
 
 
+const VECTOR2I SHAPE_LINE_CHAIN::NearestPoint( const SEG& aSeg, int& dist ) const
+{
+    int nearest = 0;
+
+    dist = INT_MAX;
+    for( int i = 0; i < PointCount(); i++ )
+    {
+        int d = aSeg.LineDistance( CPoint( i ) );
+
+        if( d < dist )
+        {
+            dist = d;
+            nearest = i;
+        }
+    }
+
+    return CPoint( nearest );
+}
+
+
 const std::string SHAPE_LINE_CHAIN::Format() const
 {
     std::stringstream ss;
@@ -519,26 +631,96 @@ const std::string SHAPE_LINE_CHAIN::Format() const
 
 bool SHAPE_LINE_CHAIN::CompareGeometry ( const SHAPE_LINE_CHAIN & aOther ) const
 {
-    SHAPE_LINE_CHAIN a(*this), b(aOther);
+    SHAPE_LINE_CHAIN a(*this), b( aOther );
     a.Simplify();
     b.Simplify();
 
-    if(a.m_points.size() != b.m_points.size())
+    if( a.m_points.size() != b.m_points.size() )
         return false;
 
-    for(int i = 0; i < a.PointCount(); i++)
-        if(a.CPoint(i) != b.CPoint(i))
+    for( int i = 0; i < a.PointCount(); i++)
+        if( a.CPoint( i ) != b.CPoint( i ) )
             return false;
     return true;
 }
 
+
 bool SHAPE_LINE_CHAIN::Intersects( const SHAPE_LINE_CHAIN& aChain ) const
 {
     INTERSECTIONS dummy;
-    return Intersect(aChain, dummy) != 0;
+    return Intersect( aChain, dummy ) != 0;
 }
+
 
 SHAPE* SHAPE_LINE_CHAIN::Clone() const
 {
     return new SHAPE_LINE_CHAIN( *this );
+}
+
+bool SHAPE_LINE_CHAIN::Parse( std::stringstream& aStream )
+{
+    int n_pts;
+
+    m_points.clear();
+    aStream >> n_pts;
+
+    // Rough sanity check, just make sure the loop bounds aren't absolutely outlandish
+    if( n_pts < 0 || n_pts > int( aStream.str().size() ) )
+        return false;
+
+    aStream >> m_closed;
+
+    for( int i = 0; i < n_pts; i++ )
+    {
+        int x, y;
+        aStream >> x;
+        aStream >> y;
+        m_points.push_back( VECTOR2I( x, y ) );
+    }
+
+    return true;
+}
+
+
+const VECTOR2I SHAPE_LINE_CHAIN::PointAlong( int aPathLength ) const
+{
+    int total = 0;
+
+    if( aPathLength == 0 )
+        return CPoint( 0 );
+
+    for( int i = 0; i < SegmentCount(); i++ )
+    {
+        const SEG& s = CSegment( i );
+        int l = s.Length();
+
+        if( total + l >= aPathLength )
+        {
+            VECTOR2I d( s.B - s.A );
+            return s.A + d.Resize( aPathLength - total );
+        }
+
+        total += l;
+    }
+
+    return CPoint( -1 );
+}
+
+double SHAPE_LINE_CHAIN::Area() const
+{
+    // see https://www.mathopenref.com/coordpolygonarea2.html
+
+    if( !m_closed )
+        return 0.0;
+
+    double area = 0.0;
+    int size = m_points.size();
+
+    for( int i = 0, j = size - 1; i < size; ++i )
+    {
+        area += ( (double) m_points[j].x + m_points[i].x ) * ( (double) m_points[j].y - m_points[i].y );
+        j = i;
+    }
+
+    return -area * 0.5;
 }

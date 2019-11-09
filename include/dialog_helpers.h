@@ -33,9 +33,9 @@
 
 
 #include <common.h>             // EDA_UNITS_T
-#include <dialog_shim.h>
 #include <../common/dialogs/dialog_list_selector_base.h>
 
+void ConvertMarkdown2Html( const wxString& aMarkdownInput, wxString& aHtmlOutput );
 
 class EDA_DRAW_FRAME;
 
@@ -64,6 +64,7 @@ public:
      * @param aCallBackFunction = callback function to display comments
      * @param aCallBackFunctionData = a pointer to pass to @a aCallBackFunction
      * @param aSortList = true to sort list items by alphabetic order.
+     * @param aShowHeaders = true if the list should have headers.
      */
     EDA_LIST_DIALOG( EDA_DRAW_FRAME* aParent, const wxString& aTitle,
                      const wxArrayString& aItemHeaders,
@@ -71,9 +72,13 @@ public:
                      const wxString& aRefText,
                      void (* aCallBackFunction)( wxString& text, void* data ) = NULL,
                      void* aCallBackFunctionData = NULL,
-                     bool aSortList = false );
+                     bool aSortList = false, bool aShowHeaders = true );
 
     // ~EDA_LIST_DIALOG() {}
+
+    void     SetFilterHint( const wxString& aHint );
+    void     SetListLabel( const wxString& aLabel );
+    void     SetOKLabel( const wxString& aLabel );
 
     void     Append( const wxArrayString& aItemStr );
     void     InsertItems( const std::vector<wxArrayString>& aItemList, int aPosition = 0 );
@@ -88,58 +93,17 @@ public:
     wxString GetTextSelection( int aColumn = 0 );
 
 private:
-    void     onClose( wxCloseEvent& event );
-    void     onCancelClick( wxCommandEvent& event );
-    void     onOkClick( wxCommandEvent& event );
-    void     onListItemSelected( wxListEvent& event );
-    void     onListItemActivated( wxListEvent& event );
-    void     textChangeInFilterBox(wxCommandEvent& event);
-    void     sortList();
+    void     onListItemSelected( wxListEvent& event ) override;
+    void     onListItemActivated( wxListEvent& event ) override;
+    void     textChangeInFilterBox(wxCommandEvent& event) override;
 
+    void    initDialog( const wxArrayString& aItemHeaders,
+                        const wxString& aSelection);
+    void    sortList();
     bool    m_sortList;
     void    (* m_cb_func)( wxString& text, void* data );
     void*   m_cb_data;
     const   std::vector<wxArrayString>* m_itemsListCp;
-};
-
-
-/**
- * Class EDA_GRAPHIC_TEXT_CTRL
- * is a custom text edit control to edit/enter Kicad dimensions ( INCHES or MM )
- */
-class EDA_GRAPHIC_TEXT_CTRL
-{
-public:
-    EDA_UNITS_T   m_UserUnit;
-
-    wxTextCtrl*   m_FrameText;
-    wxTextCtrl*   m_FrameSize;
-private:
-    wxStaticText* m_Title;
-
-public:
-    EDA_GRAPHIC_TEXT_CTRL( wxWindow* parent, const wxString& Title,
-                           const wxString& TextToEdit, int textsize,
-                           EDA_UNITS_T user_unit, wxBoxSizer* BoxSizer, int framelen = 200 );
-
-    ~EDA_GRAPHIC_TEXT_CTRL();
-
-    const wxString  GetText() const;
-    int             GetTextSize();
-    void            Enable( bool state );
-    void            SetTitle( const wxString& title );
-
-    void            SetFocus() { m_FrameText->SetFocus(); }
-    void            SetValue( const wxString& value );
-    void            SetValue( int value );
-
-    /**
-     * Function FormatSize
-     * formats a string containing the size in the desired units.
-     */
-    static wxString FormatSize( EDA_UNITS_T user_unit, int textSize );
-
-    static int      ParseSize( const wxString& sizeText, EDA_UNITS_T user_unit );
 };
 
 
@@ -151,10 +115,10 @@ class EDA_POSITION_CTRL
 {
 public:
     EDA_UNITS_T   m_UserUnit;
-    wxPoint       m_Pos_To_Edit;
 
     wxTextCtrl*   m_FramePosX;
     wxTextCtrl*   m_FramePosY;
+
 private:
     wxStaticText* m_TextX, * m_TextY;
 
@@ -185,32 +149,5 @@ public:
 };
 
 
-/****************************************************************/
-/* Class to edit/enter a value ( INCHES or MM ) in dialog boxes */
-/****************************************************************/
-class EDA_VALUE_CTRL
-{
-public:
-    EDA_UNITS_T   m_UserUnit;
-    int           m_Value;
-    wxTextCtrl*   m_ValueCtrl;
-private:
-    wxStaticText* m_Text;
-
-public:
-    EDA_VALUE_CTRL( wxWindow* parent, const wxString& title, int value,
-                    EDA_UNITS_T user_unit, wxBoxSizer* BoxSizer );
-
-    ~EDA_VALUE_CTRL();
-
-    int  GetValue();
-    void SetValue( int new_value );
-    void Enable( bool enbl );
-
-    void SetToolTip( const wxString& text )
-    {
-        m_ValueCtrl->SetToolTip( text );
-    }
-};
 
 #endif    // DIALOG_HELPERS_H_

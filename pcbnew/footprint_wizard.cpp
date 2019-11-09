@@ -1,269 +1,120 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2013 NBEE Embedded Systems SL, Miguel Angel Ajo <miguelangel@ajo.es>
+ * Copyright (C) 2013 KiCad Developers, see AUTHORS.txt for contributors.
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
+
 /**
- * @file footprint_wizard.cpp
+ * @file  footprint_wizard.cpp
+ * @brief Class FOOTPRINT_WIZARD and FOOTPRINT_WIZARD_LIST
  */
 
-#include <fctsys.h>
-#include <gr_basic.h>
-#include <class_drawpanel.h>
-#include <wxPcbStruct.h>
-#include <dialog_helpers.h>
-#include <3d_viewer.h>
-
-#include <class_board.h>
-#include <class_module.h>
-
-#include <pcbnew.h>
-#include <pcbnew_id.h>
-#include "footprint_wizard_frame.h"
-#include <wildcards_and_files_ext.h>
-#include <dialogs/dialog_footprint_wizard_list.h>
-#include <base_units.h>
-
-#define NEXT_PART       1
-#define NEW_PART        0
-#define PREVIOUS_PART   -1
+#include "footprint_wizard.h"
 
 
-void FOOTPRINT_WIZARD_FRAME::Process_Special_Functions( wxCommandEvent& event )
+FOOTPRINT_WIZARD::~FOOTPRINT_WIZARD()
 {
-    wxString    msg;
-    int         page;
+}
 
-    switch( event.GetId() )
+
+void FOOTPRINT_WIZARD::register_wizard()
+{
+    FOOTPRINT_WIZARD_LIST::register_wizard( this );
+}
+
+
+std::vector<FOOTPRINT_WIZARD*> FOOTPRINT_WIZARD_LIST::m_FootprintWizards;
+
+FOOTPRINT_WIZARD* FOOTPRINT_WIZARD_LIST::GetWizard( int aIndex )
+{
+    return m_FootprintWizards[aIndex];
+}
+
+
+FOOTPRINT_WIZARD* FOOTPRINT_WIZARD_LIST::GetWizard( const wxString& aName )
+{
+    int max = GetWizardsCount();
+
+    for( int i = 0; i<max; i++ )
     {
-    case ID_FOOTPRINT_WIZARD_NEXT:
-        m_pageList->SetSelection( m_pageList->GetSelection() + 1, true );
-        ClickOnPageList( event );
-        break;
+        FOOTPRINT_WIZARD*   wizard = GetWizard( i );
 
-    case ID_FOOTPRINT_WIZARD_PREVIOUS:
-        page = m_pageList->GetSelection() - 1;
+        wxString            name = wizard->GetName();
 
-        if( page < 0 )
-            page = 0;
-
-        m_pageList->SetSelection( page, true );
-        ClickOnPageList( event );
-        break;
-
-    default:
-        msg << wxT( "FOOTPRINT_WIZARD_FRAME::Process_Special_Functions error: id = " )
-            << event.GetId();
-        wxMessageBox( msg );
-        break;
-    }
-}
-
-
-/* Function OnLeftClick
- * Captures a left click event in the dialog
- *
- */
-void FOOTPRINT_WIZARD_FRAME::OnLeftClick( wxDC* DC, const wxPoint& MousePos )
-{
-}
-
-
-/* Function OnRightClick
- * Captures a right click event in the dialog
- *
- */
-bool FOOTPRINT_WIZARD_FRAME::OnRightClick( const wxPoint& MousePos, wxMenu* PopMenu )
-{
-    return true;
-}
-
-
-/* Displays the name of the current opened library in the caption */
-void FOOTPRINT_WIZARD_FRAME::DisplayWizardInfos()
-{
-    wxString msg;
-
-    msg = _( "Footprint Wizard" );
-    msg << wxT( " [" );
-
-    if( !m_wizardName.IsEmpty() )
-        msg << m_wizardName;
-    else
-        msg += _( "no wizard selected" );
-
-    msg << wxT( "]" );
-
-    SetTitle( msg );
-}
-
-
-void FOOTPRINT_WIZARD_FRAME::ReloadFootprint()
-{
-    FOOTPRINT_WIZARD* footprintWizard = GetMyWizard();
-
-    if( !footprintWizard )
-        return;
-
-    SetCurItem( NULL );
-    // Delete the current footprint
-    GetBoard()->m_Modules.DeleteAll();
-
-    // Creates the module
-    MODULE* module = footprintWizard->GetModule();
-
-    if( module )
-    {
-        //  Add the object to board
-        module->SetParent( (EDA_ITEM*) GetBoard() );
-        GetBoard()->m_Modules.Append( module );
-        module->SetPosition( wxPoint( 0, 0 ) );
-    }
-    else
-    {
-        DBG(printf( "footprintWizard->GetModule() returns NULL\n" );)
-    }
-
-    m_canvas->Refresh();
-}
-
-
-FOOTPRINT_WIZARD* FOOTPRINT_WIZARD_FRAME::GetMyWizard()
-{
-    if( m_wizardName.Length()==0 )
-        return NULL;
-
-    FOOTPRINT_WIZARD* footprintWizard = FOOTPRINT_WIZARDS::GetWizard( m_wizardName );
-
-    if( !footprintWizard )
-    {
-        wxMessageBox( _( "Couldn't reload footprint wizard" ) );
-        return NULL;
-    }
-
-    return footprintWizard;
-}
-
-
-MODULE* FOOTPRINT_WIZARD_FRAME::GetBuiltFootprint()
-{
-    FOOTPRINT_WIZARD* footprintWizard = FOOTPRINT_WIZARDS::GetWizard( m_wizardName );
-
-    if( footprintWizard && m_modal_ret_val )
-    {
-        return footprintWizard->GetModule();
+        if( name.Cmp( aName )==0 )
+            return wizard;
     }
 
     return NULL;
 }
 
 
-void FOOTPRINT_WIZARD_FRAME::SelectFootprintWizard()
+int FOOTPRINT_WIZARD_LIST::GetWizardsCount()
 {
-    DIALOG_FOOTPRINT_WIZARD_LIST* selectWizard =
-        new DIALOG_FOOTPRINT_WIZARD_LIST( this );
-
-    if( selectWizard->ShowModal() != wxID_OK )
-        return;
-
-    FOOTPRINT_WIZARD* footprintWizard = selectWizard->GetWizard();
-
-    if( footprintWizard )
-    {
-        m_wizardName = footprintWizard->GetName();
-        m_wizardDescription = footprintWizard->GetDescription();
-    }
-    else
-    {
-        m_wizardName = wxT( "" );
-        m_wizardDescription = wxT( "" );
-    }
-
-    ReloadFootprint();
-    Zoom_Automatique( false );
-    DisplayWizardInfos();
-    ReCreatePageList();
-    ReCreateParameterList();
+    return m_FootprintWizards.size();
 }
 
 
-void FOOTPRINT_WIZARD_FRAME::SelectCurrentWizard( wxCommandEvent& event )
+void FOOTPRINT_WIZARD_LIST::register_wizard( FOOTPRINT_WIZARD* aWizard )
 {
-    SelectFootprintWizard();
-}
-
-
-/**
- * Function SelectCurrentFootprint
- * Selects the current footprint name and display it
- */
-void FOOTPRINT_WIZARD_FRAME::ParametersUpdated( wxGridEvent& event )
-{
-    int page = m_pageList->GetSelection();
-
-    FOOTPRINT_WIZARD* footprintWizard = GetMyWizard();
-
-    if( !footprintWizard )
-        return;
-
-    if( page<0 )
-        return;
-
-    int             n = m_parameterGrid->GetNumberRows();
-    wxArrayString   arr;
-    wxArrayString   ptList = footprintWizard->GetParameterTypes( page );
-
-    for( int i = 0; i<n; i++ )
+    // Search for this entry do not register twice this wizard):
+    for( int ii = 0; ii < GetWizardsCount(); ii++ )
     {
-        wxString value = m_parameterGrid->GetCellValue( i, 1 );
+        if( aWizard == GetWizard( ii ) )    // Already registered
+            return;
+    }
 
-        // if this parameter is expected to be an internal
-        // unit convert it back from the user format
-        if( ptList[i]==wxT( "IU" ) )
+    // Search for a wizard with the same name, and remove it if found
+    for( int ii = 0; ii < GetWizardsCount(); ii++ )
+    {
+        FOOTPRINT_WIZARD* wizard = GetWizard( ii );
+
+        if( wizard->GetName() == aWizard->GetName() )
         {
-            LOCALE_IO   toggle;
-            double      dValue;
-
-            value.ToDouble( &dValue );
-
-            // convert from mils to inches where it's needed
-            if( g_UserUnit==INCHES )
-                dValue = dValue / 1000.0;
-
-            dValue = From_User_Unit( g_UserUnit, dValue );
-            value.Printf( wxT( "%f" ), dValue );
+            m_FootprintWizards.erase( m_FootprintWizards.begin() + ii );
+            delete wizard;
+            break;
         }
-
-        // If our locale is set to use , for decimal point, just change it
-        // to be scripting compatible
-        arr.Add( value );
     }
 
-    wxString res = footprintWizard->SetParameterValues( page, arr );
-
-    ReloadFootprint();
-    DisplayWizardInfos();
+    m_FootprintWizards.push_back( aWizard );
 }
 
 
-/**
- * Function RedrawActiveWindow
- * Display the current selected component.
- * If the component is an alias, the ROOT component is displayed
- *
- */
-void FOOTPRINT_WIZARD_FRAME::RedrawActiveWindow( wxDC* DC, bool EraseBg )
+bool FOOTPRINT_WIZARD_LIST::deregister_object( void* aObject )
 {
-    if( !GetBoard() )
-        return;
+    int max = GetWizardsCount();
 
-    m_canvas->DrawBackGround( DC );
-    GetBoard()->Draw( m_canvas, DC, GR_COPY );
+    for( int ii = 0; ii < max; ii++ )
+    {
+        FOOTPRINT_WIZARD* wizard = GetWizard( ii );
 
-    MODULE* module = GetBoard()->m_Modules;
+        if( wizard->GetObject() == aObject )
+        {
+            m_FootprintWizards.erase( m_FootprintWizards.begin() + ii );
+            delete wizard;
+            return true;
+        }
+    }
 
-    if( module )
-        SetMsgPanel( module );
-
-    m_canvas->DrawCrossHair( DC );
-
-    ClearMsgPanel();
-
-    if( module )
-        SetMsgPanel( module );
+    return false;
 }

@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2013 CERN
  * @author Tomasz Wlostowski <tomasz.wlostowski@cern.ch>
+ * Copyright (C) 2016 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -29,7 +30,9 @@
 #include <base_struct.h>    // for KICAD_T
 
 #include <tool/tool_event.h>
-#include <tool/delegate.h>
+#include <tool/tool_settings.h>
+
+#include <functional>
 
 class EDA_ITEM;
 class TOOL_MANAGER;
@@ -38,7 +41,7 @@ namespace KIGFX
 {
 class VIEW;
 class VIEW_CONTROLS;
-};
+}
 
 enum TOOL_TYPE
 {
@@ -51,7 +54,9 @@ enum TOOL_TYPE
 
 /// Unique identifier for tools
 typedef int TOOL_ID;
-typedef DELEGATE<int, TOOL_EVENT&> TOOL_STATE_FUNC;
+
+using TOOL_STATE_FUNC = std::function<int(const TOOL_EVENT&)>;
+
 
 /**
  * Class TOOL_BASE
@@ -74,7 +79,7 @@ public:
     enum RESET_REASON
     {
         RUN,                ///< Tool is invoked after being inactive
-        MODEL_RELOAD,       ///< Model changes
+        MODEL_RELOAD,       ///< Model changes (required full reload)
         GAL_SWITCH          ///< Rendering engine changes
     };
 
@@ -140,8 +145,13 @@ public:
         return m_toolMgr;
     }
 
+    TOOL_SETTINGS& GetSettings();
+
+    bool IsToolActive() const;
+    
 protected:
     friend class TOOL_MANAGER;
+    friend class TOOL_SETTINGS;
 
     /**
      * Function attachManager()
@@ -176,6 +186,9 @@ protected:
     template <typename T>
     T* getEditFrame() const
     {
+#if !defined( QA_TEST )   // Dynamic casts give the linker a siezure in the test framework
+        wxASSERT( dynamic_cast<T*>( getEditFrameInt() ) );
+#endif
         return static_cast<T*>( getEditFrameInt() );
     }
 
@@ -188,7 +201,9 @@ protected:
     T* getModel() const
     {
         EDA_ITEM* m = getModelInt();
-
+#if !defined( QA_TEST )   // Dynamic casts give the linker a siezure in the test framework
+        wxASSERT( dynamic_cast<T*>( m ) );
+#endif
         return static_cast<T*>( m );
     }
 
@@ -202,12 +217,13 @@ protected:
     ///> (eg. pcbnew.InteractiveSelection).
     std::string m_toolName;
     TOOL_MANAGER* m_toolMgr;
+    TOOL_SETTINGS m_toolSettings;
 
 private:
     // hide the implementation to avoid spreading half of
     // kicad and wxWidgets headers to the tools that may not need them at all!
     EDA_ITEM* getModelInt() const;
-    wxWindow* getEditFrameInt() const;
+    EDA_BASE_FRAME* getEditFrameInt() const;
 };
 
 #endif

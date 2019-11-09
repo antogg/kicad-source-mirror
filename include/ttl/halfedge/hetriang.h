@@ -4,21 +4,21 @@
  * Copyright (C) 2013 CERN
  * @author Maciej Suminski <maciej.suminski@cern.ch>
  *
- * Contact information: E-mail: tor.dokken@sintef.no                      
- * SINTEF ICT, Department of Applied Mathematics,                         
- * P.O. Box 124 Blindern,                                                 
- * 0314 Oslo, Norway.                                                     
+ * Contact information: E-mail: tor.dokken@sintef.no
+ * SINTEF ICT, Department of Applied Mathematics,
+ * P.O. Box 124 Blindern,
+ * 0314 Oslo, Norway.
  *
  * This file is part of TTL.
  *
  * TTL is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
  * published by the Free Software Foundation, either version 3 of the
- * License, or (at your option) any later version. 
+ * License, or (at your option) any later version.
  *
- * TTL is distributed in the hope that it will be useful,        
- * but WITHOUT ANY WARRANTY; without even the implied warranty of         
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the          
+ * TTL is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU Affero General Public License for more details.
  *
  * You should have received a copy of the GNU Affero General Public
@@ -36,7 +36,7 @@
  * disclosing the source code of your own applications.
  *
  * This file may be used in accordance with the terms contained in a
- * written agreement between you and SINTEF ICT. 
+ * written agreement between you and SINTEF ICT.
  */
 
 #ifndef _HE_TRIANG_H_
@@ -46,17 +46,22 @@
 #define TTL_USE_NODE_FLAG // Each node gets a flag (can be set to true or false)
 
 #include <list>
+#include <unordered_set>
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include <ttl/ttl_util.h>
-#include <boost/shared_ptr.hpp>
-#include <boost/weak_ptr.hpp>
+#include <memory>
+#include <layers_id_colors_and_visibility.h>
+#include <math/vector2d.h>
+
+class BOARD_CONNECTED_ITEM;
+class CN_CLUSTER;
 
 namespace ttl
 {
     class TRIANGULATION_HELPER;
-};
+}
 
 /**
  * The half-edge data structure
@@ -66,9 +71,9 @@ namespace hed
 // Helper typedefs
 class NODE;
 class EDGE;
-typedef boost::shared_ptr<NODE> NODE_PTR;
-typedef boost::shared_ptr<EDGE> EDGE_PTR;
-typedef boost::weak_ptr<EDGE> EDGE_WEAK_PTR;
+typedef std::shared_ptr<NODE> NODE_PTR;
+typedef std::shared_ptr<EDGE> EDGE_PTR;
+typedef std::weak_ptr<EDGE> EDGE_WEAK_PTR;
 typedef std::vector<NODE_PTR> NODES_CONTAINER;
 
 /**
@@ -98,42 +103,54 @@ protected:
 #endif
 
     /// Node coordinates
-    int m_x, m_y;
-
-    /// Reference count
-    unsigned int m_refCount;
+    const int m_x, m_y;
 
 public:
     /// Constructor
-    NODE( int aX = 0, int aY = 0 ) :
+    NODE( int aX = 0, int aY = 0, std::shared_ptr<CN_CLUSTER> aCluster = nullptr ) :
 #ifdef TTL_USE_NODE_FLAG
         m_flag( false ),
 #endif
 #ifdef TTL_USE_NODE_ID
         m_id( id_count++ ),
 #endif
-        m_x( aX ), m_y( aY ), m_refCount( 0 )
+        m_x( aX ), m_y( aY )
     {
     }
 
     /// Destructor
-    ~NODE() {}
+    ~NODE() {
+
+    }
+
+    const VECTOR2D Pos() const { return VECTOR2D( m_x, m_y ); }
 
     /// Returns the x-coordinate
-    int GetX() const
+    inline int GetX() const
     {
         return m_x;
     }
 
     /// Returns the y-coordinate
-    int GetY() const
+    inline int GetY() const
     {
         return m_y;
     }
 
+    inline VECTOR2I GetPos() const
+    {
+        return VECTOR2I( m_x, m_y );
+    }
+
 #ifdef TTL_USE_NODE_ID
     /// Returns the id (TTL_USE_NODE_ID must be defined)
-    int Id() const
+
+    inline void SetId( int aId )
+    {
+        m_id = aId;
+    }
+
+    inline int Id() const
     {
         return m_id;
     }
@@ -141,35 +158,20 @@ public:
 
 #ifdef TTL_USE_NODE_FLAG
     /// Sets the flag (TTL_USE_NODE_FLAG must be defined)
-    void SetFlag( bool aFlag )
+    inline void SetFlag( bool aFlag )
     {
         m_flag = aFlag;
     }
 
     /// Returns the flag (TTL_USE_NODE_FLAG must be defined)
-    const bool& GetFlag() const
+    inline const bool& GetFlag() const
     {
         return m_flag;
     }
 #endif
-
-    void IncRefCount()
-    {
-        m_refCount++;
-    }
-
-    void DecRefCount()
-    {
-        m_refCount--;
-    }
-
-    unsigned int GetRefCount() const
-    {
-        return m_refCount;
-    }
 };
 
-  
+
 /**
  * \class EDGE
  * \brief \b %Edge class in the in the half-edge data structure.
@@ -178,64 +180,69 @@ class EDGE
 {
 public:
     /// Constructor
-    EDGE() : m_weight( 0 ), m_isLeadingEdge( false )
+    EDGE() : m_isLeadingEdge( false )
     {
     }
 
     /// Destructor
     virtual ~EDGE()
     {
+
     }
 
     /// Sets the source node
-    void SetSourceNode( const NODE_PTR& aNode )
+    inline void SetSourceNode( const NODE_PTR& aNode )
     {
         m_sourceNode = aNode;
     }
 
     /// Sets the next edge in face
-    void SetNextEdgeInFace( const EDGE_PTR& aEdge )
+    inline void SetNextEdgeInFace( const EDGE_PTR& aEdge )
     {
         m_nextEdgeInFace = aEdge;
     }
 
     /// Sets the twin edge
-    void SetTwinEdge( const EDGE_PTR& aEdge )
+    inline void SetTwinEdge( const EDGE_PTR& aEdge )
     {
         m_twinEdge = aEdge;
     }
 
     /// Sets the edge as a leading edge
-    void SetAsLeadingEdge( bool aLeading = true )
+    inline void SetAsLeadingEdge( bool aLeading = true )
     {
         m_isLeadingEdge = aLeading;
     }
 
     /// Checks if an edge is a leading edge
-    bool IsLeadingEdge() const
+    inline bool IsLeadingEdge() const
     {
         return m_isLeadingEdge;
     }
 
     /// Returns the twin edge
-    EDGE_PTR GetTwinEdge() const
+    inline EDGE_PTR GetTwinEdge() const
     {
+        if( m_twinEdge.expired() )
+            return nullptr;
+
         return m_twinEdge.lock();
     }
 
-    void ClearTwinEdge()
+    inline void ClearTwinEdge()
     {
         m_twinEdge.reset();
     }
 
     /// Returns the next edge in face
-    const EDGE_PTR& GetNextEdgeInFace() const
+    inline const EDGE_PTR& GetNextEdgeInFace() const
     {
+        assert ( m_nextEdgeInFace );
         return m_nextEdgeInFace;
     }
 
     /// Retuns the source node
-    const NODE_PTR& GetSourceNode() const
+    inline const NODE_PTR& GetSourceNode() const
     {
         return m_sourceNode;
     }
@@ -244,16 +251,6 @@ public:
     virtual const NODE_PTR& GetTargetNode() const
     {
         return m_nextEdgeInFace->GetSourceNode();
-    }
-
-    void SetWeight( unsigned int weight )
-    {
-        m_weight = weight;
-    }
-
-    unsigned int GetWeight() const
-    {
-        return m_weight;
     }
 
     void Clear()
@@ -272,44 +269,7 @@ protected:
     NODE_PTR        m_sourceNode;
     EDGE_WEAK_PTR   m_twinEdge;
     EDGE_PTR        m_nextEdgeInFace;
-    unsigned int    m_weight;
     bool            m_isLeadingEdge;
-};
-
-
- /**
-  * \class EDGE_MST
-  * \brief \b Specialization of %EDGE class to be used for Minimum Spanning Tree algorithm.
-  */
-class EDGE_MST : public EDGE
-{
-private:
-    NODE_PTR m_target;
-
-public:
-    EDGE_MST( const NODE_PTR& aSource, const NODE_PTR& aTarget, unsigned int aWeight = 0 ) :
-        m_target( aTarget )
-    {
-        m_sourceNode = aSource;
-        m_weight = aWeight;
-    }
-
-    EDGE_MST( const EDGE& edge )
-    {
-        m_sourceNode = edge.GetSourceNode();
-        m_target = edge.GetTargetNode();
-        m_weight = edge.GetWeight();
-    }
-
-    ~EDGE_MST()
-    {
-    }
-
-    /// @copydoc Edge::setSourceNode()
-    virtual const NODE_PTR& GetTargetNode() const
-    {
-        return m_target;
-    }
 };
 
 class DART; // Forward declaration (class in this namespace)
@@ -410,7 +370,7 @@ public:
     /// Swaps the edge associated with diagonal
     void SwapEdge( EDGE_PTR& aDiagonal );
 
-    /// Splits the triangle associated with edge into three new triangles joining at point 
+    /// Splits the triangle associated with edge into three new triangles joining at point
     EDGE_PTR SplitTriangle( EDGE_PTR& aEdge, const NODE_PTR& aPoint );
 
     // Functions required by TTL for removing nodes in a Delaunay triangulation
@@ -437,10 +397,10 @@ public:
     }
 
     /// Returns a list of half-edges (one half-edge for each arc)
-    std::list<EDGE_PTR>* GetEdges( bool aSkipBoundaryEdges = false ) const;
+    void GetEdges( std::list<EDGE_PTR>& aEdges, bool aSkipBoundaryEdges = false ) const;
 
 #ifdef TTL_USE_NODE_FLAG
-    /// Sets flag in all the nodes  
+    /// Sets flag in all the nodes
     void FlagNodes( bool aFlag ) const;
 
     /// Returns a list of nodes. This function requires TTL_USE_NODE_FLAG to be defined. \see Node.
@@ -466,6 +426,6 @@ public:
 
     friend class ttl::TRIANGULATION_HELPER;
 };
-}; // End of hed namespace
+} // End of hed namespace
 
 #endif

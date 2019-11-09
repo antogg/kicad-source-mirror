@@ -1,10 +1,10 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2007-2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2008-2013 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 1992-2013 KiCad Developers, see AUTHORS.txt for contributors.
+ * Copyright (C) 2014-2019 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2007-2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 1992-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -37,29 +37,49 @@
 #include <wx/wx.h>
 #include <wx/confbase.h>
 #include <wx/fileconf.h>
+#include <wx/dir.h>
 
 #include <richio.h>
-#include <convert_to_biu.h>
-#include <colors.h>
+#include <gal/color4d.h>
 
+#include <atomic>
+#include <limits>
+#include <memory>
+#include <type_traits>
+#include <typeinfo>
 
 class wxAboutDialogInfo;
 class SEARCH_STACK;
-class wxSingleInstanceChecker;
+class REPORTER;
+
+
+/**
+ * timestamp_t is our type to represent unique IDs for all kinds of elements;
+ * historically simply the timestamp when they were created.
+ *
+ * Long term, this type might be renamed to something like unique_id_t
+ * (and then rename all the methods from {Get,Set}TimeStamp()
+ * to {Get,Set}Id()) ?
+ */
+typedef uint32_t timestamp_t;
 
 
 // Flag for special keys
-#define GR_KB_RIGHTSHIFT 0x10000000                 /* Keybd states: right
-                                                     * shift key depressed */
-#define GR_KB_LEFTSHIFT  0x20000000                 /* left shift key depressed
-                                                     */
-#define GR_KB_CTRL       0x40000000                 // CTRL depressed
-#define GR_KB_ALT        0x80000000                 // ALT depressed
-#define GR_KB_SHIFT      (GR_KB_LEFTSHIFT | GR_KB_RIGHTSHIFT)
-#define GR_KB_SHIFTCTRL  (GR_KB_SHIFT | GR_KB_CTRL)
-#define MOUSE_MIDDLE     0x08000000                 /* Middle button mouse
-                                                     * flag for block commands
-                                                     */
+// This type could be extended to 64 bits to add room for more flags.
+// For compatibility with old code, keep flag bits out of the least
+// significant nibble (0xF).
+typedef uint32_t EDA_KEY;
+#define EDA_KEY_C UINT32_C
+
+#define GR_KB_RIGHTSHIFT    ( EDA_KEY_C( 0x01000000 ) )
+#define GR_KB_LEFTSHIFT     ( EDA_KEY_C( 0x02000000 ) )
+#define GR_KB_CTRL          ( EDA_KEY_C( 0x04000000 ) )
+#define GR_KB_ALT           ( EDA_KEY_C( 0x08000000 ) )
+#define GR_KB_SHIFT         ( GR_KB_LEFTSHIFT | GR_KB_RIGHTSHIFT )
+#define GR_KB_SHIFTCTRL     ( GR_KB_SHIFT | GR_KB_CTRL )
+#define MOUSE_MIDDLE        ( EDA_KEY_C( 0x10000000 ) )
+#define GR_KEY_INVALID      ( EDA_KEY_C( 0x80000000 ) )
+#define GR_KEY_NONE         ( EDA_KEY_C( 0 ) )
 
 /// default name for nameless projects
 #define NAMELESS_PROJECT wxT( "noname" )
@@ -78,401 +98,88 @@ enum pseudokeys {
 
 #define ESC 27
 
-// TODO Executable names TODO
-#ifdef __WINDOWS__
-#define CVPCB_EXE           wxT( "cvpcb.exe" )
-#define PCBNEW_EXE          wxT( "pcbnew.exe" )
-#define EESCHEMA_EXE        wxT( "eeschema.exe" )
-#define GERBVIEW_EXE        wxT( "gerbview.exe" )
-#define BITMAPCONVERTER_EXE wxT( "bitmap2component.exe" )
-#define PCB_CALCULATOR_EXE  wxT( "pcb_calculator.exe" )
-#define PL_EDITOR_EXE       wxT( "pl_editor.exe" )
-#else
-#ifndef __WXMAC__
-#define CVPCB_EXE           wxT( "cvpcb" )
-#define PCBNEW_EXE          wxT( "pcbnew" )
-#define EESCHEMA_EXE        wxT( "eeschema" )
-#define GERBVIEW_EXE        wxT( "gerbview" )
-#define BITMAPCONVERTER_EXE wxT( "bitmap2component" )
-#define PCB_CALCULATOR_EXE  wxT( "pcb_calculator" )
-#define PL_EDITOR_EXE       wxT( "pl_editor" )
-#else
-#define CVPCB_EXE           wxT( "cvpcb.app/Contents/MacOS/cvpcb" )
-#define PCBNEW_EXE          wxT( "pcbnew.app/Contents/MacOS/pcbnew" )
-#define EESCHEMA_EXE        wxT( "eeschema.app/Contents/MacOS/eeschema" )
-#define GERBVIEW_EXE        wxT( "gerbview.app/Contents/MacOS/gerbview" )
-#define BITMAPCONVERTER_EXE wxT( "bitmap2component.app/Contents/MacOS/bitmap2component" )
-#define PCB_CALCULATOR_EXE  wxT( "pcb_calculator.app/Contents/MacOS/pcb_calculator" )
-#define PL_EDITOR_EXE       wxT( "pl_editor.app/Contents/MacOS/pl_editor" )
-# endif
-#endif
-
-
-// Graphic Texts Orientation in 0.1 degree
-#define TEXT_ORIENT_HORIZ 0
-#define TEXT_ORIENT_VERT  900
-
-
+/// Frequent text rotations, used with {Set,Get}TextAngle(),
+/// in 0.1 degrees for now, hoping to migrate to degrees eventually.
+#define TEXT_ANGLE_HORIZ    0
+#define TEXT_ANGLE_VERT     900
 
 //-----<KiROUND KIT>------------------------------------------------------------
 
 /**
- * KiROUND
- * rounds a floating point number to an int using
- * "round halfway cases away from zero".
- * In Debug build an assert fires if will not fit into an int.
+ * Round a floating point number to an integer using "round halfway cases away from zero".
+ *
+ * In Debug build an assert fires if will not fit into the return type.
  */
-
-#if !defined( DEBUG )
-
-/// KiROUND: a function so v is not evaluated twice.  Unfortunately, compiler
-/// is unable to pre-compute constants using this.
-static inline int KiROUND( double v )
+template <typename fp_type, typename ret_type = int>
+constexpr ret_type KiROUND( fp_type v )
 {
-    return int( v < 0 ? v - 0.5 : v + 0.5 );
-}
+    using max_ret = long long int;
+    fp_type ret = v < 0 ? v - 0.5 : v + 0.5;
 
-/// KIROUND: a macro so compiler can pre-compute constants.  Use this with compile
-/// time constants rather than the inline function above.
-#define KIROUND( v )    int( (v) < 0 ? (v) - 0.5 : (v) + 0.5 )
-
-#else
-
-// DEBUG: KiROUND() is a macro to capture line and file, then calls this inline
-
-static inline int kiRound_( double v, int line, const char* filename )
-{
-    v = v < 0 ? v - 0.5 : v + 0.5;
-    if( v > INT_MAX + 0.5 )
+    if( std::numeric_limits<ret_type>::max() < ret ||
+        std::numeric_limits<ret_type>::lowest() > ret )
     {
-        printf( "%s: in file %s on line %d, val: %.16g too ' > 0 ' for int\n", __FUNCTION__, filename, line, v );
+        wxLogDebug
+        ( "Overflow KiROUND converting value %f to %s", double( v ), typeid(ret_type).name() );
+        return 0;
     }
-    else if( v < INT_MIN - 0.5 )
-    {
-        printf( "%s: in file %s on line %d, val: %.16g too ' < 0 ' for int\n", __FUNCTION__, filename, line, v );
-    }
-    return int( v );
+
+    return ret_type( max_ret( ret ) );
 }
-
-#define KiROUND( v )    kiRound_( v, __LINE__, __FILE__ )
-
-// in Debug build, use the overflow catcher since code size is immaterial
-#define KIROUND( v )    KiROUND( v )
-
-#endif
 
 //-----</KiROUND KIT>-----------------------------------------------------------
-
-
-
-/// Convert mm to mils.
-inline int Mm2mils( double x ) { return KiROUND( x * 1000./25.4 ); }
-
-/// Convert mils to mm.
-inline int Mils2mm( double x ) { return KiROUND( x * 25.4 / 1000. ); }
 
 
 enum EDA_UNITS_T {
     INCHES = 0,
     MILLIMETRES = 1,
-    UNSCALED_UNITS = 2
+    UNSCALED_UNITS = 2,
+    DEGREES = 3,
+    PERCENT = 4,
 };
 
-
-// forward declarations:
-class LibNameList;
-
-
-/**
- * Class PAGE_INFO
- * describes the page size and margins of a paper page on which to
- * eventually print or plot.  Paper sizes are often described in inches.
- * Here paper is described in 1/1000th of an inch (mils).  For convenience
- * there are some read only accessors for internal units (IU), which is a compile
- * time calculation, not runtime.
- *
- * @author Dick Hollenbeck
- */
-class PAGE_INFO
-{
-public:
-
-    PAGE_INFO( const wxString& aType = PAGE_INFO::A3, bool IsPortrait = false );
-
-    // paper size names which are part of the public API, pass to SetType() or
-    // above constructor.
-
-    // these were once wxStrings, but it caused static construction sequence problems:
-    static const wxChar A4[];
-    static const wxChar A3[];
-    static const wxChar A2[];
-    static const wxChar A1[];
-    static const wxChar A0[];
-    static const wxChar A[];
-    static const wxChar B[];
-    static const wxChar C[];
-    static const wxChar D[];
-    static const wxChar E[];
-    static const wxChar GERBER[];
-    static const wxChar USLetter[];
-    static const wxChar USLegal[];
-    static const wxChar USLedger[];
-    static const wxChar Custom[];     ///< "User" defined page type
-
-
-    /**
-     * Function SetType
-     * sets the name of the page type and also the sizes and margins
-     * commonly associated with that type name.
-     *
-     * @param aStandardPageDescriptionName is a wxString constant giving one of:
-     * "A4" "A3" "A2" "A1" "A0" "A" "B" "C" "D" "E" "GERBER", "USLetter", "USLegal",
-     * "USLedger", or "User".  If "User" then the width and height are custom,
-     * and will be set according to <b>previous</b> calls to
-     * static PAGE_INFO::SetUserWidthMils() and
-     * static PAGE_INFO::SetUserHeightMils();
-     * @param IsPortrait Set to true to set page orientation to portrait mode.
-     *
-     * @return bool - true if @a aStandarePageDescription was a recognized type.
-     */
-    bool SetType( const wxString& aStandardPageDescriptionName, bool IsPortrait = false );
-    const wxString& GetType() const { return m_type; }
-
-    /**
-     * Function IsDefault
-     * @return True if the object has the default page settings which are A3, landscape.
-     */
-    bool IsDefault() const { return m_type == PAGE_INFO::A3 && !m_portrait; }
-
-    /**
-     * Function IsCustom
-     * returns true if the type is Custom
-     */
-    bool IsCustom() const;
-
-    /**
-     * Function SetPortrait
-     * will rotate the paper page 90 degrees.  This PAGE_INFO may either be in
-     * portrait or landscape mode.  Use this function to change from one to the
-     * other mode.
-     * @param isPortrait if true and not already in portrait mode, will change
-     *  this PAGE_INFO to portrait mode.  Or if false and not already in landscape mode,
-     *  will change this PAGE_INFO to landscape mode.
-     */
-    void SetPortrait( bool isPortrait );
-    bool IsPortrait() const { return m_portrait; }
-
-    /**
-     * Function GetWxOrientation.
-     * @return ws' style printing orientation (wxPORTRAIT or wxLANDSCAPE).
-     */
-#if wxCHECK_VERSION( 2, 9, 0  )
-    wxPrintOrientation  GetWxOrientation() const { return IsPortrait() ? wxPORTRAIT : wxLANDSCAPE; }
-#else
-    int  GetWxOrientation() const { return IsPortrait() ? wxPORTRAIT : wxLANDSCAPE; }
-#endif
-
-    /**
-     * Function GetPaperId
-     * @return wxPaperSize - wxPrintData's style paper id associated with
-     * page type name.
-     */
-    wxPaperSize GetPaperId() const { return m_paper_id; }
-
-    void SetWidthMils(  int aWidthInMils );
-    int GetWidthMils() const { return m_size.x; }
-
-    void SetHeightMils( int aHeightInMils );
-    int GetHeightMils() const { return m_size.y; }
-
-    const wxSize& GetSizeMils() const { return m_size; }
-
-    // Accessors returning "Internal Units (IU)".  IUs are mils in EESCHEMA,
-    // and either deci-mils or nanometers in PCBNew.
-#if defined(PCBNEW) || defined(EESCHEMA) || defined(GERBVIEW) || defined(PL_EDITOR)
-    int GetWidthIU() const  { return IU_PER_MILS * GetWidthMils();  }
-    int GetHeightIU() const { return IU_PER_MILS * GetHeightMils(); }
-    const wxSize GetSizeIU() const  { return wxSize( GetWidthIU(), GetHeightIU() ); }
-#endif
-
-    /**
-     * Function SetCustomWidthMils
-     * sets the width of Custom page in mils, for any custom page
-     * constructed or made via SetType() after making this call.
-     */
-    static void SetCustomWidthMils( int aWidthInMils );
-
-    /**
-     * Function SetCustomHeightMils
-     * sets the height of Custom page in mils, for any custom page
-     * constructed or made via SetType() after making this call.
-     */
-    static void SetCustomHeightMils( int aHeightInMils );
-
-    /**
-     * Function GetCustomWidthMils.
-     * @return int - custom paper width in mils.
-     */
-    static int GetCustomWidthMils() { return s_user_width; }
-
-    /**
-     * Function GetCustomHeightMils.
-     * @return int - custom paper height in mils.
-     */
-    static int GetCustomHeightMils() { return s_user_height; }
-
-    /**
-     * Function GetStandardSizes
-     * returns the standard page types, such as "A4", "A3", etc.
-    static wxArrayString GetStandardSizes();
-     */
-
-    /**
-     * Function Format
-     * outputs the page class to \a aFormatter in s-expression form.
-     *
-     * @param aFormatter The #OUTPUTFORMATTER object to write to.
-     * @param aNestLevel The indentation next level.
-     * @param aControlBits The control bit definition for object specific formatting.
-     * @throw IO_ERROR on write error.
-     */
-    void Format( OUTPUTFORMATTER* aFormatter, int aNestLevel, int aControlBits ) const
-        throw( IO_ERROR );
-
-protected:
-    // only the class implementation(s) may use this constructor
-    PAGE_INFO( const wxSize& aSizeMils, const wxString& aName, wxPaperSize aPaperId );
-
-
-private:
-
-    // standard pre-defined sizes
-    static const PAGE_INFO pageA4;
-    static const PAGE_INFO pageA3;
-    static const PAGE_INFO pageA2;
-    static const PAGE_INFO pageA1;
-    static const PAGE_INFO pageA0;
-    static const PAGE_INFO pageA;
-    static const PAGE_INFO pageB;
-    static const PAGE_INFO pageC;
-    static const PAGE_INFO pageD;
-    static const PAGE_INFO pageE;
-    static const PAGE_INFO pageGERBER;
-
-    static const PAGE_INFO pageUSLetter;
-    static const PAGE_INFO pageUSLegal;
-    static const PAGE_INFO pageUSLedger;
-
-    static const PAGE_INFO pageUser;
-
-    // all dimensions here are in mils
-
-    wxString    m_type;             ///< paper type: A4, A3, etc.
-    wxSize      m_size;             ///< mils
-
-/// Min and max page sizes for clamping.
-#define MIN_PAGE_SIZE   4000
-#define MAX_PAGE_SIZE   48000
-
-    bool        m_portrait;         ///< true if portrait, false if landscape
-
-    wxPaperSize m_paper_id;         ///< wx' style paper id.
-
-    static int s_user_height;
-    static int s_user_width;
-
-    void    updatePortrait();
-
-    void    setMargins();
-};
-
-extern EDA_UNITS_T  g_UserUnit;     ///< display units
 
 /// Draw color for moving objects.
-extern EDA_COLOR_T  g_GhostColor;
+extern KIGFX::COLOR4D  g_GhostColor;
 
 
 /**
- * Function SetLocaleTo_C_standard
- *  because KiCad is internationalized, switch internalization to "C" standard
- *  i.e. uses the . (dot) as separator in print/read float numbers
- *  (some countries (France, Germany ..) use , (comma) as separator)
- *  This function must be called before read or write ascii files using float
- *  numbers in data the SetLocaleTo_C_standard function must be called after
- *  reading or writing the file
+ * Instantiate the current locale within a scope in which you are expecting
+ * exceptions to be thrown.
  *
- *  This is wrapper to the C setlocale( LC_NUMERIC, "C" ) function,
- *  but could make more easier an optional use of locale in KiCad
- */
-void SetLocaleTo_C_standard();
-
-/**
- * Function SetLocaleTo_Default
- *  because KiCad is internationalized, switch internalization to default
- *  to use the default separator in print/read float numbers
- *  (. (dot) but some countries (France, Germany ..) use , (comma) as
- *   separator)
- *  This function must be called after a call to SetLocaleTo_C_standard
- *
- *  This is wrapper to the C setlocale( LC_NUMERIC, "" ) function,
- *  but could make more easier an optional use of locale in KiCad
- */
-void SetLocaleTo_Default();
-
-
-/**
- * Class LOCALE_IO
- * is a class that can be instantiated within a scope in which you are expecting
- * exceptions to be thrown.  Its constructor calls SetLocaleTo_C_Standard().
- * Its destructor insures that the default locale is restored if an exception
- * is thrown, or not.
+ * The constructor sets a "C" language locale option, to read/print files with floating
+ * point  numbers.  The destructor insures that the default locale is restored if an
+ * exception is thrown or not.
  */
 class LOCALE_IO
 {
 public:
-    LOCALE_IO()
-    {
-        wxASSERT_MSG( C_count >= 0, wxT( "LOCALE_IO::C_count mismanaged." ) );
-
-        // use thread safe, atomic operation
-        if( __sync_fetch_and_add( &C_count, 1 ) == 0 )
-        {
-            // printf( "setting C locale.\n" );
-            SetLocaleTo_C_standard();
-        }
-    }
-
-    ~LOCALE_IO()
-    {
-        // use thread safe, atomic operation
-        if( __sync_sub_and_fetch( &C_count, 1 ) == 0 )
-        {
-            // printf( "restoring default locale.\n" );
-            SetLocaleTo_Default();
-        }
-
-        wxASSERT_MSG( C_count >= 0, wxT( "LOCALE_IO::C_count mismanaged." ) );
-    }
+    LOCALE_IO();
+    ~LOCALE_IO();
 
 private:
-    static int  C_count;    // allow for nesting of LOCALE_IO instantiations
+    // allow for nesting of LOCALE_IO instantiations
+    static std::atomic<unsigned int> m_c_count;
+
+    // The locale in use before switching to the "C" locale
+    // (the locale can be set by user, and is not always the system locale)
+    std::string m_user_locale;
 };
 
-
 /**
- * Function GetTextSize
- * returns the size of @a aSingleLine of text when it is rendered in @a aWindow
+ * Return the size of @a aSingleLine of text when it is rendered in @a aWindow
  * using whatever font is currently set in that window.
  */
 wxSize GetTextSize( const wxString& aSingleLine, wxWindow* aWindow );
 
 /**
- * Function EnsureTextCtrlWidth
- * sets the minimum pixel width on a text control in order to make a text
- * string be fully visible within it. The current font within the text
- * control is considered.
- * The text can come either from the control or be given as an argument.
- * If the text control is larger than needed, then nothing is done.
+ * Set the minimum pixel width on a text control in order to make a text
+ * string be fully visible within it.
+ *
+ * The current font within the text control is considered.  The text can come either from
+ * the control or be given as an argument.  If the text control is larger than needed, then
+ * nothing is done.
+ *
  * @param aCtrl the text control to potentially make wider.
  * @param aString the text that is used in sizing the control's pixel width.
  * If NULL, then
@@ -481,10 +188,14 @@ wxSize GetTextSize( const wxString& aSingleLine, wxWindow* aWindow );
  */
 bool EnsureTextCtrlWidth( wxTextCtrl* aCtrl, const wxString* aString = NULL );
 
+/**
+ * Select the number (or "?") in a reference for ease of editing.
+ */
+void SelectReferenceNumber( wxTextEntry* aTextEntry );
 
 /**
- * Function ProcessExecute
- * runs a child process.
+ * Run a command in a child process.
+ *
  * @param aCommandLine The process and any arguments to it all in a single
  *                     string.
  * @param aFlags The same args as allowed for wxExecute()
@@ -494,53 +205,16 @@ bool EnsureTextCtrlWidth( wxTextCtrl* aCtrl, const wxString* aString = NULL );
  *               wxExecute())
  */
 int ProcessExecute( const wxString& aCommandLine, int aFlags = wxEXEC_ASYNC,
-                     wxProcess *callback = NULL );
-
-
-/*******************/
-/* about_kicad.cpp */
-/*******************/
-void InitKiCadAbout( wxAboutDialogInfo& info );
-
-
-/**************/
-/* common.cpp */
-/**************/
+                    wxProcess *callback = NULL );
 
 /**
  * @return an unique time stamp that changes after each call
  */
-time_t GetNewTimeStamp();
+timestamp_t GetNewTimeStamp();
 
-EDA_COLOR_T DisplayColorFrame( wxWindow* parent, int OldColor );
 int GetCommandOptions( const int argc, const char** argv,
                        const char* stringtst, const char** optarg,
                        int* optind );
-
-/**
- * Returns the units symbol.
- *
- * @param aUnits - Units type, default is current units setting.
- * @param aFormatString - A formatting string to embed the units symbol into.  Note:
- *                        the format string must contain the %s format specifier.
- * @return The formatted units symbol.
- */
-wxString ReturnUnitSymbol( EDA_UNITS_T aUnits = g_UserUnit,
-                           const wxString& aFormatString = _( " (%s):" ) );
-
-/**
- * Get a human readable units string.
- *
- * The strings returned are full text name and not abbreviations or symbolic
- * representations of the units.  Use ReturnUnitSymbol() for that.
- *
- * @param aUnits - The units text to return.
- * @return The human readable units string.
- */
-wxString GetUnitsLabel( EDA_UNITS_T aUnits );
-wxString GetAbbreviatedUnitsLabel( EDA_UNITS_T aUnit = g_UserUnit );
-
-void AddUnitSymbol( wxStaticText& Stext, EDA_UNITS_T aUnit = g_UserUnit );
 
 /**
  * Round to the nearest precision.
@@ -553,48 +227,21 @@ void AddUnitSymbol( wxStaticText& Stext, EDA_UNITS_T aUnit = g_UserUnit );
 double RoundTo0( double x, double precision );
 
 /**
- * Function wxStringSplit
- * splits \a aString to a string list separated at \a aSplitter.
- * @return the list
- * @param aString is the text to split
+ * Split \a aString to a string list separated at \a aSplitter.
+ *
+ * @param aText is the text to split
+ * @param aStrings will contain the splitted lines
  * @param aSplitter is the 'split' character
  */
-wxArrayString* wxStringSplit( wxString aString, wxChar aSplitter );
+void wxStringSplit( const wxString& aText, wxArrayString& aStrings, wxChar aSplitter );
 
 /**
- * Function GetRunningMicroSecs
- * returns an ever increasing indication of elapsed microseconds.  Use this
- * by computing differences between two calls.
- * @author Dick Hollenbeck
- */
-unsigned GetRunningMicroSecs();
-
-/**
- * Formats a wxDateTime using the long date format (on wx 2.9) or
- * an hardcoded format in wx 2.8; the idea is to avoid like the plague
- * the numeric-only date formats: it's difficult to discriminate between
- * dd/mm/yyyy and mm/dd/yyyy. The output is meant for user consumption
- * so no attempt to parse it should be done
- */
-wxString FormatDateLong( const wxDateTime &aDate );
-
-/**
- * Function SystemDirsAppend
- * appends system places to aSearchStack in a platform specific way, and pertinent
- * to KiCad programs.  It seems to be a place to collect bad ideas and keep them
- * out of view.
- */
-void SystemDirsAppend( SEARCH_STACK* aSearchStack );
-
-
-/**
- * Function SearchHelpFileFullPath
- * returns the help file's full path.
+ * Return the help file's full path.
  * <p>
  * Return the KiCad help file with path and extension.
  * Help files can be html (.html ext) or pdf (.pdf ext) files.
- * A <BaseName>.html file is searched and if not found,
- * <BaseName>.pdf file is searched in the same path.
+ * A \<BaseName\>.html file is searched and if not found,
+ * \<BaseName\>.pdf file is searched in the same path.
  * If the help file for the current locale is not found, an attempt to find
  * the English version of the help file is made.
  * Help file is searched in directories in this order:
@@ -610,22 +257,26 @@ void SystemDirsAppend( SEARCH_STACK* aSearchStack );
 wxString SearchHelpFileFullPath( const SEARCH_STACK& aSearchStack, const wxString& aBaseName );
 
 /**
- * Function LockFile
- * tests to see if aFileName can be locked (is not already locked) and only then
- * returns a wxSingleInstanceChecker protecting aFileName.  Caller owns the return value.
+ * Make \a aTargetFullFileName absolute and create the path of this file if it doesn't yet exist.
+ *
+ * @param aTargetFullFileName the wxFileName containing the full path and file name to modify.
+ *                            The path may be absolute or relative to \a aBaseFilename .
+ * @param aBaseFilename a full filename. Only its path is used to set the aTargetFullFileName path.
+ * @param aReporter a point to a REPORTER object use to show messages (can be NULL)
+ * @return true if \a aOutputDir already exists or was successfully created.
  */
-wxSingleInstanceChecker* LockFile( const wxString& aFileName );
-
+bool EnsureFileDirectoryExists( wxFileName*     aTargetFullFileName,
+                                const wxString& aBaseFilename,
+                                REPORTER*       aReporter = NULL );
 
 /// Put aPriorityPath in front of all paths in the value of aEnvVar.
 const wxString PrePendPath( const wxString& aEnvVar, const wxString& aPriorityPath );
 
 /**
- * Function GetNewConfig
+ * Create a new wxConfig so we can put configuration files in a more proper place for each
+ * platform.
  *
- * Use this function instead of creating a new wxConfig so we can put config files in
- * a more proper place for each platform. This is generally $HOME/.config/kicad/ in Linux
- * according to the FreeDesktop specification at
+ * This is generally $HOME/.config/kicad/ in Linux according to the FreeDesktop specification at
  * http://standards.freedesktop.org/basedir-spec/basedir-spec-0.6.html
  * The config object created here should be destroyed by the caller.
  *
@@ -634,13 +285,136 @@ const wxString PrePendPath( const wxString& aEnvVar, const wxString& aPriorityPa
  * @return A pointer to a new wxConfigBase derived object is returned.  The caller is in charge
  *  of deleting it.
  */
-wxConfigBase* GetNewConfig( const wxString& aProgName );
+std::unique_ptr<wxConfigBase> GetNewConfig( const wxString& aProgName );
 
 /**
- * Function GetKicadConfigPath
+ * Return the user configuration path used to store KiCad's configuration files.
+ *
+ * The configuration path order of precedence is determined by the following criteria:
+ *
+ * - The value of the KICAD_CONFIG_HOME environment variable
+ * - The value of the XDG_CONFIG_HOME environment variable.
+ * - The result of the call to wxStandardPaths::GetUserConfigDir() with ".config" appended
+ *   as required on Linux builds.
+ *
  * @return A wxString containing the config path for Kicad
  */
 wxString GetKicadConfigPath();
+
+/**
+ * Replace any environment variable references with their values.
+ *
+ * @param aString = a string containing (perhaps) references to env var
+ * @return a string where env var are replaced by their value
+ */
+const wxString ExpandEnvVarSubstitutions( const wxString& aString );
+
+/**
+ * Replace any environment variables in file-path uris (leaving network-path URIs alone).
+ */
+const wxString ResolveUriByEnvVars( const wxString& aUri );
+
+
+#ifdef __WXMAC__
+/**
+ * OSX specific function GetOSXKicadUserDataDir
+ * @return A wxString pointing to the user data directory for Kicad
+ */
+wxString GetOSXKicadUserDataDir();
+
+/**
+ * OSX specific function GetOSXMachineDataDir
+ * @return A wxString pointing to the machine data directory for Kicad
+ */
+wxString GetOSXKicadMachineDataDir();
+
+/**
+ * OSX specific function GetOSXKicadDataDir
+ * @return A wxString pointing to the bundle data directory for Kicad
+ */
+wxString GetOSXKicadDataDir();
+#endif
+
+// Some wxWidgets versions (for instance before 3.1.0) do not include
+// this function, so add it if missing
+#if !wxCHECK_VERSION( 3, 1, 0 )
+#define USE_KICAD_WXSTRING_HASH     // for common.cpp
+///> Template specialization to enable wxStrings for certain containers (e.g. unordered_map)
+namespace std
+{
+    template<> struct hash<wxString>
+    {
+        size_t operator()( const wxString& s ) const;
+    };
+}
+#endif
+
+/// Required to use wxPoint as key type in maps
+#define USE_KICAD_WXPOINT_LESS_AND_HASH // for common.cpp
+namespace std
+{
+    template <> struct hash<wxPoint>
+    {
+        size_t operator() ( const wxPoint& k ) const;
+    };
+}
+
+namespace std
+{
+    template<> struct less<wxPoint>
+    {
+        bool operator()( const wxPoint& aA, const wxPoint& aB ) const;
+    };
+}
+
+/**
+ * Helper function to print the given wxSize to a stream.
+ *
+ * Used for debugging functions like EDA_ITEM::Show and also in unit
+ * testing fixtures.
+ */
+std::ostream& operator<<( std::ostream& out, const wxSize& size );
+
+/**
+ * Helper function to print the given wxPoint to a stream.
+ *
+ * Used for debugging functions like EDA_ITEM::Show and also in unit
+ * testing fixtures.
+ */
+std::ostream& operator<<( std::ostream& out, const wxPoint& pt );
+
+
+/**
+ * A wrapper around a wxFileName which is much more performant with a subset of the API.
+ */
+class WX_FILENAME
+{
+public:
+    WX_FILENAME( const wxString& aPath, const wxString& aFilename );
+
+    void SetFullName( const wxString& aFileNameAndExtension );
+
+    wxString GetName() const;
+    wxString GetFullName() const;
+    wxString GetPath() const;
+    wxString GetFullPath() const;
+
+    // Avoid multiple calls to stat() on POSIX kernels.
+    long long GetTimestamp();
+
+private:
+    // Write cached values to the wrapped wxFileName.  MUST be called before using m_fn.
+    void resolve();
+
+    wxFileName m_fn;
+    wxString   m_path;
+    wxString   m_fullName;
+};
+
+
+long long TimestampDir( const wxString& aDirPath, const wxString& aFilespec );
+
+
 
 
 #endif  // INCLUDE__COMMON_H_

@@ -2,7 +2,7 @@
  * This program source code file is part of KICAD, a free EDA CAD application.
  *
  * Copyright (C) 1992-2010 jean-pierre.charras
- * Copyright (C) 1992-2010 Kicad Developers, see change_log.txt for contributors.
+ * Copyright (C) 1992-2019 Kicad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,26 +22,25 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-#include <fctsys.h>
-#include <macros.h>
-
-#include <pgm_base.h>
-#include <wxstruct.h>
-#include <confirm.h>
-#include <gestfich.h>
-#include <wildcards_and_files_ext.h>
-
-#include <bitmap2cmp_gui_base.h>
-#include <bitmap2component.h>
-
-#include <potracelib.h>
+#include "bitmap2cmp_gui.h"
+#include "bitmap2component.h"
 #include <bitmap_io.h>
-
-#include <colors_selection.h>
+#include <bitmaps.h>
 #include <build_version.h>
-#include <menus_helpers.h>
-#include <kiway.h>
+#include <confirm.h>
+#include <fctsys.h>
+#include <gestfich.h>
 #include <kiface_i.h>
+#include <kiway.h>
+#include <macros.h>
+#include <pgm_base.h>
+#include <potracelib.h>
+#include <wildcards_and_files_ext.h>
+#include <wx/clipbrd.h>
+#include <wx/rawbmp.h>
+
+#include "bitmap2cmp_gui_base.h"
+
 
 #define KEYWORD_FRAME_POSX          wxT( "Bmconverter_Pos_x" )
 #define KEYWORD_FRAME_POSY          wxT( "Bmconverter_Pos_y" )
@@ -50,124 +49,140 @@
 #define KEYWORD_LAST_INPUT_FILE     wxT( "Last_input" )
 #define KEYWORD_LAST_OUTPUT_FILE    wxT( "Last_output" )
 #define KEYWORD_LAST_FORMAT         wxT( "Last_format" )
+#define KEYWORD_LAST_MODLAYER       wxT( "Last_modlayer" )
 #define KEYWORD_BINARY_THRESHOLD    wxT( "Threshold" )
 #define KEYWORD_BW_NEGATIVE         wxT( "Negative_choice" )
+#define KEYWORD_UNIT_SELECTION      wxT( "Unit_selection" )
 
-#define DEFAULT_DPI 300     // Default resolution in Bit per inches
+#define DEFAULT_DPI 300     // the image DPI used in formats that do not define a DPI
 
-extern int bitmap2component( potrace_bitmap_t* aPotrace_bitmap, FILE* aOutfile,
-                             OUTPUT_FMT_ID aFormat, int aDpi_X, int aDpi_Y );
-
-/**
- * Class BM2CMP_FRAME_BASE
- * is the main frame for this application
- */
-class BM2CMP_FRAME : public BM2CMP_FRAME_BASE
+IMAGE_SIZE::IMAGE_SIZE()
 {
-private:
-    wxImage         m_Pict_Image;
-    wxBitmap        m_Pict_Bitmap;
-    wxImage         m_Greyscale_Image;
-    wxBitmap        m_Greyscale_Bitmap;
-    wxImage         m_NB_Image;
-    wxBitmap        m_BN_Bitmap;
-    wxSize          m_imageDPI;     // The initial image resolution. When unknown,
-                                    // set to DEFAULT_DPI x DEFAULT_DPI per Inch
-    wxString        m_BitmapFileName;
-    wxString        m_ConvertedFileName;
-    wxSize          m_frameSize;
-    wxPoint         m_framePos;
-    wxConfigBase*   m_config;
+    m_outputSize = 0.0;
+    m_originalDPI = DEFAULT_DPI;
+    m_originalSizePixels = 0;
+    m_unit = MILLIMETRES;
+}
 
-public:
-    BM2CMP_FRAME( KIWAY* aKiway, wxWindow* aParent );
-    ~BM2CMP_FRAME();
 
-    // overload KIWAY_PLAYER virtual
-    bool OpenProjectFiles( const std::vector<wxString>& aFilenames, int aCtl=0 );
-
-private:
-
-    // Event handlers
-    void OnPaint( wxPaintEvent& event );
-    void OnLoadFile( wxCommandEvent& event );
-    void OnExport( wxCommandEvent& event );
-
-    /**
-     * Generate a schematic library which comtains one component:
-     * the logo
-     */
-    void OnExportEeschema();
-
-    /**
-     * Generate a module in S expr format
-     */
-    void OnExportPcbnew();
-
-    /**
-     * Generate a postscript file
-     */
-    void OnExportPostScript();
-
-    /**
-     * Generate a file suitable to be copied into a page layout
-     * description file (.kicad_wks file
-     */
-    void OnExportLogo();
-
-    void Binarize( double aThreshold );     // aThreshold = 0.0 (black level) to 1.0 (white level)
-    void OnOptionsSelection( wxCommandEvent& event );
-    void OnThresholdChange( wxScrollEvent& event );
-    void OnResolutionChange( wxCommandEvent& event );
-
-    // called when texts controls which handle the image resolution
-    // lose the focus, to ensure the rigyht vaules are displayed
-    // because the m_imageDPI are clipped to acceptable values, and
-    // the text displayed could be differ duringa text edition
-    // We are using ChangeValue here to avoid generating a wxEVT_TEXT event.
-    void UpdateDPITextValueX( wxMouseEvent& event )
+void IMAGE_SIZE::SetOutputSizeFromInitialImageSize()
+{
+    // Set the m_outputSize value from the m_originalSizePixels and the selected unit
+    if( m_unit == MILLIMETRES )
     {
-        m_DPIValueX->ChangeValue( wxString::Format( wxT( "%d" ), m_imageDPI.x ) );
+        m_outputSize = (double)GetOriginalSizePixels() / m_originalDPI * 25.4;
+    }
+    else if( m_unit == INCHES )
+    {
+        m_outputSize = (double)GetOriginalSizePixels() / m_originalDPI;
+    }
+    else
+    {
+        m_outputSize = m_originalDPI;
     }
 
-    void UpdateDPITextValueY( wxMouseEvent& event )
+}
+
+
+int IMAGE_SIZE::GetOutputDPI()
+{
+    int outputDPI;
+
+    if( m_unit == MILLIMETRES )
     {
-        m_DPIValueY->ChangeValue( wxString::Format( wxT( "%d" ), m_imageDPI.y ) );
+        outputDPI = GetOriginalSizePixels() / ( m_outputSize / 25.4 );
+    }
+    else if( m_unit == INCHES )
+    {
+        outputDPI = GetOriginalSizePixels() / m_outputSize;
+    }
+    else
+    {
+        outputDPI = KiROUND( m_outputSize );
     }
 
-    void NegateGreyscaleImage( );
-    void ExportFile( FILE* aOutfile, OUTPUT_FMT_ID aFormat );
-    void updateImageInfo();
-};
+    return outputDPI;
+}
+
+
+void IMAGE_SIZE::SetUnit( EDA_UNITS_T aUnit )
+{
+    // Set the unit used for m_outputSize, and convert the old m_outputSize value
+    // to the value in new unit
+    if( aUnit == m_unit )
+        return;
+
+    // Convert m_outputSize to mm:
+    double size_mm;
+
+    if( m_unit == MILLIMETRES )
+    {
+        size_mm = m_outputSize;
+    }
+    else if( m_unit == INCHES )
+    {
+        size_mm = m_outputSize * 25.4;
+    }
+    else
+    {
+        // m_outputSize is the DPI, not an image size
+        // the image size is m_originalSizePixels / m_outputSize (in inches)
+        if( m_outputSize )
+            size_mm =  m_originalSizePixels / m_outputSize * 25.4;
+        else
+            size_mm = 0;
+    }
+
+    // Convert m_outputSize to new value:
+    if( aUnit == MILLIMETRES )
+    {
+        m_outputSize = size_mm;
+    }
+    else if( aUnit == INCHES )
+    {
+        m_outputSize = size_mm / 25.4;
+    }
+    else
+    {
+        if( size_mm )
+            m_outputSize = m_originalSizePixels / size_mm * 25.4;
+        else
+            m_outputSize = 0;
+    }
+
+    m_unit = aUnit;
+}
+
 
 
 BM2CMP_FRAME::BM2CMP_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
     BM2CMP_FRAME_BASE( aParent )
 {
     SetKiway( this, aKiway );
-
-    int tmp;
     m_config = GetNewConfig( Pgm().App().GetAppName() );
-    m_config->Read( KEYWORD_FRAME_POSX, & m_framePos.x, -1 );
-    m_config->Read( KEYWORD_FRAME_POSY, & m_framePos.y, -1 );
-    m_config->Read( KEYWORD_FRAME_SIZEX, & m_frameSize.x, -1 );
-    m_config->Read( KEYWORD_FRAME_SIZEY, & m_frameSize.y, -1 );
-    m_config->Read( KEYWORD_LAST_INPUT_FILE, &m_BitmapFileName );
-    m_config->Read( KEYWORD_LAST_OUTPUT_FILE, &m_ConvertedFileName );
 
-    if( m_config->Read( KEYWORD_BINARY_THRESHOLD, &tmp ) )
-        m_sliderThreshold->SetValue( tmp );
-
-    if( m_config->Read( KEYWORD_BW_NEGATIVE, &tmp ) )
-        m_rbOptions->SetSelection( tmp  ? 1 : 0 );
-
-    if( m_config->Read( KEYWORD_LAST_FORMAT, &tmp ) )
+    wxString unitList[] =
     {
-        if( tmp < 0 || tmp > FINAL_FMT )
-            tmp = PCBNEW_KICAD_MOD;
+        _("mm"), _("Inch"), _("DPI")
+    };
 
-        m_radioBoxFormat->SetSelection( tmp );
-    }
+    for( int ii = 0; ii < 3; ii++ )
+        m_PixelUnit->Append( unitList[ii] );
+
+    LoadSettings( m_config.get() );
+
+    m_outputSizeX.SetUnit( getUnitFromSelection() );
+    m_outputSizeY.SetUnit( getUnitFromSelection() );
+    m_outputSizeX.SetOutputSize( 0, getUnitFromSelection() );
+    m_outputSizeY.SetOutputSize( 0, getUnitFromSelection() );
+
+    m_UnitSizeX->ChangeValue( FormatOutputSize( m_outputSizeX.GetOutputSize() ) );
+    m_UnitSizeY->ChangeValue( FormatOutputSize( m_outputSizeY.GetOutputSize() ) );
+
+    //Set icon for aspect ratio
+    m_AspectRatioLocked = true;
+    m_AspectRatio = 1;
+    m_AspectRatioLockButton->SetBitmap( KiBitmap( locked_xpm ) );
 
     // Give an icon
     wxIcon icon;
@@ -178,9 +193,9 @@ BM2CMP_FRAME::BM2CMP_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
     SetSize( m_framePos.x, m_framePos.y, m_frameSize.x, m_frameSize.y );
 
-    m_buttonExport->Enable( false );
+    m_buttonExportFile->Enable( false );
+    m_buttonExportClipboard->Enable( false );
 
-    m_imageDPI.x = m_imageDPI.y = DEFAULT_DPI;  // Default resolution in Bit per inches
 
     if ( m_framePos == wxDefaultPosition )
         Centre();
@@ -189,71 +204,158 @@ BM2CMP_FRAME::BM2CMP_FRAME( KIWAY* aKiway, wxWindow* aParent ) :
 
 BM2CMP_FRAME::~BM2CMP_FRAME()
 {
-    if( !m_config || IsIconized() )
-        return;
-
-    m_frameSize = GetSize();
-    m_framePos  = GetPosition();
-
-    m_config->Write( KEYWORD_FRAME_POSX, (long) m_framePos.x );
-    m_config->Write( KEYWORD_FRAME_POSY, (long) m_framePos.y );
-    m_config->Write( KEYWORD_FRAME_SIZEX, (long) m_frameSize.x );
-    m_config->Write( KEYWORD_FRAME_SIZEY, (long) m_frameSize.y );
-    m_config->Write( KEYWORD_LAST_INPUT_FILE, m_BitmapFileName );
-    m_config->Write( KEYWORD_LAST_OUTPUT_FILE, m_ConvertedFileName );
-    m_config->Write( KEYWORD_BINARY_THRESHOLD, m_sliderThreshold->GetValue() );
-    m_config->Write( KEYWORD_BW_NEGATIVE, m_rbOptions->GetSelection() );
-    m_config->Write( KEYWORD_LAST_FORMAT,  m_radioBoxFormat->GetSelection() );
-
-    delete m_config;
-
-    /* This needed for OSX: avoids further OnDraw processing after this
+    SaveSettings( m_config.get() );
+    /*
+     * This needed for OSX: avoids further OnDraw processing after this
      * destructor and before the native window is destroyed
      */
     this->Freeze( );
 }
 
 
-void BM2CMP_FRAME::OnPaint( wxPaintEvent& event )
+void BM2CMP_FRAME::LoadSettings( wxConfigBase* aCfg )
 {
-#ifdef __WXMAC__
-    // Otherwise fails due: using wxPaintDC without being in a native paint event
-    wxClientDC pict_dc( m_InitialPicturePanel );
-    wxClientDC greyscale_dc( m_GreyscalePicturePanel );
-    wxClientDC nb_dc( m_BNPicturePanel );
-#else
-    wxPaintDC pict_dc( m_InitialPicturePanel );
-    wxPaintDC greyscale_dc( m_GreyscalePicturePanel );
-    wxPaintDC nb_dc( m_BNPicturePanel );
-#endif
+    int tmp;
+    aCfg->Read( KEYWORD_FRAME_POSX, & m_framePos.x, -1 );
+    aCfg->Read( KEYWORD_FRAME_POSY, & m_framePos.y, -1 );
+    aCfg->Read( KEYWORD_FRAME_SIZEX, & m_frameSize.x, -1 );
+    aCfg->Read( KEYWORD_FRAME_SIZEY, & m_frameSize.y, -1 );
+    aCfg->Read( KEYWORD_LAST_INPUT_FILE, &m_BitmapFileName );
+    aCfg->Read( KEYWORD_LAST_OUTPUT_FILE, &m_ConvertedFileName );
 
-    m_InitialPicturePanel->PrepareDC( pict_dc );
-    m_GreyscalePicturePanel->PrepareDC( greyscale_dc );
-    m_BNPicturePanel->PrepareDC( nb_dc );
+    int u_select = 0;
+    aCfg->Read( KEYWORD_UNIT_SELECTION, &u_select, 0 );
 
-    // OSX crashes with empty bitmaps (on initial refreshes)
-    if(m_Pict_Bitmap.IsOk() && m_Greyscale_Bitmap.IsOk() && m_BN_Bitmap.IsOk())
+    if( u_select < 0 || u_select > 2 )  // Validity control
+        u_select = 0;
+
+    m_PixelUnit->SetSelection( u_select );
+
+    if( aCfg->Read( KEYWORD_BINARY_THRESHOLD, &tmp ) )
+        m_sliderThreshold->SetValue( tmp );
+
+    aCfg->Read( KEYWORD_BW_NEGATIVE, &tmp, 0 );
+    m_Negative = tmp != 0;
+    m_checkNegative->SetValue( m_Negative );
+    m_exportToClipboard = false;
+    m_AspectRatioLocked = false;
+
+    if( aCfg->Read( KEYWORD_LAST_FORMAT, &tmp ) )
     {
-        pict_dc.DrawBitmap( m_Pict_Bitmap, 0, 0, false );
-        greyscale_dc.DrawBitmap( m_Greyscale_Bitmap, 0, 0, false );
-        nb_dc.DrawBitmap( m_BN_Bitmap, 0, 0, false );
+        if( tmp < 0 || tmp > FINAL_FMT )
+            tmp = PCBNEW_KICAD_MOD;
+
+        m_rbOutputFormat->SetSelection( tmp );
+    }
+
+    if( tmp == PCBNEW_KICAD_MOD )
+        m_rbPCBLayer->Enable( true );
+    else
+        m_rbPCBLayer->Enable( false );
+
+    if( aCfg->Read( KEYWORD_LAST_MODLAYER, &tmp ) )
+    {
+        if( (unsigned) tmp > MOD_LYR_FINAL )    // Out of range
+            m_rbPCBLayer->SetSelection( MOD_LYR_FSILKS );
+        else
+            m_rbPCBLayer->SetSelection( tmp );
     }
 }
 
 
-/* Called to load a bitmap file
- */
+void BM2CMP_FRAME::SaveSettings( wxConfigBase* aCfg )
+{
+    if( !aCfg )
+        return;
+
+    m_frameSize = GetSize();
+    m_framePos  = GetPosition();
+
+    if( !IsIconized()  )
+    {
+        aCfg->Write( KEYWORD_FRAME_POSX, (long) m_framePos.x );
+        aCfg->Write( KEYWORD_FRAME_POSY, (long) m_framePos.y );
+        aCfg->Write( KEYWORD_FRAME_SIZEX, (long) m_frameSize.x );
+        aCfg->Write( KEYWORD_FRAME_SIZEY, (long) m_frameSize.y );
+    }
+
+    aCfg->Write( KEYWORD_LAST_INPUT_FILE, m_BitmapFileName );
+    aCfg->Write( KEYWORD_LAST_OUTPUT_FILE, m_ConvertedFileName );
+    aCfg->Write( KEYWORD_BINARY_THRESHOLD, m_sliderThreshold->GetValue() );
+    aCfg->Write( KEYWORD_BW_NEGATIVE, m_checkNegative->IsChecked() ? 1 : 0 );
+    aCfg->Write( KEYWORD_LAST_FORMAT,  m_rbOutputFormat->GetSelection() );
+    aCfg->Write( KEYWORD_LAST_MODLAYER,  m_rbPCBLayer->GetSelection() );
+    aCfg->Write( KEYWORD_UNIT_SELECTION, m_PixelUnit->GetSelection() );
+}
+
+
+void BM2CMP_FRAME::OnPaintInit( wxPaintEvent& event )
+{
+#ifdef __WXMAC__
+    // Otherwise fails due: using wxPaintDC without being in a native paint event
+    wxClientDC pict_dc( m_InitialPicturePanel );
+#else
+    wxPaintDC pict_dc( m_InitialPicturePanel );
+#endif
+
+    m_InitialPicturePanel->PrepareDC( pict_dc );
+
+    // OSX crashes with empty bitmaps (on initial refreshes)
+    if( m_Pict_Bitmap.IsOk() )
+        pict_dc.DrawBitmap( m_Pict_Bitmap, 0, 0, !!m_Pict_Bitmap.GetMask() );
+
+    event.Skip();
+}
+
+
+void BM2CMP_FRAME::OnPaintGreyscale( wxPaintEvent& event )
+{
+#ifdef __WXMAC__
+    // Otherwise fails due: using wxPaintDC without being in a native paint event
+    wxClientDC greyscale_dc( m_GreyscalePicturePanel );
+#else
+    wxPaintDC greyscale_dc( m_GreyscalePicturePanel );
+#endif
+
+    m_GreyscalePicturePanel->PrepareDC( greyscale_dc );
+
+    // OSX crashes with empty bitmaps (on initial refreshes)
+    if( m_Greyscale_Bitmap.IsOk() )
+        greyscale_dc.DrawBitmap( m_Greyscale_Bitmap, 0, 0, !!m_Greyscale_Bitmap.GetMask() );
+
+    event.Skip();
+}
+
+
+void BM2CMP_FRAME::OnPaintBW( wxPaintEvent& event )
+{
+#ifdef __WXMAC__
+    // Otherwise fails due: using wxPaintDC without being in a native paint event
+    wxClientDC nb_dc( m_BNPicturePanel );
+#else
+    wxPaintDC nb_dc( m_BNPicturePanel );
+#endif
+
+    m_BNPicturePanel->PrepareDC( nb_dc );
+
+    if( m_BN_Bitmap.IsOk() )
+        nb_dc.DrawBitmap( m_BN_Bitmap, 0, 0, !!m_BN_Bitmap.GetMask() );
+
+    event.Skip();
+}
+
+
 void BM2CMP_FRAME::OnLoadFile( wxCommandEvent& event )
 {
     wxFileName  fn( m_BitmapFileName );
     wxString    path = fn.GetPath();
 
-    if( path.IsEmpty() || !wxDirExists(path) )
-        path = wxGetCwd();
+    if( path.IsEmpty() || !wxDirExists( path ) )
+        path = m_mruPath;
 
     wxFileDialog fileDlg( this, _( "Choose Image" ), path, wxEmptyString,
                           _( "Image Files " ) + wxImage::GetImageExtWildcard(),
-                          wxFD_OPEN );
+                          wxFD_OPEN | wxFD_FILE_MUST_EXIST );
 
     int diag = fileDlg.ShowModal();
 
@@ -265,7 +367,8 @@ void BM2CMP_FRAME::OnLoadFile( wxCommandEvent& event )
     if( !OpenProjectFiles( std::vector<wxString>( 1, fullFilename ) ) )
         return;
 
-    m_buttonExport->Enable( true );
+    fn = fullFilename;
+    m_mruPath = fn.GetPath();
     SetStatusText( fullFilename );
     Refresh();
 }
@@ -273,8 +376,7 @@ void BM2CMP_FRAME::OnLoadFile( wxCommandEvent& event )
 
 bool BM2CMP_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, int aCtl )
 {
-    // Prj().MaybeLoadProjectSettings();
-
+    m_Pict_Image.Destroy();
     m_BitmapFileName = aFileSet[0];
 
     if( !m_Pict_Image.LoadFile( m_BitmapFileName ) )
@@ -285,33 +387,41 @@ bool BM2CMP_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, int 
 
     m_Pict_Bitmap = wxBitmap( m_Pict_Image );
 
-    int h  = m_Pict_Bitmap.GetHeight();
-    int w  = m_Pict_Bitmap.GetWidth();
-
     // Determine image resolution in DPI (does not existing in all formats).
     // the resolution can be given in bit per inches or bit per cm in file
-    m_imageDPI.x = m_Pict_Image.GetOptionInt( wxIMAGE_OPTION_RESOLUTIONX );
-    m_imageDPI.y = m_Pict_Image.GetOptionInt( wxIMAGE_OPTION_RESOLUTIONY );
 
-    if( m_imageDPI.x > 1 && m_imageDPI.y > 1 )
+    int imageDPIx = m_Pict_Image.GetOptionInt( wxIMAGE_OPTION_RESOLUTIONX );
+    int imageDPIy = m_Pict_Image.GetOptionInt( wxIMAGE_OPTION_RESOLUTIONY );
+
+    if( imageDPIx > 1 && imageDPIy > 1 )
     {
         if( m_Pict_Image.GetOptionInt( wxIMAGE_OPTION_RESOLUTIONUNIT ) == wxIMAGE_RESOLUTION_CM )
         {
-            // When the initial resolution is given in bits per cm,
-            // experience shows adding 1.27 to the resolution converted in dpi
-            // before convert to int value reduce the conversion error
-            // but it is not perfect
-            m_imageDPI.x = m_imageDPI.x * 2.54 + 1.27;
-            m_imageDPI.y = m_imageDPI.y * 2.54 + 1.27;
+            imageDPIx = KiROUND( imageDPIx * 2.54 );
+            imageDPIy = KiROUND( imageDPIy * 2.54 );
         }
     }
-    else    // fallback to the default value
-        m_imageDPI.x = m_imageDPI.y = DEFAULT_DPI;
+    else    // fallback to a default value (DEFAULT_DPI)
+    {
+        imageDPIx = imageDPIy = DEFAULT_DPI;
+    }
 
-    // Display image info:
-    // We are using ChangeValue here to avoid generating a wxEVT_TEXT event.
-    m_DPIValueX->ChangeValue( wxString::Format( wxT( "%d" ), m_imageDPI.x ) );
-    m_DPIValueY->ChangeValue( wxString::Format( wxT( "%d" ), m_imageDPI.y ) );
+    m_InputXValueDPI->SetLabel( wxString::Format( wxT( "%d" ), imageDPIx ) );
+    m_InputYValueDPI->SetLabel( wxString::Format( wxT( "%d" ), imageDPIy ) );
+
+    int h  = m_Pict_Bitmap.GetHeight();
+    int w  = m_Pict_Bitmap.GetWidth();
+    m_AspectRatio = (double) w / h;
+
+    m_outputSizeX.SetOriginalDPI( imageDPIx );
+    m_outputSizeX.SetOriginalSizePixels( w );
+    m_outputSizeY.SetOriginalDPI( imageDPIy );
+    m_outputSizeY.SetOriginalSizePixels( h );
+
+    // Update display to keep aspect ratio
+    auto fakeEvent = wxCommandEvent();
+    OnSizeChangeX( fakeEvent );
+
     updateImageInfo();
 
     m_InitialPicturePanel->SetVirtualSize( w, h );
@@ -321,77 +431,215 @@ bool BM2CMP_FRAME::OpenProjectFiles( const std::vector<wxString>& aFileSet, int 
     m_Greyscale_Image.Destroy();
     m_Greyscale_Image = m_Pict_Image.ConvertToGreyscale( );
 
-    if( m_rbOptions->GetSelection() > 0 )
+    if( m_Pict_Bitmap.GetMask() )
+    {
+        for( int x = 0; x < m_Pict_Bitmap.GetWidth(); x++ )
+        {
+            for( int y = 0; y < m_Pict_Bitmap.GetHeight(); y++ )
+            {
+                if( m_Pict_Image.GetRed( x, y ) == m_Pict_Image.GetMaskRed() &&
+                    m_Pict_Image.GetGreen( x, y ) == m_Pict_Image.GetMaskGreen() &&
+                    m_Pict_Image.GetBlue( x, y ) == m_Pict_Image.GetMaskBlue() )
+                {
+                    m_Greyscale_Image.SetRGB( x, y, 255, 255, 255 );
+                }
+            }
+        }
+    }
+
+    if( m_Negative )
         NegateGreyscaleImage( );
 
     m_Greyscale_Bitmap = wxBitmap( m_Greyscale_Image );
-
     m_NB_Image  = m_Greyscale_Image;
     Binarize( (double) m_sliderThreshold->GetValue()/m_sliderThreshold->GetMax() );
 
+    m_buttonExportFile->Enable( true );
+    m_buttonExportClipboard->Enable( true );
+
+    m_outputSizeX.SetOutputSizeFromInitialImageSize();
+    m_UnitSizeX->ChangeValue( FormatOutputSize( m_outputSizeX.GetOutputSize() ) );
+    m_outputSizeY.SetOutputSizeFromInitialImageSize();
+    m_UnitSizeY->ChangeValue( FormatOutputSize( m_outputSizeY.GetOutputSize() ) );
+
     return true;
+}
+
+
+// return a string giving the output size, according to the selected unit
+wxString BM2CMP_FRAME::FormatOutputSize( double aSize )
+{
+    wxString text;
+
+    if( getUnitFromSelection() == MILLIMETRES )
+    {
+        text.Printf( "%.1f", aSize );
+    }
+    else if( getUnitFromSelection() == INCHES )
+    {
+        text.Printf( "%.2f", aSize );
+    }
+    else
+    {
+        text.Printf( "%d", KiROUND( aSize ) );
+    }
+
+    return text;
 }
 
 void BM2CMP_FRAME::updateImageInfo()
 {
     // Note: the image resolution text controls are not modified
     // here, to avoid a race between text change when entered by user and
-    // a text change if it is modifed here.
-    int h  = m_Pict_Bitmap.GetHeight();
-    int w  = m_Pict_Bitmap.GetWidth();
-    int nb = m_Pict_Bitmap.GetDepth();
+    // a text change if it is modified here.
 
-    m_SizeXValue->SetLabel( wxString::Format( wxT( "%d" ), w ) );
-    m_SizeYValue->SetLabel( wxString::Format( wxT( "%d" ), h ) );
-    m_BPPValue->SetLabel( wxString::Format( wxT( "%d" ), nb ) );
+    if( m_Pict_Bitmap.IsOk() )
+    {
+        int h = m_Pict_Bitmap.GetHeight();
+        int w = m_Pict_Bitmap.GetWidth();
+        int nb = m_Pict_Bitmap.GetDepth();
 
-    m_SizeXValue_mm->SetLabel( wxString::Format( wxT( "%.1f" ),
-        (double) w / m_imageDPI.x * 25.4 ) );
-    m_SizeYValue_mm->SetLabel( wxString::Format( wxT( "%.1f" ),
-        (double) h / m_imageDPI.y * 25.4 ) );
+        m_SizeXValue->SetLabel( wxString::Format( wxT( "%d" ), w ) );
+        m_SizeYValue->SetLabel( wxString::Format( wxT( "%d" ), h ) );
+        m_BPPValue->SetLabel( wxString::Format( wxT( "%d" ), nb ) );
+    }
 }
 
-void BM2CMP_FRAME::OnResolutionChange( wxCommandEvent& event )
+
+EDA_UNITS_T BM2CMP_FRAME::getUnitFromSelection()
 {
-    long tmp;
+    // return the EDA_UNITS_T from the m_PixelUnit choice
+    switch( m_PixelUnit->GetSelection() )
+    {
+    case 1:
+        return INCHES;
 
-    if( m_DPIValueX->GetValue().ToLong( &tmp ) )
-        m_imageDPI.x = tmp;
+    case 2:
+        return UNSCALED_UNITS;
 
-    if(  m_DPIValueY->GetValue().ToLong( &tmp ) )
-        m_imageDPI.y = tmp;
+    case 0:
+    default:
+        break;
+    }
 
-    if( m_imageDPI.x < 32 )
-        m_imageDPI.x = 32;
+    return MILLIMETRES;
+}
 
-    if( m_imageDPI.y < 32 )
-        m_imageDPI.y = 32;
+
+void BM2CMP_FRAME::OnSizeChangeX( wxCommandEvent& event )
+{
+    double new_size;
+
+    if( m_UnitSizeX->GetValue().ToDouble( &new_size ) )
+    {
+        if( m_AspectRatioLocked )
+        {
+            double calculatedY = new_size / m_AspectRatio;
+
+            if( getUnitFromSelection() == UNSCALED_UNITS )
+            {
+                // for units in DPI, keeping aspect ratio cannot use m_AspectRatioLocked.
+                // just rescale the other dpi
+                double ratio = new_size / m_outputSizeX.GetOutputSize();
+                calculatedY = m_outputSizeY.GetOutputSize() * ratio;
+            }
+
+            m_outputSizeY.SetOutputSize( calculatedY, getUnitFromSelection() );
+            m_UnitSizeY->ChangeValue( FormatOutputSize( m_outputSizeY.GetOutputSize() ) );
+        }
+
+        m_outputSizeX.SetOutputSize( new_size, getUnitFromSelection() );
+    }
 
     updateImageInfo();
 }
 
+
+void BM2CMP_FRAME::OnSizeChangeY( wxCommandEvent& event )
+{
+    double new_size;
+
+    if( m_UnitSizeY->GetValue().ToDouble( &new_size ) )
+    {
+        if( m_AspectRatioLocked )
+        {
+            double calculatedX = new_size * m_AspectRatio;
+
+            if( getUnitFromSelection() == UNSCALED_UNITS )
+            {
+                // for units in DPI, keeping aspect ratio cannot use m_AspectRatioLocked.
+                // just rescale the other dpi
+                double ratio = new_size / m_outputSizeX.GetOutputSize();
+                calculatedX = m_outputSizeX.GetOutputSize() * ratio;
+            }
+
+            m_outputSizeX.SetOutputSize( calculatedX, getUnitFromSelection() );
+            m_UnitSizeX->ChangeValue( FormatOutputSize( m_outputSizeX.GetOutputSize() ) );
+        }
+
+        m_outputSizeY.SetOutputSize( new_size, getUnitFromSelection() );
+    }
+
+    updateImageInfo();
+}
+
+
+void BM2CMP_FRAME::OnSizeUnitChange( wxCommandEvent& event )
+{
+    m_outputSizeX.SetUnit( getUnitFromSelection() );
+    m_outputSizeY.SetUnit( getUnitFromSelection() );
+    updateImageInfo();
+
+    m_UnitSizeX->ChangeValue( FormatOutputSize( m_outputSizeX.GetOutputSize() ) );
+    m_UnitSizeY->ChangeValue( FormatOutputSize( m_outputSizeY.GetOutputSize() ) );
+}
+
+
+void BM2CMP_FRAME::ToggleAspectRatioLock( wxCommandEvent& event )
+{
+    m_AspectRatioLocked = !m_AspectRatioLocked;
+
+    if( m_AspectRatioLocked )
+    {
+        m_AspectRatioLockButton->SetBitmap( KiBitmap( locked_xpm ) );
+        //Force display update when aspect ratio is locked
+        auto fakeEvent = wxCommandEvent();
+        OnSizeChangeX( fakeEvent );
+    }
+
+    else
+    {
+        m_AspectRatioLockButton->SetBitmap( KiBitmap( unlocked_xpm ) );
+    }
+}
+
+
 void BM2CMP_FRAME::Binarize( double aThreshold )
 {
-    unsigned int  pixin;
-    unsigned char pixout;
     int           h = m_Greyscale_Image.GetHeight();
     int           w = m_Greyscale_Image.GetWidth();
-    unsigned int  threshold = (int)(aThreshold * 256);
+    unsigned char threshold = aThreshold * 255;
+    unsigned char alpha_thresh = 0.7 * threshold;
 
     for( int y = 0; y < h; y++ )
         for( int x = 0; x < w; x++ )
         {
-            pixin   = m_Greyscale_Image.GetGreen( x, y );
+            unsigned char pixout;
+            auto pixin   = m_Greyscale_Image.GetGreen( x, y );
+            auto alpha   = m_Greyscale_Image.HasAlpha() ?
+                    m_Greyscale_Image.GetAlpha( x, y ) : wxALPHA_OPAQUE;
 
-            if( pixin < threshold )
+            if( pixin < threshold && alpha > alpha_thresh )
                 pixout = 0;
             else
                 pixout = 255;
 
             m_NB_Image.SetRGB( x, y, pixout, pixout, pixout );
+
         }
 
     m_BN_Bitmap = wxBitmap( m_NB_Image );
+
 }
 
 
@@ -410,13 +658,19 @@ void BM2CMP_FRAME::NegateGreyscaleImage( )
         }
 }
 
-/* Called on Normal/Negative change option */
-void BM2CMP_FRAME::OnOptionsSelection( wxCommandEvent& event )
+
+void BM2CMP_FRAME::OnNegativeClicked( wxCommandEvent&  )
 {
-    NegateGreyscaleImage( );
-    m_Greyscale_Bitmap = wxBitmap( m_Greyscale_Image );
-    Binarize( (double)m_sliderThreshold->GetValue()/m_sliderThreshold->GetMax() );
-    Refresh();
+    if( m_checkNegative->GetValue() != m_Negative )
+    {
+        NegateGreyscaleImage();
+
+        m_Greyscale_Bitmap = wxBitmap( m_Greyscale_Image );
+        Binarize( (double)m_sliderThreshold->GetValue()/m_sliderThreshold->GetMax() );
+        m_Negative = m_checkNegative->GetValue();
+
+        Refresh();
+    }
 }
 
 
@@ -427,24 +681,53 @@ void BM2CMP_FRAME::OnThresholdChange( wxScrollEvent& event )
 }
 
 
-void BM2CMP_FRAME::OnExport( wxCommandEvent& event )
+void BM2CMP_FRAME::OnExportToFile( wxCommandEvent& event )
 {
-    // choices of m_radioBoxFormat are expected to be in same order as
+    m_exportToClipboard = false;
+    // choices of m_rbOutputFormat are expected to be in same order as
     // OUTPUT_FMT_ID. See bitmap2component.h
-    OUTPUT_FMT_ID sel = (OUTPUT_FMT_ID) m_radioBoxFormat->GetSelection();
+    OUTPUT_FMT_ID format = (OUTPUT_FMT_ID) m_rbOutputFormat->GetSelection();
+    exportBitmap( format );
+}
 
-    switch( sel )
+
+void BM2CMP_FRAME::OnExportToClipboard( wxCommandEvent& event )
+{
+    m_exportToClipboard = true;
+    // choices of m_rbOutputFormat are expected to be in same order as
+    // OUTPUT_FMT_ID. See bitmap2component.h
+    OUTPUT_FMT_ID format = (OUTPUT_FMT_ID) m_rbOutputFormat->GetSelection();
+
+    std::string buffer;
+    ExportToBuffer( buffer, format );
+
+    // Write buffer to the clipboard
+    if (wxTheClipboard->Open())
+    {
+        // This data objects are held by the clipboard,
+        // so do not delete them in the app.
+        wxTheClipboard->SetData( new wxTextDataObject( buffer.c_str() ) );
+        wxTheClipboard->Close();
+    }
+    else
+        wxMessageBox( _( "Unable to export to the Clipboard") );
+}
+
+
+void BM2CMP_FRAME::exportBitmap( OUTPUT_FMT_ID aFormat )
+{
+    switch( aFormat )
     {
     case EESCHEMA_FMT:
-        OnExportEeschema();
+        exportEeschemaFormat();
         break;
 
     case PCBNEW_KICAD_MOD:
-        OnExportPcbnew();
+        exportPcbnewFormat();
         break;
 
     case POSTSCRIPT_FMT:
-        OnExportPostScript();
+        exportPostScriptFormat();
         break;
 
     case KICAD_LOGO:
@@ -462,9 +745,8 @@ void BM2CMP_FRAME::OnExportLogo()
     if( path.IsEmpty() || !wxDirExists(path) )
         path = ::wxGetCwd();
 
-    wxFileDialog fileDlg( this, _( "Create a logo file" ),
-                          path, wxEmptyString,
-                          wxGetTranslation( PageLayoutDescrFileWildcard ),
+    wxFileDialog fileDlg( this, _( "Create Logo File" ), path, wxEmptyString,
+                          PageLayoutDescrFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
     int          diag = fileDlg.ShowModal();
 
@@ -481,17 +763,19 @@ void BM2CMP_FRAME::OnExportLogo()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created" ), GetChars(m_ConvertedFileName) );
+        msg.Printf( _( "File \"%s\" could not be created." ), m_ConvertedFileName );
         wxMessageBox( msg );
         return;
     }
 
-    ExportFile( outfile, KICAD_LOGO );
+    std::string buffer;
+    ExportToBuffer( buffer, KICAD_LOGO );
+    fputs( buffer.c_str(), outfile );
     fclose( outfile );
 }
 
 
-void BM2CMP_FRAME::OnExportPostScript()
+void BM2CMP_FRAME::exportPostScriptFormat()
 {
     wxFileName  fn( m_ConvertedFileName );
     wxString    path = fn.GetPath();
@@ -499,9 +783,9 @@ void BM2CMP_FRAME::OnExportPostScript()
     if( path.IsEmpty() || !wxDirExists( path ) )
         path = ::wxGetCwd();
 
-    wxFileDialog fileDlg( this, _( "Create a Postscript file" ),
+    wxFileDialog fileDlg( this, _( "Create Postscript File" ),
                           path, wxEmptyString,
-                          wxGetTranslation( PSFileWildcard ),
+                          PSFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     int          diag = fileDlg.ShowModal();
@@ -519,17 +803,19 @@ void BM2CMP_FRAME::OnExportPostScript()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created" ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), m_ConvertedFileName );
         wxMessageBox( msg );
         return;
     }
 
-    ExportFile( outfile, POSTSCRIPT_FMT );
+    std::string buffer;
+    ExportToBuffer( buffer, POSTSCRIPT_FMT );
+    fputs( buffer.c_str(), outfile );
     fclose( outfile );
 }
 
 
-void BM2CMP_FRAME::OnExportEeschema()
+void BM2CMP_FRAME::exportEeschemaFormat()
 {
     wxFileName  fn( m_ConvertedFileName );
     wxString    path = fn.GetPath();
@@ -537,9 +823,9 @@ void BM2CMP_FRAME::OnExportEeschema()
     if( path.IsEmpty() || !wxDirExists(path) )
         path = ::wxGetCwd();
 
-    wxFileDialog fileDlg( this, _( "Create a lib file for Eeschema" ),
+    wxFileDialog fileDlg( this, _( "Create Symbol Library" ),
                           path, wxEmptyString,
-                          wxGetTranslation( SchematicLibraryFileWildcard ),
+                          SchematicLibraryFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     int          diag = fileDlg.ShowModal();
@@ -556,27 +842,29 @@ void BM2CMP_FRAME::OnExportEeschema()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created" ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), m_ConvertedFileName );
         wxMessageBox( msg );
         return;
     }
 
-    ExportFile( outfile, EESCHEMA_FMT );
+    std::string buffer;
+    ExportToBuffer( buffer, EESCHEMA_FMT );
+    fputs( buffer.c_str(), outfile );
     fclose( outfile );
 }
 
 
-void BM2CMP_FRAME::OnExportPcbnew()
+void BM2CMP_FRAME::exportPcbnewFormat()
 {
     wxFileName  fn( m_ConvertedFileName );
     wxString    path = fn.GetPath();
 
     if( path.IsEmpty() || !wxDirExists( path ) )
-        path = ::wxGetCwd();
+        path = m_mruPath;
 
-    wxFileDialog fileDlg( this, _( "Create a footprint file for PcbNew" ),
+    wxFileDialog fileDlg( this, _( "Create Footprint Library" ),
                           path, wxEmptyString,
-                          wxGetTranslation( KiCadFootprintLibFileWildcard ),
+                          KiCadFootprintLibFileWildcard(),
                           wxFD_SAVE | wxFD_OVERWRITE_PROMPT );
 
     int          diag = fileDlg.ShowModal();
@@ -593,17 +881,20 @@ void BM2CMP_FRAME::OnExportPcbnew()
     if( outfile == NULL )
     {
         wxString msg;
-        msg.Printf( _( "File '%s' could not be created" ), GetChars( m_ConvertedFileName ) );
+        msg.Printf( _( "File \"%s\" could not be created." ), m_ConvertedFileName );
         wxMessageBox( msg );
         return;
     }
 
-    ExportFile( outfile, PCBNEW_KICAD_MOD );
+    std::string buffer;
+    ExportToBuffer( buffer, PCBNEW_KICAD_MOD );
+    fputs( buffer.c_str(), outfile );
     fclose( outfile );
+    m_mruPath = fn.GetPath();
 }
 
 
-void BM2CMP_FRAME::ExportFile( FILE* aOutfile, OUTPUT_FMT_ID aFormat )
+void BM2CMP_FRAME::ExportToBuffer( std::string& aOutput, OUTPUT_FMT_ID aFormat )
 {
     // Create a potrace bitmap
     int h = m_NB_Image.GetHeight();
@@ -613,7 +904,7 @@ void BM2CMP_FRAME::ExportFile( FILE* aOutfile, OUTPUT_FMT_ID aFormat )
     if( !potrace_bitmap )
     {
         wxString msg;
-        msg.Printf( wxT( "Error allocating memory for potrace bitmap" ) );
+        msg.Printf( _( "Error allocating memory for potrace bitmap" ) );
         wxMessageBox( msg );
         return;
     }
@@ -623,91 +914,31 @@ void BM2CMP_FRAME::ExportFile( FILE* aOutfile, OUTPUT_FMT_ID aFormat )
     {
         for( int x = 0; x < w; x++ )
         {
-            unsigned char pix = m_NB_Image.GetGreen( x, y );
-            BM_PUT( potrace_bitmap, x, y, pix ? 1 : 0 );
+            auto pix = m_NB_Image.GetGreen( x, y );
+            BM_PUT( potrace_bitmap, x, y, pix ? 0 : 1 );
         }
     }
 
-    bitmap2component( potrace_bitmap, aOutfile, aFormat, m_imageDPI.x, m_imageDPI.y );
+    // choices of m_rbPCBLayer are expected to be in same order as
+    // BMP2CMP_MOD_LAYER. See bitmap2component.h
+    BMP2CMP_MOD_LAYER modLayer = MOD_LYR_FSILKS;
+
+    if( aFormat == PCBNEW_KICAD_MOD )
+        modLayer = (BMP2CMP_MOD_LAYER) m_rbPCBLayer->GetSelection();
+
+    BITMAPCONV_INFO converter( aOutput );
+    converter.ConvertBitmap( potrace_bitmap, aFormat, m_outputSizeX.GetOutputDPI(),
+            m_outputSizeY.GetOutputDPI(), modLayer );
+
+    if( !converter.GetErrorMessages().empty() )
+        wxMessageBox( converter.GetErrorMessages().c_str(), _( "Errors" ) );
 }
 
 
-
-//-----<KIFACE>-----------------------------------------------------------------
-
-namespace BMP2CMP {
-
-static struct IFACE : public KIFACE_I
+void BM2CMP_FRAME::OnFormatChange( wxCommandEvent& event )
 {
-    bool OnKifaceStart( PGM_BASE* aProgram, int aCtlBits );
-
-    wxWindow* CreateWindow( wxWindow* aParent, int aClassId, KIWAY* aKiway, int aCtlBits = 0 )
-    {
-        switch( aClassId )
-        {
-
-        default:
-            {
-                KIWAY_PLAYER* frame = new BM2CMP_FRAME( aKiway, aParent );
-                return frame;
-            }
-        }
-    }
-
-    /**
-     * Function IfaceOrAddress
-     * return a pointer to the requested object.  The safest way to use this
-     * is to retrieve a pointer to a static instance of an interface, similar to
-     * how the KIFACE interface is exported.  But if you know what you are doing
-     * use it to retrieve anything you want.
-     *
-     * @param aDataId identifies which object you want the address of.
-     *
-     * @return void* - and must be cast into the know type.
-     */
-    void* IfaceOrAddress( int aDataId )
-    {
-        return NULL;
-    }
-
-    IFACE( const char* aDSOname, KIWAY::FACE_T aType ) :
-        KIFACE_I( aDSOname, aType )
-    {}
-
-} kiface( "BMP2CMP", KIWAY::FACE_BMP2CMP );
-
-}   // namespace BMP2CMP
-
-using namespace BMP2CMP;
-
-static PGM_BASE* process;
-
-KIFACE_I& Kiface()
-{
-    return kiface;
+    if( m_rbOutputFormat->GetSelection() == PCBNEW_KICAD_MOD )
+        m_rbPCBLayer->Enable( true );
+    else
+        m_rbPCBLayer->Enable( false );
 }
-
-
-// KIFACE_GETTER's actual spelling is a substitution macro found in kiway.h.
-// KIFACE_GETTER will not have name mangling due to declaration in kiway.h.
-MY_API( KIFACE* ) KIFACE_GETTER( int* aKIFACEversion, int aKIWAYversion, PGM_BASE* aProgram )
-{
-    process = (PGM_BASE*) aProgram;
-    return &kiface;
-}
-
-
-#if defined(BUILD_KIWAY_DLLS)
-PGM_BASE& Pgm()
-{
-    wxASSERT( process );    // KIFACE_GETTER has already been called.
-    return *process;
-}
-#endif
-
-
-bool IFACE::OnKifaceStart( PGM_BASE* aProgram, int aCtlBits )
-{
-    return start_common( aCtlBits );
-}
-

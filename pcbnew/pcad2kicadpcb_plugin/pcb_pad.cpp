@@ -56,8 +56,9 @@ PCB_PAD::~PCB_PAD()
 }
 
 
-void PCB_PAD::Parse( XNODE*   aNode, wxString aDefaultMeasurementUnit,
-                     wxString aActualConversion )
+void PCB_PAD::Parse( XNODE*          aNode,
+                     const wxString& aDefaultMeasurementUnit,
+                     const wxString& aActualConversion )
 {
     XNODE*          lNode, *cNode;
     long            num;
@@ -195,23 +196,30 @@ void PCB_PAD::AddToModule( MODULE* aModule, int aRotation, bool aEncapsulatedPad
 
     D_PAD* pad = new D_PAD( aModule );
 
-    aModule->Pads().PushBack( pad );
-
     if( !m_isHolePlated && m_hole )
     {
         // mechanical hole
-        pad->SetShape( PAD_CIRCLE );
-        pad->SetAttribute( PAD_HOLE_NOT_PLATED );
+        pad->SetShape( PAD_SHAPE_CIRCLE );
+        pad->SetAttribute( PAD_ATTRIB_HOLE_NOT_PLATED );
 
-        pad->SetDrillShape( PAD_DRILL_CIRCLE );
+        pad->SetDrillShape( PAD_DRILL_SHAPE_CIRCLE );
         pad->SetDrillSize( wxSize( m_hole, m_hole ) );
         pad->SetSize( wxSize( m_hole, m_hole ) );
 
-        pad->SetLayerSet( LSET::AllCuMask() | LSET( 3, B_Mask, F_Mask ) );
+        // Mounting Hole: Solder Mask Margin from Top Layer Width size.
+        // Used the default zone clearance (simplify)
+        if( m_shapes.GetCount() && m_shapes[0]->m_shape == wxT( "MtHole" ) )
+        {
+            int sm_margin = ( m_shapes[0]->m_width - m_hole ) / 2;
+            pad->SetLocalSolderMaskMargin( sm_margin );
+            pad->SetLocalClearance( sm_margin + Millimeter2iu( 0.254 ) );
+        }
+
+        pad->SetLayerSet( LSET::AllCuMask() | LSET( 2, B_Mask, F_Mask ) );
     }
     else
     {
-        ( m_hole ) ? padType = PAD_STANDARD : padType = PAD_SMD;
+        ( m_hole ) ? padType = PAD_ATTRIB_STANDARD : padType = PAD_ATTRIB_SMD;
 
         // form layer mask
         for( i = 0; i < (int) m_shapes.GetCount(); i++ )
@@ -237,35 +245,38 @@ void PCB_PAD::AddToModule( MODULE* aModule, int aRotation, bool aEncapsulatedPad
             }
         }
 
-        if( padType == PAD_STANDARD )
+        if( width == 0 || height == 0 )
+        {
+            delete pad;
+            return;
+        }
+
+        if( padType == PAD_ATTRIB_STANDARD )
             // actually this is a thru-hole pad
             pad->SetLayerSet( LSET::AllCuMask() | LSET( 2, B_Mask, F_Mask ) );
 
-        if( width == 0 || height == 0 )
-            THROW_IO_ERROR( wxT( "pad with zero size" ) );
-
-        pad->SetPadName( m_name.text );
+        pad->SetName( m_name.text );
 
         if( padShapeName == wxT( "Oval" )
             || padShapeName == wxT( "Ellipse" )
             || padShapeName == wxT( "MtHole" ) )
         {
             if( width != height )
-                pad->SetShape( PAD_OVAL );
+                pad->SetShape( PAD_SHAPE_OVAL );
             else
-                pad->SetShape( PAD_CIRCLE );
+                pad->SetShape( PAD_SHAPE_CIRCLE );
         }
         else if( padShapeName == wxT( "Rect" )
                  || padShapeName == wxT( "RndRect" ) )
-            pad->SetShape( PAD_RECT );
+            pad->SetShape( PAD_SHAPE_RECT );
         else if( padShapeName == wxT( "Polygon" ) )
-            pad->SetShape( PAD_RECT ); // approximation
+            pad->SetShape( PAD_SHAPE_RECT ); // approximation
 
         pad->SetSize( wxSize( width, height ) );
         pad->SetDelta( wxSize( 0, 0 ) );
         pad->SetOrientation( m_rotation + aRotation );
 
-        pad->SetDrillShape( PAD_DRILL_CIRCLE );
+        pad->SetDrillShape( PAD_DRILL_SHAPE_CIRCLE );
         pad->SetOffset( wxPoint( 0, 0 ) );
         pad->SetDrillSize( wxSize( m_hole, m_hole ) );
 
@@ -277,7 +288,7 @@ void PCB_PAD::AddToModule( MODULE* aModule, int aRotation, bool aEncapsulatedPad
         {
             // It is a new net
             netinfo = new NETINFO_ITEM( m_board, m_net );
-            m_board->AppendNet( netinfo );
+            m_board->Add( netinfo );
         }
 
         pad->SetNetCode( netinfo->GetNet() );
@@ -292,6 +303,8 @@ void PCB_PAD::AddToModule( MODULE* aModule, int aRotation, bool aEncapsulatedPad
         RotatePoint( &padpos, aModule->GetOrientation() );
         pad->SetPosition( padpos + aModule->GetPosition() );
     }
+
+    aModule->Add( pad );
 }
 
 
@@ -323,12 +336,12 @@ void PCB_PAD::AddToBoard()
         }
 
         if( width == 0 || height == 0 )
-            THROW_IO_ERROR( wxT( "pad or via with zero size" ) );
+            return;
 
         if( IsCopperLayer( m_KiCadLayer ) )
         {
             VIA* via = new VIA( m_board );
-            m_board->m_Track.Append( via );
+            m_board->Add( via );
 
             via->SetTimeStamp( 0 );
 

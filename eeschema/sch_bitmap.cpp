@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2011 jean-pierre.charras
- * Copyright (C) 2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2011-2019 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -27,35 +27,33 @@
  */
 
 #include <fctsys.h>
-#include <class_drawpanel.h>
+#include <sch_draw_panel.h>
 #include <trigo.h>
-#include <wxEeschemaStruct.h>
+#include <macros.h>
+#include <bitmaps.h>
+#include <base_units.h>
+
 #include <sch_bitmap.h>
 
 #include <wx/mstream.h>
 
 
-/*
- * class SCH_BITMAP
- * This class handle a bitmap image that can be inserted in a schematic.
- */
-
 SCH_BITMAP::SCH_BITMAP( const wxPoint& pos ) :
     SCH_ITEM( NULL, SCH_BITMAP_T )
 {
-    m_Pos   = pos;
+    m_pos   = pos;
     m_Layer = LAYER_NOTES;              // used only to draw/plot a rectangle,
                                         // when a bitmap cannot be drawn or plotted
-    m_Image = new BITMAP_BASE();
+    m_image = new BITMAP_BASE();
 }
 
 
 SCH_BITMAP::SCH_BITMAP( const SCH_BITMAP& aSchBitmap ) :
     SCH_ITEM( aSchBitmap )
 {
-    m_Pos   = aSchBitmap.m_Pos;
+    m_pos   = aSchBitmap.m_pos;
     m_Layer = aSchBitmap.m_Layer;
-    m_Image = new BITMAP_BASE( *aSchBitmap.m_Image );
+    m_image = new BITMAP_BASE( *aSchBitmap.m_image );
 }
 
 
@@ -71,9 +69,9 @@ SCH_ITEM& SCH_BITMAP::operator=( const SCH_ITEM& aItem )
 
         SCH_BITMAP* bitmap = (SCH_BITMAP*) &aItem;
 
-        delete m_Image;
-        m_Image = new BITMAP_BASE( *bitmap->m_Image );
-        m_Pos = bitmap->m_Pos;
+        delete m_image;
+        m_image = new BITMAP_BASE( *bitmap->m_image );
+        m_pos = bitmap->m_pos;
     }
 
     return *this;
@@ -82,35 +80,7 @@ SCH_ITEM& SCH_BITMAP::operator=( const SCH_ITEM& aItem )
 
 bool SCH_BITMAP::ReadImageFile( const wxString& aFullFilename )
 {
-    return m_Image->ReadImageFile( aFullFilename );
-}
-
-
-bool SCH_BITMAP::Save( FILE* aFile ) const
-{
-    if( fprintf( aFile, "$Bitmap\n" ) == EOF )
-        return false;
-
-    if( fprintf( aFile, "Pos %-4d %-4d\n", m_Pos.x, m_Pos.y ) == EOF )
-        return false;
-
-    if( fprintf( aFile, "Scale %f\n", m_Image->m_Scale ) == EOF )
-        return false;
-
-    if( fprintf( aFile, "Data\n" ) == EOF )
-        return false;
-
-    if( !m_Image->SaveData( aFile ) )
-        return false;
-
-    if( fprintf( aFile, "\nEndData\n" ) == EOF )
-        return false;
-
-
-    if( fprintf( aFile, "$EndBitmap\n" ) == EOF )
-        return false;
-
-    return true;
+    return m_image->ReadImageFile( aFullFilename );
 }
 
 
@@ -127,139 +97,53 @@ void SCH_BITMAP::SwapData( SCH_ITEM* aItem )
                                    GetChars( aItem->GetClass() ) ) );
 
     SCH_BITMAP* item = (SCH_BITMAP*) aItem;
-    EXCHG( m_Pos, item->m_Pos );
-    EXCHG( m_Image, item->m_Image );
-}
-
-
-bool SCH_BITMAP::Load( LINE_READER& aLine, wxString& aErrorMsg )
-{
-    char* line = aLine.Line();
-
-    if( strnicmp( line, "$Bitmap", 7 ) != 0 )
-    {
-        aErrorMsg.Printf( wxT( "Eeschema file bitmap image load error at line %d, aborted" ),
-                          aLine.LineNumber() );
-        aErrorMsg << wxT( "\n" ) << FROM_UTF8( (char*) aLine );
-        return false;
-    }
-
-    for( ; ; )
-    {
-        if( !aLine.ReadLine() )
-            return false;
-
-        line = aLine.Line();
-
-        if( strnicmp( line, "Pos", 3 ) == 0 )
-        {
-            sscanf( line + 3, "%d %d", &m_Pos.x, &m_Pos.y );
-            continue;
-        }
-
-        if( strnicmp( line, "Scale", 5 ) == 0 )
-        {
-            sscanf( line + 5, "%lf", &m_Image->m_Scale );
-            continue;
-        }
-
-        if( strnicmp( line, "Data", 4 ) == 0 )
-        {
-            m_Image->LoadData( aLine, aErrorMsg );
-        }
-
-        if( strnicmp( line, "$EndBitmap", 4 ) == 0 )
-            break;
-    }
-
-    return true;
+    std::swap( m_pos, item->m_pos );
+    std::swap( m_image, item->m_image );
 }
 
 
 const EDA_RECT SCH_BITMAP::GetBoundingBox() const
 {
-    EDA_RECT rect = m_Image->GetBoundingBox();
+    EDA_RECT rect = m_image->GetBoundingBox();
 
-    rect.Move( m_Pos );
+    rect.Move( m_pos );
 
     return rect;
 }
 
 
-void SCH_BITMAP::Draw( EDA_DRAW_PANEL* aPanel, wxDC* aDC, const wxPoint& aOffset,
-                       GR_DRAWMODE aDrawMode, EDA_COLOR_T aColor )
+void SCH_BITMAP::Print( wxDC* aDC, const wxPoint& aOffset  )
 {
-    wxPoint pos = m_Pos + aOffset;
+    wxPoint pos = m_pos + aOffset;
 
-    GRSetDrawMode( aDC, aDrawMode );
-
-    if( aColor < 0 )    // Use normal drawing function
-    {
-        m_Image->DrawBitmap( aPanel, aDC, pos );
-    }
-    else    // draws bounding box only (used to move items)
-    {
-        // To draw the rect, pos is the upper left corner position
-        wxSize size = m_Image->GetSize();
-        pos.x -= size.x / 2;
-        pos.y -= size.y / 2;
-        GRRect( aPanel->GetClipBox(), aDC, pos.x, pos.y,
-                pos.x + size.x, pos.y + size.y, 0, aColor );
-    }
+    m_image->DrawBitmap( aDC, pos );
 }
 
 
-/* Function GetSize
- * returns the actual size (in user units, not in pixels) of the image
- */
 wxSize SCH_BITMAP::GetSize() const
 {
-    return m_Image->GetSize();
+    return m_image->GetSize();
 }
 
 
-/*
- * Mirror image relative to a horizontal X axis )
- */
 void SCH_BITMAP::MirrorX( int aXaxis_position )
 {
-    m_Pos.y -= aXaxis_position;
-    NEGATE( m_Pos.y );
-    m_Pos.y += aXaxis_position;
-
-    m_Image->Mirror( true );
+    MIRROR( m_pos.y, aXaxis_position );
+    m_image->Mirror( true );
 }
 
 
-/*
- * Mirror image relative to a vertical Y axis
- */
 void SCH_BITMAP::MirrorY( int aYaxis_position )
 {
-    m_Pos.x -= aYaxis_position;
-    NEGATE( m_Pos.x );
-    m_Pos.x += aYaxis_position;
-    m_Image->Mirror( false );
+    MIRROR( m_pos.x, aYaxis_position );
+    m_image->Mirror( false );
 }
 
 
 void SCH_BITMAP::Rotate( wxPoint aPosition )
 {
-    RotatePoint( &m_Pos, aPosition, 900 );
-    m_Image->Rotate( false );
-}
-
-
-bool SCH_BITMAP::IsSelectStateChanged( const wxRect& aRect )
-{
-    bool previousState = IsSelected();
-
-    if( aRect.Contains( m_Pos ) )
-        SetFlags( SELECTED );
-    else
-        ClearFlags( SELECTED );
-
-    return previousState != IsSelected();
+    RotatePoint( &m_pos, aPosition, 900 );
+    m_image->Rotate( false );
 }
 
 
@@ -269,10 +153,8 @@ void SCH_BITMAP::Show( int nestLevel, std::ostream& os ) const
     // XML output:
     wxString s = GetClass();
 
-    NestedSpace( nestLevel, os ) << '<' << s.Lower().mb_str() << m_Pos << "/>\n";
+    NestedSpace( nestLevel, os ) << '<' << s.Lower().mb_str() << m_pos << "/>\n";
 }
-
-
 #endif
 
 
@@ -301,5 +183,28 @@ bool SCH_BITMAP::HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy 
 
 void SCH_BITMAP::Plot( PLOTTER* aPlotter )
 {
-    m_Image->PlotImage( aPlotter, m_Pos, GetLayerColor( GetLayer() ), GetPenSize() );
+    m_image->PlotImage( aPlotter, m_pos, GetLayerColor( GetLayer() ), GetPenSize() );
+}
+
+
+BITMAP_DEF SCH_BITMAP::GetMenuImage() const
+{
+    return image_xpm;
+}
+
+
+void SCH_BITMAP::GetMsgPanelInfo( EDA_UNITS_T aUnits, MSG_PANEL_ITEMS& aList )
+{
+    aList.push_back( MSG_PANEL_ITEM( _( "Bitmap" ), wxEmptyString, RED ) );
+
+    aList.push_back( MSG_PANEL_ITEM( _( "Width" ), MessageTextFromValue( aUnits, GetSize().x ), RED ) );
+    aList.push_back( MSG_PANEL_ITEM( _( "Height" ), MessageTextFromValue( aUnits, GetSize().y ), RED ) );
+}
+
+
+void SCH_BITMAP::ViewGetLayers( int aLayers[], int& aCount ) const
+{
+    aCount = 2;
+    aLayers[0] = LAYER_DRAW_BITMAPS;
+    aLayers[1] = LAYER_SELECTION_SHADOWS;
 }

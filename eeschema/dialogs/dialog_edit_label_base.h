@@ -1,8 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////
-// C++ code generated with wxFormBuilder (version Nov  6 2013)
+// C++ code generated with wxFormBuilder (version Dec 30 2017)
 // http://www.wxformbuilder.org/
 //
-// PLEASE DO "NOT" EDIT THIS FILE!
+// PLEASE DO *NOT* EDIT THIS FILE!
 ///////////////////////////////////////////////////////////////////////////
 
 #ifndef __DIALOG_EDIT_LABEL_BASE_H__
@@ -11,8 +11,6 @@
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
-class DIALOG_SHIM;
-
 #include "dialog_shim.h"
 #include <wx/string.h>
 #include <wx/stattext.h>
@@ -21,7 +19,8 @@ class DIALOG_SHIM;
 #include <wx/colour.h>
 #include <wx/settings.h>
 #include <wx/textctrl.h>
-#include <wx/valtext.h>
+#include <wx/stc/stc.h>
+#include <wx/combobox.h>
 #include <wx/sizer.h>
 #include <wx/radiobox.h>
 #include <wx/button.h>
@@ -40,17 +39,19 @@ class DIALOG_LABEL_EDITOR_BASE : public DIALOG_SHIM
 		enum
 		{
 			wxID_VALUESINGLE = 1000,
-			wxID_VALUEMULTI,
 			wxID_SIZE
 		};
 		
-		wxFlexGridSizer* m_textControlSizer;
-		wxStaticText* m_staticText1;
-		wxTextCtrl* m_textLabelSingleLine;
-		wxTextCtrl* m_textLabelMultiLine;
-		wxStaticText* m_SizeTitle;
-		wxTextCtrl* m_TextSize;
-		wxStaticText* m_staticSizeUnits;
+		wxFlexGridSizer* m_textEntrySizer;
+		wxStaticText* m_labelSingleLine;
+		wxTextCtrl* m_valueSingleLine;
+		wxStaticText* m_labelMultiLine;
+		wxStyledTextCtrl* m_valueMultiLine;
+		wxStaticText* m_labelCombo;
+		wxComboBox* m_valueCombo;
+		wxStaticText* m_textSizeLabel;
+		wxTextCtrl* m_textSizeCtrl;
+		wxStaticText* m_textSizeUnits;
 		wxRadioBox* m_TextOrient;
 		wxRadioBox* m_TextStyle;
 		wxRadioBox* m_TextShape;
@@ -60,12 +61,9 @@ class DIALOG_LABEL_EDITOR_BASE : public DIALOG_SHIM
 		
 		// Virtual event handlers, overide them in your derived class
 		virtual void OnEnterKey( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnCancelClick( wxCommandEvent& event ) { event.Skip(); }
-		virtual void OnOkClick( wxCommandEvent& event ) { event.Skip(); }
 		
 	
 	public:
-		wxString m_labelText; 
 		
 		DIALOG_LABEL_EDITOR_BASE( wxWindow* parent, wxWindowID id = wxID_ANY, const wxString& title = _("Text Editor"), const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxSize( -1,-1 ), long style = wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER ); 
 		~DIALOG_LABEL_EDITOR_BASE();

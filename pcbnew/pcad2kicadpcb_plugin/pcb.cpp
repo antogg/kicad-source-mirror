@@ -48,7 +48,7 @@
 
 namespace PCAD2KICAD {
 
-LAYER_ID PCB::GetKiCadLayer( int aPCadLayer )
+PCB_LAYER_ID PCB::GetKiCadLayer( int aPCadLayer )
 {
     wxASSERT( aPCadLayer >= 0 && aPCadLayer < MAX_PCAD_LAYER_QTY );
     return m_layersMap[aPCadLayer].KiCadLayer;
@@ -133,7 +133,7 @@ int PCB::GetNetCode( wxString aNetName )
     return 0;
 }
 
-XNODE* PCB::FindCompDefName( XNODE* aNode, wxString aName )
+XNODE* PCB::FindCompDefName( XNODE* aNode, const wxString& aName )
 {
     XNODE*      result = NULL, * lNode;
     wxString    propValue;
@@ -162,11 +162,12 @@ XNODE* PCB::FindCompDefName( XNODE* aNode, wxString aName )
 
 
 void PCB::SetTextProperty( XNODE*   aNode, TTEXTVALUE* aTextValue,
-                           wxString aPatGraphRefName, wxString aXmlName,
-                           wxString aActualConversion )
+                           const wxString& aPatGraphRefName,
+                           const wxString& aXmlName,
+                           const wxString& aActualConversion )
 {
     XNODE*      tNode, * t1Node;
-    wxString    n, pn, propValue, str;
+    wxString    n, nnew, pn, propValue, str;
 
     // aNode is pattern now
     tNode   = aNode;
@@ -199,7 +200,8 @@ void PCB::SetTextProperty( XNODE*   aNode, TTEXTVALUE* aTextValue,
                         str     = aTextValue->text;
                         str.Trim( false );
                         str.Trim( true );
-                        n       = n + wxT( ' ' ) + str; // changed in new file version.....
+                        nnew    = n; // new file version
+                        n       = n + wxT( ' ' ) + str; // old file version
                         tNode   = NULL;
                     }
                 }
@@ -219,7 +221,7 @@ void PCB::SetTextProperty( XNODE*   aNode, TTEXTVALUE* aTextValue,
         propValue.Trim( false );
         propValue.Trim( true );
 
-        if( propValue == n )
+        if( propValue == n || propValue == nnew )
             break;
 
         tNode = tNode->GetNext();
@@ -232,7 +234,7 @@ void PCB::SetTextProperty( XNODE*   aNode, TTEXTVALUE* aTextValue,
 
 void PCB::DoPCBComponents( XNODE*           aNode,
                            wxXmlDocument*   aXmlDoc,
-                           wxString         aActualConversion,
+                           const wxString&  aActualConversion,
                            wxStatusBar*     aStatusBar )
 {
     XNODE*        lNode, * tNode, * mNode;
@@ -373,7 +375,7 @@ void PCB::DoPCBComponents( XNODE*           aNode,
                                     break;
 
                                 mNode->GetAttribute( wxT( "Name" ), &propValue );
-                                mc->SetPadName( str, propValue );
+                                mc->SetName( str, propValue );
                                 mNode = mNode->GetNext();
                             }
                             else
@@ -419,7 +421,9 @@ void PCB::DoPCBComponents( XNODE*           aNode,
 }
 
 
-void PCB::ConnectPinToNet( wxString aCompRef, wxString aPinRef, wxString aNetName )
+void PCB::ConnectPinToNet( const wxString& aCompRef,
+                           const wxString& aPinRef,
+                           const wxString& aNetName )
 {
     PCB_MODULE* module;
     PCB_PAD*    cp;
@@ -446,7 +450,7 @@ void PCB::ConnectPinToNet( wxString aCompRef, wxString aPinRef, wxString aNetNam
 }
 
 
-int PCB::FindLayer( wxString aLayerName )
+int PCB::FindLayer( const wxString& aLayerName )
 {
     for( LAYER_NUM i = 0; i < (int)m_layersStackup.GetCount(); ++i )
     {
@@ -478,15 +482,15 @@ int PCB::FindLayer( wxString aLayerName )
  */
 void PCB::MapLayer( XNODE* aNode )
 {
-    wxString    lName, layerType;
-    LAYER_ID    KiCadLayer;
-    long        num = 0;
+    wxString     lName, layerType;
+    PCB_LAYER_ID KiCadLayer;
+    long         num = 0;
 
     aNode->GetAttribute( wxT( "Name" ), &lName );
     lName = lName.MakeUpper();
 
     if( lName == wxT( "TOP ASSY" ) )
-        KiCadLayer = Cmts_User;
+        KiCadLayer = F_Fab;
     else if( lName == wxT( "TOP SILK" ) )
         KiCadLayer = F_SilkS;
     else if( lName == wxT( "TOP PASTE" ) )
@@ -504,7 +508,7 @@ void PCB::MapLayer( XNODE* aNode )
     else if( lName == wxT( "BOT SILK" ) )
         KiCadLayer = B_SilkS;
     else if( lName == wxT( "BOT ASSY" ) )
-        KiCadLayer = Dwgs_User;
+        KiCadLayer = B_Fab;
     else if( lName == wxT( "BOARD" ) )
         KiCadLayer = Edge_Cuts;
     else
@@ -574,7 +578,7 @@ double PCB::GetDistance( wxRealPoint* aPoint1, wxRealPoint* aPoint2 )
                   ( aPoint1->y - aPoint2->y ) );
 }
 
-void PCB::GetBoardOutline( wxXmlDocument* aXmlDoc, wxString aActualConversion )
+void PCB::GetBoardOutline( wxXmlDocument* aXmlDoc, const wxString& aActualConversion )
 {
     XNODE*       iNode, *lNode, *pNode;
     long         PCadLayer = 0;
@@ -615,8 +619,8 @@ void PCB::GetBoardOutline( wxXmlDocument* aXmlDoc, wxString aActualConversion )
                                     m_boardOutline.Add( new wxRealPoint( x, y ) );
                             }
 
-
-                            pNode = pNode->GetNext();
+                            if( pNode )
+                                pNode = pNode->GetNext();
 
                             if( pNode )
                             {
@@ -665,7 +669,7 @@ void PCB::GetBoardOutline( wxXmlDocument* aXmlDoc, wxString aActualConversion )
     }
 }
 
-void PCB::Parse( wxStatusBar* aStatusBar, wxXmlDocument* aXmlDoc, wxString aActualConversion )
+void PCB::ParseBoard( wxStatusBar* aStatusBar, wxXmlDocument* aXmlDoc, const wxString& aActualConversion )
 {
     XNODE*          aNode;//, *aaNode;
     PCB_NET*        net;
@@ -683,7 +687,7 @@ void PCB::Parse( wxStatusBar* aStatusBar, wxXmlDocument* aXmlDoc, wxString aActu
 
         if( aNode )
         {
-            m_defaultMeasurementUnit = aNode->GetNodeContent();
+            m_defaultMeasurementUnit = aNode->GetNodeContent().Lower();
             m_defaultMeasurementUnit.Trim( true );
             m_defaultMeasurementUnit.Trim( false );
         }
@@ -924,7 +928,7 @@ void PCB::AddToBoard()
     {
         net = m_pcbNetlist[i];
 
-        m_board->AppendNet( new NETINFO_ITEM( m_board, net->m_name, net->m_netCode ) );
+        m_board->Add( new NETINFO_ITEM( m_board, net->m_name, net->m_netCode ) );
     }
 
     for( i = 0; i < (int) m_pcbComponents.GetCount(); i++ )

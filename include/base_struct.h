@@ -1,10 +1,10 @@
 /*
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
- * Copyright (C) 2013 Jean-Pierre Charras, jp.charras at wanadoo.fr
- * Copyright (C) 2008-2013 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
- * Copyright (C) 2008-2013 Wayne Stambaugh <stambaughw@verizon.net>
- * Copyright (C) 2004-2013 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2013-2015 Jean-Pierre Charras, jp.charras at wanadoo.fr
+ * Copyright (C) 2008-2015 SoftPLC Corporation, Dick Hollenbeck <dick@softplc.com>
+ * Copyright (C) 2008 Wayne Stambaugh <stambaughw@gmail.com>
+ * Copyright (C) 2004-2019 KiCad Developers, see change_log.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -24,32 +24,16 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file  base_struct.h
- * @brief Basic classes for most KiCad items.
- */
-
 #ifndef BASE_STRUCT_H_
 #define BASE_STRUCT_H_
 
+#include <deque>
+
 #include <core/typeinfo.h>
-
-#include <colors.h>
-#include <bitmaps.h>
-#include <richio.h>
+#include "common.h"
+#include <wx/fdrepdlg.h>
+#include <bitmap_types.h>
 #include <view/view_item.h>
-
-#if defined(DEBUG)
-#include <iostream>         // needed for Show()
-extern std::ostream& operator <<( std::ostream& out, const wxSize& size );
-
-extern std::ostream& operator <<( std::ostream& out, const wxPoint& pt );
-#endif
-
-
-/// Flag to enable find and replace tracing using the WXTRACE environment variable.
-extern const wxString traceFindReplace;
-
 
 /**
  * Enum FILL_T
@@ -73,6 +57,24 @@ enum SEARCH_RESULT {
 };
 
 
+/**
+ * Additional flag values wxFindReplaceData::m_Flags
+ */
+enum FIND_REPLACE_FLAGS
+{
+    // The last wxFindReplaceFlag enum is wxFR_MATCHCASE = 0x4.
+    FR_CURRENT_SHEET_ONLY = wxFR_MATCHCASE << 1,   // Search the current sheet only.
+    FR_SEARCH_ALL_FIELDS  = wxFR_MATCHCASE << 2,   // Search user fields as well as ref and value.
+    FR_SEARCH_ALL_PINS    = wxFR_MATCHCASE << 3,   // Search pin name and number.
+    FR_MATCH_WILDCARD     = wxFR_MATCHCASE << 4,   // Use simple wild card matching (* & ?).
+    FR_SEARCH_WRAP        = wxFR_MATCHCASE << 5,   // Wrap around the start or end of search.
+    FR_SEARCH_REPLACE     = wxFR_MATCHCASE << 7,   // Search for a item that has replaceable text.
+    FR_REPLACE_ITEM_FOUND = wxFR_MATCHCASE << 8,   // Indicates an item with replaceable text has
+                                                   // been found.
+    FR_REPLACE_REFERENCES = wxFR_MATCHCASE << 9    // Don't replace in references.
+};
+
+
 class wxFindReplaceData;
 class EDA_ITEM;
 class EDA_DRAW_FRAME;
@@ -82,214 +84,35 @@ class MSG_PANEL_ITEM;
 
 
 /**
- * Class INSPECTOR
- * is an abstract class that is used to inspect and possibly collect the
- * (search) results of Iterating over a list or tree of KICAD_T objects.
- * Extend from this class and implement the Inspect function and provide for
- * a way for the extension to collect the results of the search/scan data and
- * provide them to the caller.
+ * Typedef INSPECTOR
+ * is used to inspect and possibly collect the
+ * (search) results of iterating over a list or tree of KICAD_T objects.
+ * Provide an implementation as needed to inspect EDA_ITEMs visited via
+ * EDA_ITEM::Visit() and EDA_ITEM::IterateForward().
+ * <p>
+ * FYI the std::function may hold a lambda, std::bind, pointer to func, or
+ * ptr to member function, per modern C++. It is used primarily for searching,
+ * but not limited to that.  It can also collect or modify the scanned objects.
+ * 'Capturing' lambdas are particularly convenient because they can use context
+ * and this often means @a aTestData is not used.
+ *
+ * @param aItem An EDA_ITEM to examine.
+ * @param aTestData is arbitrary data needed by the inspector to determine
+ *  if the EDA_ITEM under test meets its match criteria, and is often NULL
+ *  with the advent of capturing lambdas.
+ * @return A #SEARCH_RESULT type #SEARCH_QUIT if the iterator function is to
+ *          stop the scan, else #SEARCH_CONTINUE;
  */
-class INSPECTOR
-{
-public:
-    virtual ~INSPECTOR()
-    {
-    }
+typedef std::function< SEARCH_RESULT ( EDA_ITEM* aItem, void* aTestData ) >   INSPECTOR_FUNC;
 
-
-    /**
-     * Function Inspect
-     * is the examining function within the INSPECTOR which is passed to the
-     * EDA_ITEM::Iterate() function.  It is used primarily for searching, but
-     * not limited to that.  It can also collect or modify the scanned objects.
-     *
-     * @param aItem An EDA_ITEM to examine.
-     * @param aTestData is arbitrary data needed by the inspector to determine
-     *                  if the EDA_ITEM under test meets its match criteria.
-     * @return A #SEARCH_RESULT type #SEARCH_QUIT if the iterator function is to
-     *          stop the scan, else #SEARCH_CONTINUE;
-     */
-    virtual SEARCH_RESULT Inspect( EDA_ITEM* aItem, const void* aTestData ) = 0;
-};
-
-
-/**
- * Class EDA_RECT
- * handles the component boundary box.
- * This class is similar to wxRect, but some wxRect functions are very curious,
- * and are working only if dimensions are >= 0 (not always the case in KiCad)
- * and also KiCad needs some specific method.
- * so I prefer this more suitable class
- */
-class EDA_RECT
-{
-private:
-    wxPoint m_Pos;      // Rectangle Origin
-    wxSize  m_Size;     // Rectangle Size
-
-public:
-    EDA_RECT() { };
-
-    EDA_RECT( const wxPoint& aPos, const wxSize& aSize ) :
-        m_Pos( aPos ),
-        m_Size( aSize )
-    { }
-
-    wxPoint Centre() const
-    {
-        return wxPoint( m_Pos.x + ( m_Size.x >> 1 ),
-                        m_Pos.y + ( m_Size.y >> 1 ) );
-    }
-
-    /**
-     * Function Move
-     * moves the rectangle by the \a aMoveVector.
-     * @param aMoveVector A wxPoint that is the value to move this rectangle
-     */
-    void Move( const wxPoint& aMoveVector );
-
-    /**
-     * Function Normalize
-     * ensures that the height ant width are positive.
-     */
-    void Normalize();
-
-    /**
-     * Function Contains
-     * @param aPoint = the wxPoint to test
-     * @return true if aPoint is inside the boundary box. A point on a edge is seen as inside
-     */
-    bool Contains( const wxPoint& aPoint ) const;
-    /**
-     * Function Contains
-     * @param x = the x coordinate of the point to test
-     * @param y = the x coordinate of the point to test
-     * @return true if point is inside the boundary box. A point on a edge is seen as inside
-     */
-    bool Contains( int x, int y ) const { return Contains( wxPoint( x, y ) ); }
-
-    /**
-     * Function Contains
-     * @param aRect = the EDA_RECT to test
-     * @return true if aRect is Contained. A common edge is seen as contained
-     */
-    bool Contains( const EDA_RECT& aRect ) const;
-
-    const wxSize& GetSize() const { return m_Size; }
-    int GetX() const { return m_Pos.x; }
-    int GetY() const { return m_Pos.y; }
-
-    const wxPoint& GetOrigin() const { return m_Pos; }
-    const wxPoint& GetPosition() const { return m_Pos; }
-    const wxPoint GetEnd() const { return wxPoint( GetRight(), GetBottom() ); }
-
-    int GetWidth() const { return m_Size.x; }
-    int GetHeight() const { return m_Size.y; }
-    int GetRight() const { return m_Pos.x + m_Size.x; }
-    int GetBottom() const { return m_Pos.y + m_Size.y; }
-
-    void SetOrigin( const wxPoint& pos ) { m_Pos = pos; }
-    void SetOrigin( int x, int y ) { m_Pos.x = x; m_Pos.y = y; }
-    void SetSize( const wxSize& size ) { m_Size = size; }
-    void SetSize( int w, int h ) { m_Size.x = w; m_Size.y = h; }
-    void Offset( int dx, int dy ) { m_Pos.x += dx; m_Pos.y += dy; }
-    void Offset( const wxPoint& offset ) { m_Pos.x += offset.x; m_Pos.y +=
-                                               offset.y; }
-    void SetX( int val ) { m_Pos.x = val; }
-    void SetY( int val ) { m_Pos.y = val; }
-    void SetWidth( int val ) { m_Size.x = val; }
-    void SetHeight( int val ) { m_Size.y = val; }
-    void SetEnd( int x, int y ) { SetEnd( wxPoint( x, y ) ); }
-    void SetEnd( const wxPoint& pos )
-    {
-        m_Size.x = pos.x - m_Pos.x; m_Size.y = pos.y - m_Pos.y;
-    }
-
-    /**
-     * Function Intersects
-     * tests for a common area between rectangles.
-     *
-     * @param aRect A rectangle to test intersection with.
-     * @return bool - true if the argument rectangle intersects this rectangle.
-     * (i.e. if the 2 rectangles have at least a common point)
-     */
-    bool Intersects( const EDA_RECT& aRect ) const;
-
-    /**
-     * Function Intersects
-     * tests for a common area between a segment and this rectangle.
-     *
-     * @param aPoint1 First point of the segment to test intersection with.
-     * @param aPoint2 Second point of the segment to test intersection with.
-     * @return bool - true if the argument segment intersects this rectangle.
-     * (i.e. if the segment and rectangle have at least a common point)
-     */
-    bool Intersects( const wxPoint& aPoint1, const wxPoint& aPoint2 ) const;
-
-    /**
-     * Function operator(wxRect)
-     * overloads the cast operator to return a wxRect
-     * wxRect does not accept negative values for size, so ensure the
-     * wxRect size is always >= 0
-     */
-    operator wxRect() const
-    {
-        EDA_RECT rect( m_Pos, m_Size );
-        rect.Normalize();
-        return wxRect( rect.m_Pos, rect.m_Size );
-    }
-
-    /**
-     * Function Inflate
-     * inflates the rectangle horizontally by \a dx and vertically by \a dy. If \a dx
-     * and/or \a dy is negative the rectangle is deflated.
-     */
-    EDA_RECT& Inflate( wxCoord dx, wxCoord dy );
-
-    /**
-     * Function Inflate
-     * inflates the rectangle horizontally and vertically by \a aDelta. If \a aDelta
-     * is negative the rectangle is deflated.
-     */
-    EDA_RECT& Inflate( int aDelta );
-
-    /**
-     * Function Merge
-     * modifies the position and size of the rectangle in order to contain \a aRect.  It is
-     * mainly used to calculate bounding boxes.
-     * @param aRect  The rectangle to merge with this rectangle.
-     */
-    void Merge( const EDA_RECT& aRect );
-
-    /**
-     * Function Merge
-     * modifies the position and size of the rectangle in order to contain the given point.
-     * @param aPoint The point to merge with the rectangle.
-     */
-    void Merge( const wxPoint& aPoint );
-
-    /**
-     * Function GetArea
-     * returns the area of the rectangle.
-     * @return The area of the rectangle.
-     */
-    double GetArea() const;
-
-    /**
-     * Function GetBoundingBoxRotated
-     * @return the bounding box of this, after rotation
-     * @param aAngle = the rotation angle in 0.1 deg.
-     * @param aRotCenter = the rotation point.
-     * useful to calculate bounding box of rotated items, when
-     * rotation if not k*90 degrees
-     */
-    const EDA_RECT GetBoundingBoxRotated( wxPoint aRotCenter, double aAngle );
-};
-
+typedef const INSPECTOR_FUNC& INSPECTOR;    /// std::function passed to nested users by ref, avoids copying std::function
 
 
 // These define are used for the .m_Flags and .m_UndoRedoStatus member of the
 // class EDA_ITEM
+//
+// NB: DO NOT ADD FLAGS ANYWHERE BUT AT THE END: THE FLAG-SET IS STORED AS AN INTEGER IN FILES.
+//
 #define IS_CHANGED     (1 << 0)    ///< Item was edited, and modified
 #define IS_LINKED      (1 << 1)    ///< Used in calculation to mark linked items (temporary use)
 #define IN_EDIT        (1 << 2)    ///< Item currently edited
@@ -299,16 +122,15 @@ public:
 #define IS_DRAGGED     (1 << 6)    ///< Item being dragged
 #define IS_DELETED     (1 << 7)
 #define IS_WIRE_IMAGE  (1 << 8)    ///< Item to be drawn as wireframe while editing
-#define STARTPOINT     (1 << 9)
-#define ENDPOINT       (1 << 10)
+#define STARTPOINT     (1 << 9)    ///< When a line is selected, these flags indicate which
+#define ENDPOINT       (1 << 10)   ///< ends.  (Used to support dragging.)
 #define SELECTED       (1 << 11)
-#define SELECTEDNODE   (1 << 12)   ///< flag indicating that the structure has already selected
+#define TEMP_SELECTED  (1 << 12)   ///< flag indicating that the structure has already selected
 #define STRUCT_DELETED (1 << 13)   ///< flag indication structures to be erased
 #define CANDIDATE      (1 << 14)   ///< flag indicating that the structure is connected
 #define SKIP_STRUCT    (1 << 15)   ///< flag indicating that the structure should be ignored
 #define DO_NOT_DRAW    (1 << 16)   ///< Used to disable draw function
-#define IS_CANCELLED   (1 << 17)   ///< flag set when edit dialogs are canceled when editing a
-                                   ///< new object
+#define IS_PASTED      (1 << 17)   ///< Modifier on IS_NEW which indicates it came from clipboard
 #define TRACK_LOCKED   (1 << 18)   ///< Pcbnew: track locked: protected from global deletion
 #define TRACK_AR       (1 << 19)   ///< Pcbnew: autorouted track
 #define FLAG1          (1 << 20)   ///< Pcbnew: flag used in local computations
@@ -319,6 +141,15 @@ public:
                                    ///< already been edited, in some functions
 #define HIGHLIGHTED    (1 << 25)   ///< item is drawn in normal colors, when the rest is darkened
 #define BRIGHTENED     (1 << 26)   ///< item is drawn with a bright contour
+
+#define DP_COUPLED     (1 << 27)   ///< item is coupled with another item making a differential pair
+                                   ///< (applies to segments only)
+#define UR_TRANSIENT   (1 << 28)   ///< indicates the item is owned by the undo/redo stack
+
+#define IS_DANGLING    (1 << 29)   ///< indicates a pin is dangling
+
+// WARNING: if you add flags, you'll probably need to adjust the masks in GetEditFlags() and
+// ClearTempFlags().
 
 #define EDA_ITEM_ALL_FLAGS -1
 
@@ -347,7 +178,7 @@ protected:
     DHEAD*        m_List;         ///< which DLIST I am on.
 
     EDA_ITEM*     m_Parent;       ///< Linked list: Link (parent struct)
-    time_t        m_TimeStamp;    ///< Time stamp used for logical links
+    timestamp_t   m_TimeStamp;    ///< Time stamp used for logical links
 
     /// Set to true to override the visibility setting of the item.
     bool          m_forceVisible;
@@ -355,18 +186,18 @@ protected:
     /// Flag bits for editing and other uses.
     STATUS_FLAGS  m_Flags;
 
-    // Link to an copy of the item use to save the item's state for undo/redo feature.
-    EDA_ITEM*     m_Image;
-
 private:
 
-    void InitVars();
+    void initVars();
 
-public:
+protected:
 
     EDA_ITEM( EDA_ITEM* parent, KICAD_T idType );
     EDA_ITEM( KICAD_T idType );
     EDA_ITEM( const EDA_ITEM& base );
+
+public:
+
     virtual ~EDA_ITEM() { };
 
     /**
@@ -381,8 +212,8 @@ public:
         return m_StructType;
     }
 
-    void SetTimeStamp( time_t aNewTimeStamp ) { m_TimeStamp = aNewTimeStamp; }
-    time_t GetTimeStamp() const { return m_TimeStamp; }
+    void SetTimeStamp( timestamp_t aNewTimeStamp ) { m_TimeStamp = aNewTimeStamp; }
+    timestamp_t GetTimeStamp() const { return m_TimeStamp; }
 
     EDA_ITEM* Next() const { return Pnext; }
     EDA_ITEM* Back() const { return Pback; }
@@ -405,12 +236,12 @@ public:
     inline bool IsBrightened() const { return m_Flags & BRIGHTENED; }
 
     inline void SetWireImage() { SetFlags( IS_WIRE_IMAGE ); }
-    inline void SetSelected() { SetFlags( SELECTED ); ViewUpdate( COLOR ); }
-    inline void SetHighlighted() { SetFlags( HIGHLIGHTED ); ViewUpdate( COLOR ); }
+    inline void SetSelected() { SetFlags( SELECTED ); }
+    inline void SetHighlighted() { SetFlags( HIGHLIGHTED ); }
     inline void SetBrightened() { SetFlags( BRIGHTENED ); }
 
-    inline void ClearSelected() { ClearFlags( SELECTED ); ViewUpdate( COLOR ); }
-    inline void ClearHighlighted() { ClearFlags( HIGHLIGHTED ); ViewUpdate( COLOR ); }
+    inline void ClearSelected() { ClearFlags( SELECTED ); }
+    inline void ClearHighlighted() { ClearFlags( HIGHLIGHTED ); }
     inline void ClearBrightened() { ClearFlags( BRIGHTENED ); }
 
     void SetModified();
@@ -434,8 +265,45 @@ public:
     void SetFlags( STATUS_FLAGS aMask ) { m_Flags |= aMask; }
     void ClearFlags( STATUS_FLAGS aMask = EDA_ITEM_ALL_FLAGS ) { m_Flags &= ~aMask; }
     STATUS_FLAGS GetFlags() const { return m_Flags; }
+    bool HasFlag( STATUS_FLAGS aFlag ) { return ( m_Flags & aFlag ) == aFlag; }
 
-    void SetImage( EDA_ITEM* aItem ) { m_Image = aItem; }
+    STATUS_FLAGS GetEditFlags() const
+    {
+        int mask = EDA_ITEM_ALL_FLAGS - ( SELECTED | TEMP_SELECTED | HIGHLIGHTED | BRIGHTENED |
+                                          STARTPOINT | ENDPOINT | IS_DANGLING |
+                                          BEGIN_ONPAD | END_ONPAD | DP_COUPLED );
+        return m_Flags & mask;
+    }
+
+    void ClearTempFlags()
+    {
+        ClearFlags( STARTPOINT | ENDPOINT | CANDIDATE | IS_LINKED | SKIP_STRUCT | DO_NOT_DRAW );
+    }
+
+    void ClearEditFlags()
+    {
+        ClearFlags( GetEditFlags() );
+    }
+
+    /**
+     * Function IsType
+     * Checks whether the item is one of the listed types
+     * @param aScanTypes List of item types
+     * @return true if the item type is contained in the list aScanTypes
+     */
+    virtual bool IsType( const KICAD_T aScanTypes[] )
+    {
+        if( aScanTypes[0] == SCH_LOCATE_ANY_T )
+            return true;
+
+        for( const KICAD_T* p = aScanTypes; *p != EOT; ++p )
+        {
+            if( m_StructType == *p )
+                return true;
+        }
+
+        return false;
+    }
 
     /**
      * Function SetForceVisible
@@ -457,22 +325,36 @@ public:
      *
      * @param aList is the list to populate.
      */
-    virtual void GetMsgPanelInfo( std::vector< MSG_PANEL_ITEM >& aList )
+    virtual void GetMsgPanelInfo( EDA_UNITS_T aUnits, std::vector< MSG_PANEL_ITEM >& aList )
     {
     }
 
     /**
      * Function HitTest
-     * tests if \a aPosition is contained within or on the bounding area of an item.
+     * tests if \a aPosition is contained within or on the bounding box of an item.
      *
      * @param aPosition A reference to a wxPoint object containing the coordinates to test.
-     * @return True if \a aPosition is within or on the item bounding area.
+     * @param aAccuracy Increase the item bounding box by this amount.
+     * @return True if \a aPosition is within the item bounding box.
      */
-    virtual bool HitTest( const wxPoint& aPosition ) const
+    virtual bool HitTest( const wxPoint& aPosition, int aAccuracy = 0 ) const
     {
         return false;   // derived classes should override this function
     }
 
+    /**
+     * Function HitTest
+     * tests if \a aRect intersects or is contained within the bounding box of an item.
+     *
+     * @param aRect A reference to a EDA_RECT object containing the rectangle to test.
+     * @param aContained Set to true to test for containment instead of an intersection.
+     * @param aAccuracy Increase \a aRect by this amount.
+     * @return True if \a aRect contains or intersects the item bounding box.
+     */
+    virtual bool HitTest( const EDA_RECT& aRect, bool aContained, int aAccuracy = 0 ) const
+    {
+        return false;   // derived classes should override this function
+    }
 
     /**
      * Function GetBoundingBox
@@ -483,17 +365,7 @@ public:
      * system.
      * It is OK to overestimate the size by a few counts.
      */
-    virtual const EDA_RECT GetBoundingBox() const
-    {
-#if defined(DEBUG)
-        printf( "Missing GetBoundingBox()\n" );
-        Show( 0, std::cout ); // tell me which classes still need GetBoundingBox support
-#endif
-
-        // return a zero-sized box per default. derived classes should override
-        // this
-        return EDA_RECT( wxPoint( 0, 0 ), wxSize( 0, 0 ) );
-    }
+    virtual const EDA_RECT GetBoundingBox() const;
 
     /**
      * Function Clone
@@ -509,6 +381,22 @@ public:
      * @return A clone of the item.
      */
     virtual EDA_ITEM* Clone() const; // should not be inline, to save the ~ 6 bytes per call site.
+
+    /**
+     * Function Visit
+     * may be re-implemented for each derived class in order to handle
+     * all the types given by its member data.  Implementations should call
+     * inspector->Inspect() on types in scanTypes[], and may use
+     * IterateForward()
+     * to do so on lists of such data.
+     * @param inspector An INSPECTOR instance to use in the inspection.
+     * @param testData Arbitrary data used by the inspector.
+     * @param scanTypes Which KICAD_T types are of interest and the order
+     *                  is significant too, terminated by EOT.
+     * @return SEARCH_RESULT SEARCH_QUIT if the Iterator is to stop the scan,
+     *                       else SCAN_CONTINUE, and determined by the inspector.
+     */
+    virtual SEARCH_RESULT Visit( INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] );
 
     /**
      * Function IterateForward
@@ -527,37 +415,66 @@ public:
      * @return SEARCH_RESULT SEARCH_QUIT if the called INSPECTOR returned
      *                       SEARCH_QUIT, else SCAN_CONTINUE;
      */
-    static SEARCH_RESULT IterateForward( EDA_ITEM*     listStart,
-                                         INSPECTOR*    inspector,
-                                         const void*   testData,
-                                         const KICAD_T scanTypes[] );
+    static SEARCH_RESULT IterateForward( EDA_ITEM*      listStart,
+                                         INSPECTOR      inspector,
+                                         void*          testData,
+                                         const KICAD_T  scanTypes[] )
+
+    {
+        for( EDA_ITEM* p = listStart; p; p = p->Pnext )
+        {
+            if( SEARCH_QUIT == p->Visit( inspector, testData, scanTypes ) )
+                return SEARCH_QUIT;
+        }
+
+        return SEARCH_CONTINUE;
+    }
 
     /**
-     * Function Visit
-     * may be re-implemented for each derived class in order to handle
-     * all the types given by its member data.  Implementations should call
-     * inspector->Inspect() on types in scanTypes[], and may use
-     * IterateForward()
-     * to do so on lists of such data.
-     * @param inspector An INSPECTOR instance to use in the inspection.
-     * @param testData Arbitrary data used by the inspector.
-     * @param scanTypes Which KICAD_T types are of interest and the order
-     *                  is significant too, terminated by EOT.
-     * @return SEARCH_RESULT SEARCH_QUIT if the Iterator is to stop the scan,
-     *                       else SCAN_CONTINUE, and determined by the inspector.
+     * @copydoc SEARCH_RESULT IterateForward( EDA_ITEM*, INSPECTOR, void*, const KICAD_T )
+     *
+     * This changes first parameter to avoid the DList and use the main queue instead
      */
-    virtual SEARCH_RESULT Visit( INSPECTOR* inspector, const void* testData,
-                                 const KICAD_T scanTypes[] );
+    template< class T >
+    static SEARCH_RESULT IterateForward( std::deque<T>&  aList,
+                                         INSPECTOR       inspector,
+                                         void*           testData,
+                                         const KICAD_T   scanTypes[] )
+    {
+        for( auto it : aList )
+        {
+            if( static_cast<EDA_ITEM*>( it )->Visit( inspector, testData, scanTypes ) == SEARCH_QUIT )
+                return SEARCH_QUIT;
+        }
+
+        return SEARCH_CONTINUE;
+    }
+
+    /**
+     * @copydoc SEARCH_RESULT IterateForward( EDA_ITEM*, INSPECTOR, void*, const KICAD_T )
+     *
+     * This changes first parameter to avoid the DList and use std::vector instead
+     */
+    template <class T>
+    static SEARCH_RESULT IterateForward(
+            std::vector<T>& aList, INSPECTOR inspector, void* testData, const KICAD_T scanTypes[] )
+    {
+        for( auto it : aList )
+        {
+            if( static_cast<EDA_ITEM*>( it )->Visit( inspector, testData, scanTypes )
+                    == SEARCH_QUIT )
+                return SEARCH_QUIT;
+        }
+
+        return SEARCH_CONTINUE;
+    }
 
     /**
      * Function GetClass
      * returns the class name.
      * @return wxString
      */
-    virtual wxString GetClass() const
-    {
-        return wxT( "EDA_ITEM" );
-    }
+    virtual wxString GetClass() const = 0;
 
     /**
      * Function GetSelectMenuText
@@ -568,7 +485,7 @@ public:
      *
      * @return The menu text string.
      */
-    virtual wxString GetSelectMenuText() const;
+    virtual wxString GetSelectMenuText( EDA_UNITS_T aUnits ) const;
 
     /**
      * Function GetMenuImage
@@ -577,7 +494,7 @@ public:
      * images.
      * @return The menu image associated with the item.
      */
-    virtual BITMAP_DEF GetMenuImage() const { return right_xpm; }
+    virtual BITMAP_DEF GetMenuImage() const;
 
     /**
      * Function Matches
@@ -590,26 +507,15 @@ public:
      *                    search criteria.
      * @param aAuxData A pointer to optional data required for the search or NULL
      *                 if not used.
-     * @param aFindLocation A pointer to a wxPoint object to store the location of
-     *                      matched item.  The pointer can be NULL if it is not used.
      * @return True if the item's text matches the search criteria in \a aSearchData.
      */
-    virtual bool Matches( wxFindReplaceData& aSearchData, void* aAuxData, wxPoint* aFindLocation )
+    virtual bool Matches( wxFindReplaceData& aSearchData, void* aAuxData )
     {
         return false;
     }
 
     /**
-     * Function Matches
-     * compares \a aText against search criteria in \a aSearchData.
-     *
-     * @param aText A reference to a wxString object containing the string to test.
-     * @param aSearchData The criteria to search against.
-     * @return True if \a aText matches the search criteria in \a aSearchData.
-     */
-    bool Matches( const wxString& aText, wxFindReplaceData& aSearchData );
-
-    /**
+     * Helper function used in search and replace dialog
      * Function Replace
      * performs a text replace on \a aText using the find and replace criteria in
      * \a aSearchData on items that support text find and replace.
@@ -620,7 +526,7 @@ public:
      *              replaced.
      * @return True if \a aText was modified, otherwise false.
      */
-    bool Replace( wxFindReplaceData& aSearchData, wxString& aText );
+    static bool Replace( wxFindReplaceData& aSearchData, wxString& aText );
 
     /**
      * Function Replace
@@ -671,17 +577,12 @@ public:
     /**
      * Operator assignment
      * is used to assign the members of \a aItem to another object.
-     *
-     * @warning This is still a work in progress and not ready for prime time.  Do not use
-     *          as there is a known issue with wxString buffers.
      */
-    virtual EDA_ITEM& operator=( const EDA_ITEM& aItem );
+    EDA_ITEM& operator=( const EDA_ITEM& aItem );
 
-    /// @copydoc VIEW_ITEM::ViewBBox()
-    virtual const BOX2I ViewBBox() const;
+    virtual const BOX2I ViewBBox() const override;
 
-    /// @copydoc VIEW_ITEM::ViewGetLayers()
-    virtual void ViewGetLayers( int aLayers[], int& aCount ) const;
+    virtual void ViewGetLayers( int aLayers[], int& aCount ) const override;
 
 #if defined(DEBUG)
 
@@ -707,6 +608,18 @@ public:
     static std::ostream& NestedSpace( int nestLevel, std::ostream& os );
 
 #endif
+
+protected:
+    /**
+     * Function Matches
+     * compares \a aText against search criteria in \a aSearchData.
+     * This is a helper function for simplify derived class logic.
+     *
+     * @param aText A reference to a wxString object containing the string to test.
+     * @param aSearchData The criteria to search against.
+     * @return True if \a aText matches the search criteria in \a aSearchData.
+     */
+    bool Matches( const wxString& aText, wxFindReplaceData& aSearchData );
 };
 
 

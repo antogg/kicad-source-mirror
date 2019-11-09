@@ -2,7 +2,7 @@
  * This program source code file is part of KiCad, a free EDA CAD application.
  *
  * Copyright (C) 2004 Jean-Pierre Charras, jaen-pierre.charras@gipsa-lab.inpg.com
- * Copyright (C) 2004-2011 KiCad Developers, see change_log.txt for contributors.
+ * Copyright (C) 2004-2019 KiCad Developers, see AUTHORS.txt for contributors.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,151 +22,82 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
  */
 
-/**
- * @file cvpcb/menubar.cpp
- * @brief (Re)Create the menubar for CvPcb
- */
-#include <fctsys.h>
-#include <pgm_base.h>
-#include <kiface_i.h>
-#include <confirm.h>
-#include <gestfich.h>
+#include <bitmaps.h>
 #include <menus_helpers.h>
+#include <tool/actions.h>
+#include <tool/common_control.h>
+#include <tool/conditional_menu.h>
+#include <tool/tool_manager.h>
 
-#include <cvpcb.h>
 #include <cvpcb_mainframe.h>
-#include <cvpcb_id.h>
-
-#include <common_help_msg.h>
+#include <tools/cvpcb_actions.h>
 
 
-/**
- * @brief (Re)Create the menubar for the CvPcb mainframe
- */
 void CVPCB_MAINFRAME::ReCreateMenuBar()
 {
-    // Create and try to get the current  menubar
-    wxMenuItem* item;
-    wxMenuBar*  menuBar = GetMenuBar();
+    COMMON_CONTROL* tool = m_toolManager->GetTool<COMMON_CONTROL>();
+    // wxWidgets handles the Mac Application menu behind the scenes, but that means
+    // we always have to start from scratch with a new wxMenuBar.
+    wxMenuBar*  oldMenuBar = GetMenuBar();
+    wxMenuBar*  menuBar = new wxMenuBar();
 
-    if( ! menuBar )     // Delete all menus
-        menuBar = new wxMenuBar();
+    //-- File menu -----------------------------------------------------------
+    //
+    CONDITIONAL_MENU*   fileMenu = new CONDITIONAL_MENU( false, tool );
 
-    // Delete all existing menus so they can be rebuilt.
-    // This allows language changes of the menu text on the fly.
-    menuBar->Freeze();
+    fileMenu->AddItem( CVPCB_ACTIONS::saveAssociations, SELECTION_CONDITIONS::ShowAlways );
+    fileMenu->AddSeparator();
+    fileMenu->AddClose( _( "Assign Footprints" ) );
 
-    while( menuBar->GetMenuCount() )
-        delete menuBar->Remove( 0 );
+    fileMenu->Resolve();
 
-    // Recreate all menus:
+    //-- Preferences menu -----------------------------------------------
+    //
+    CONDITIONAL_MENU* editMenu = new CONDITIONAL_MENU( false, tool );
 
-    // Menu File:
-    wxMenu* filesMenu = new wxMenu;
+    auto enableUndoCondition = [ this ] ( const SELECTION& sel )
+    {
+        return m_undoList.size() > 0;
+    };
+    auto enableRedoCondition = [ this ] ( const SELECTION& sel )
+    {
+        return m_redoList.size() > 0;
+    };
 
-    // Open
-    AddMenuItem( filesMenu,
-                 ID_LOAD_PROJECT,
-                 _( "&Open Netlist" ), LOAD_FILE_HELP, KiBitmap( open_document_xpm ) );
+    editMenu->AddItem( ACTIONS::undo,  enableUndoCondition );
+    editMenu->AddItem( ACTIONS::redo,  enableRedoCondition );
+    editMenu->AddSeparator();
+    editMenu->AddItem( ACTIONS::cut,   SELECTION_CONDITIONS::ShowAlways );
+    editMenu->AddItem( ACTIONS::copy,  SELECTION_CONDITIONS::ShowAlways );
+    editMenu->AddItem( ACTIONS::paste, SELECTION_CONDITIONS::ShowAlways );
 
-    // Open Recent submenu
-    static wxMenu* openRecentMenu;
+    editMenu->Resolve();
 
-    // Add this menu to list menu managed by m_fileHistory
-    // (the file history will be updated when adding/removing files in history
-    if( openRecentMenu )
-        Kiface().GetFileHistory().RemoveMenu( openRecentMenu );
+    //-- Preferences menu -----------------------------------------------
+    //
+    CONDITIONAL_MENU* prefsMenu = new CONDITIONAL_MENU( false, tool );
 
-    openRecentMenu = new wxMenu();
+    prefsMenu->AddItem( ACTIONS::configurePaths,         SELECTION_CONDITIONS::ShowAlways );
+    prefsMenu->AddItem( ACTIONS::showFootprintLibTable,  SELECTION_CONDITIONS::ShowAlways );
+    prefsMenu->AddItem( wxID_PREFERENCES,
+                        _( "Preferences...\tCTRL+," ),
+                        _( "Show preferences for all open tools" ),
+                        preference_xpm,                  SELECTION_CONDITIONS::ShowAlways );
+    prefsMenu->AddSeparator();
+    prefsMenu->AddItem( CVPCB_ACTIONS::showEquFileTable, SELECTION_CONDITIONS::ShowAlways );
 
-    Kiface().GetFileHistory().UseMenu( openRecentMenu );
-    Kiface().GetFileHistory().AddFilesToMenu();
+    prefsMenu->AddSeparator();
+    AddMenuLanguageList( prefsMenu, tool );
 
-    AddMenuItem( filesMenu, openRecentMenu, -1,
-                 _( "Open &Recent" ),
-                 _( "Open recent netlist" ),
-                 KiBitmap( open_project_xpm ) );
+    prefsMenu->Resolve();
 
-    // Separator
-    filesMenu->AppendSeparator();
+    //-- Menubar -------------------------------------------------------------
+    //
+    menuBar->Append( fileMenu, _( "&File" ) );
+    menuBar->Append( editMenu, _( "&Edit" ) );
+    menuBar->Append( prefsMenu, _( "&Preferences" ) );
+    AddStandardHelpMenu( menuBar );
 
-    // Save the .cmp file
-    AddMenuItem( filesMenu,
-                 wxID_SAVE,
-                 _( "&Save\tCtrl+S" ), SAVE_HLP_MSG, KiBitmap( save_xpm ) );
-
-    // Save as the .cmp file
-    AddMenuItem( filesMenu,
-                 wxID_SAVEAS,
-                 _( "Save &As...\tCtrl+Shift+S" ), SAVE_AS_HLP_MSG, KiBitmap( save_xpm ) );
-
-    // Separator
-    filesMenu->AppendSeparator();
-
-    // Quit
-    AddMenuItem( filesMenu,
-                 wxID_EXIT,
-                 _( "&Quit" ),
-                 _( "Quit CvPcb" ),
-                 KiBitmap( exit_xpm ) );
-
-    // Menu Preferences:
-    wxMenu* preferencesMenu = new wxMenu;
-
-    AddMenuItem( preferencesMenu, ID_CVPCB_LIB_TABLE_EDIT,
-                 _( "Edit Li&brary Table" ), _( "Setup footprint libraries" ),
-                 KiBitmap( library_table_xpm ) );
-
-    // Language submenu
-    Pgm().AddMenuLanguageList( preferencesMenu );
-
-    // Keep open on save
-    item = new wxMenuItem( preferencesMenu, ID_CVPCB_CONFIG_KEEP_OPEN_ON_SAVE,
-                           _( "Keep Open On Save" ),
-                           _( "Prevent CvPcb from exiting after saving netlist file" ),
-                           wxITEM_CHECK );
-    preferencesMenu->Append( item );
-    SETBITMAPS( window_close_xpm );
-
-    // Separator
-    preferencesMenu->AppendSeparator();
-    AddMenuItem( preferencesMenu, ID_SAVE_PROJECT,
-                 _( "&Save Project File" ),
-                 _( "Save changes to the project configuration file" ),
-                 KiBitmap( save_setup_xpm ) );
-
-    AddMenuItem( preferencesMenu, ID_SAVE_PROJECT_AS,
-                 _( "&Save Project File As" ),
-                 _( "Save changes to a new project configuration file" ),
-                 KiBitmap( save_setup_xpm ) );
-
-    // Menu Help:
-    wxMenu* helpMenu = new wxMenu;
-
-    // Version info
-    AddHelpVersionInfoMenuEntry( helpMenu );
-
-    // Manual Contents
-    AddMenuItem( helpMenu, wxID_HELP, _( "&CvPcb Manual" ),
-                 _( "Open CvPcb manual" ),
-                 KiBitmap( online_help_xpm ) );
-
-    // About CvPcb
-    AddMenuItem( helpMenu, wxID_ABOUT,
-                 _( "&About CvPcb" ),
-                 _( "About CvPcb footprint selector" ),
-                 KiBitmap( info_xpm ) );
-
-    // Create the menubar and append all submenus
-    menuBar->Append( filesMenu, _( "&File" ) );
-    menuBar->Append( preferencesMenu, _( "&Preferences" ) );
-    menuBar->Append( helpMenu, _( "&Help" ) );
-
-    menuBar->Thaw();
-
-    // Associate the menu bar with the frame, if no previous menubar
-    if( GetMenuBar() == NULL )
-        SetMenuBar( menuBar );
-    else
-        menuBar->Refresh();
+    SetMenuBar( menuBar );
+    delete oldMenuBar;
 }

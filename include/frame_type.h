@@ -1,3 +1,28 @@
+/*
+ * This program source code file is part of KiCad, a free EDA CAD application.
+ *
+ * Copyright (C) 2014 CERN
+ * Copyright (C) 1992-2017 KiCad Developers, see AUTHORS.txt for contributors.
+ * @author Maciej Suminski <maciej.suminski@cern.ch>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, you may find one here:
+ * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * or you may search the http://www.gnu.org website for the version 2 license,
+ * or you may write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
+ */
+
 #ifndef FRAME_T_H_
 #define FRAME_T_H_
 
@@ -8,17 +33,19 @@
  */
 enum FRAME_T
 {
-    FRAME_SCH,
+    FRAME_SCH = 0,
     FRAME_SCH_LIB_EDITOR,
     FRAME_SCH_VIEWER,
     FRAME_SCH_VIEWER_MODAL,
+    FRAME_SIMULATOR,
 
-    FRAME_PCB,
-    FRAME_PCB_MODULE_EDITOR,
-    FRAME_PCB_MODULE_VIEWER,
-    FRAME_PCB_MODULE_VIEWER_MODAL,
-    FRAME_PCB_FOOTPRINT_WIZARD_MODAL,
+    FRAME_PCB_EDITOR,
+    FRAME_FOOTPRINT_EDITOR,
+    FRAME_FOOTPRINT_VIEWER,
+    FRAME_FOOTPRINT_VIEWER_MODAL,
+    FRAME_FOOTPRINT_WIZARD,
     FRAME_PCB_DISPLAY3D,
+    FRAME_FOOTPRINT_PREVIEW,
 
     FRAME_CVPCB,
     FRAME_CVPCB_DISPLAY,
@@ -36,7 +63,12 @@ enum FRAME_T
     // C++ project manager is not a KIWAY_PLAYER
     KICAD_MAIN_FRAME_T = KIWAY_PLAYER_COUNT,
 
-    FRAME_T_COUNT
+    FRAME_T_COUNT,
+
+    // Library table dialogs are transient and are never returned
+    DIALOG_CONFIGUREPATHS = FRAME_T_COUNT,
+    DIALOG_SCH_LIBRARY_TABLE,
+    DIALOG_PCB_LIBRARY_TABLE
 };
 
     //TEXT_EDITOR_FRAME_T,
